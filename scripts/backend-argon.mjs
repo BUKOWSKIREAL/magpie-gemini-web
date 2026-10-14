@@ -41,7 +41,7 @@ async function main() {
       const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
 
       const manifest = {
-        version: '4.21.0-argon.1',
+        version: '4.21.0-argon.2',
         sourceCommit: pinned,
         sha256,
         platform: 'darwin',
