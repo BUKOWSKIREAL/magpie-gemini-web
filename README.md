@@ -140,6 +140,20 @@ http://127.0.0.1:8083/admin
 | `requestTimeoutMs`| integer | `240000` | 转发单次请求的超时时间（毫秒，默认 4 分钟） |
 | `modelTimeoutMs` | integer | `10000` | 获取模型列表的超时时间（毫秒，默认 10 秒） |
 
+### 思考档位（effort）
+
+后端没有 effort 参数，扩展思考是单独的 `-thinking` 模型。插件把有 `-thinking` 版的模型声明为 `low` / `high` 两档，可以在 Magpie 里直接切换：
+
+| 档位 | 实际调用 | 说明 |
+| :--- | :--- | :--- |
+| `low`（或不指定） | `gemini-x` | 网页端默认档：Argon 为「低」档，Flash 不输出思考链，3.1 Pro 仍会少量思考 |
+| `high` | `gemini-x-thinking` | 网页端扩展思考（上游显示为 High），带 `reasoning_content` |
+
+- 插件读取请求里的 `reasoning_effort`：`none` / `minimal` / `low` 走普通版，其他值（如 `medium`、`xhigh`）走 `-thinking` 版。经 Magpie 调用时，Magpie 会先把 Responses API 的 `reasoning.effort`、Anthropic Messages 的 `thinking.budget_tokens` 换算成最接近的已声明档位；Anthropic 的 `output_config.effort` 不会被转发。
+- 直接选 `-thinking` 模型照常可用，档位设置对它不生效。
+- 网页端 Argon 的「中」档上游尚未支持（见 [#5](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/5)）。
+- 升级插件后，执行 `magpie provider models gemini-web` 重新拉取模型列表，档位才会出现。
+
 ---
 
 ## 5. 本地开发与实验性 Argon 支持 (Local Development & Argon Support)

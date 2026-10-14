@@ -858,3 +858,117 @@ describe('11-21. Forwarding, security stripping, tool/image validation, and stre
     assert.equal(body502.error.code, 'bad_gateway');
   });
 });
+
+describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
+  let server;
+  let serverPort;
+  let modelIds;
+  let modelsStatus;
+  let modelsCalls;
+  let chatModels;
+
+  before(async () => {
+    server = http.createServer(async (req, res) => {
+      if (req.url === '/v1/models') {
+        modelsCalls++;
+        res.writeHead(modelsStatus, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ object: 'list', data: modelIds.map(id => ({ id, object: 'model' })) }));
+        return;
+      }
+      let raw = '';
+      for await (const chunk of req) raw += chunk;
+      chatModels.push(JSON.parse(raw).model);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'chatcmpl-1' }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', () => {
+      serverPort = server.address().port;
+      resolve();
+    }));
+  });
+
+  after(async () => {
+    await new Promise(resolve => server.close(resolve));
+  });
+
+  const reset = () => {
+    modelIds = ['gemini-4-argon', 'gemini-4-argon-thinking', 'gemini-3.6-flash', 'gemini-3.6-flash-thinking', 'gemini-canvas', 'gemini-solo'];
+    modelsStatus = 200;
+    modelsCalls = 0;
+    chatModels = [];
+  };
+
+  const send = (key, body) => {
+    const baseURL = `http://127.0.0.1:${serverPort}/v1`;
+    return forward(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }], ...body })
+    }, async () => ({ type: 'api', key, metadata: { baseURL } }), settings({ baseURL }));
+  };
+
+  it('declares low/high variants only on base models that have a -thinking twin', async () => {
+    reset();
+    const c = { key: 'variants_key', baseURL: `http://127.0.0.1:${serverPort}/v1` };
+    const models = await listModels(c, settings({ baseURL: c.baseURL }));
+
+    assert.deepEqual(models['gemini-4-argon'].variants, { low: {}, high: {} });
+    assert.deepEqual(models['gemini-3.6-flash'].variants, { low: {}, high: {} });
+    assert.deepEqual(models['gemini-4-argon-thinking'].variants, {});
+    assert.deepEqual(models['gemini-solo'].variants, {});
+    assert.equal(models['gemini-canvas'], undefined);
+  });
+
+  it('routes high and other non-low efforts to the twin, low/none/absent to the base', async () => {
+    reset();
+    const cases = [
+      [{ model: 'gemini-4-argon', reasoning_effort: 'high' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-4-argon', reasoning_effort: 'medium' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-4-argon', reasoning_effort: 'xhigh' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-3.6-flash', reasoning_effort: 'high' }, 'gemini-3.6-flash-thinking'],
+      [{ model: 'gemini-4-argon', reasoning_effort: 'low' }, 'gemini-4-argon'],
+      [{ model: 'gemini-4-argon', reasoning_effort: 'minimal' }, 'gemini-4-argon'],
+      [{ model: 'gemini-4-argon', reasoning_effort: 'none' }, 'gemini-4-argon'],
+      [{ model: 'gemini-4-argon' }, 'gemini-4-argon'],
+      [{ model: 'gemini-4-argon-thinking', reasoning_effort: 'low' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-solo', reasoning_effort: 'high' }, 'gemini-solo']
+    ];
+    for (const [body] of cases) {
+      const res = await send('route_key', body);
+      assert.equal(res.status, 200);
+    }
+    assert.deepEqual(chatModels, cases.map(([, want]) => want));
+    assert.equal(modelsCalls, 1, 'model list fetched once and cached');
+  });
+
+  it('keeps the exact body when no twin applies', async () => {
+    reset();
+    const baseURL = `http://127.0.0.1:${serverPort}/v1`;
+    const raw = '{"model":"gemini-4-argon","reasoning_effort":"low","messages":[{"role":"user","content":"hi"}]}';
+    let received;
+    const original = server.listeners('request')[0];
+    server.removeAllListeners('request');
+    server.on('request', async (req, res) => {
+      received = '';
+      for await (const chunk of req) received += chunk;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+    try {
+      await forward(`${baseURL}/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: raw },
+        async () => ({ type: 'api', key: 'exact_key', metadata: { baseURL } }), settings({ baseURL }));
+    } finally {
+      server.removeAllListeners('request');
+      server.on('request', original);
+    }
+    assert.equal(received, raw);
+  });
+
+  it('sends the request unchanged when the model list cannot be fetched', async () => {
+    reset();
+    modelsStatus = 500;
+    const res = await send('broken_models_key', { model: 'gemini-4-argon', reasoning_effort: 'high' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(chatModels, ['gemini-4-argon']);
+  });
+});
