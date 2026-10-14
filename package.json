@@ -1,6 +1,6 @@
 {
   "name": "magpie-gemini-web",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Gemini Web provider for Magpie, backed by gemini-web2api-go",
   "type": "module",
   "main": "./index.mjs",
