@@ -4,125 +4,88 @@ Gemini Web provider plugin for [Magpie](https://usemagpie.ai/)（遵循 OpenCode
 
 ---
 
-## 1. 为什么选择此方案（选型理由与架构说明）
+## 1. 快速上手（推荐：一键配置）
 
-将 Gemini 网页版接入 AI Agent 工具链通常面临复杂的网页抓包协议、Cookie 会话维持及接口兼容问题。本方案采用独立原生后端 + Magpie 接入插件的解耦架构：
+1. 在 Magpie 插件市场搜索并安装 **magpie-gemini-web**。
+2. 在 Magpie 里登录 Gemini Web 提供商，选择 **「一键配置本地 Gemini Web（推荐）」**（命令行为 `magpie plugin login gemini-web`）。插件会：
+   - 下载官方 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) v4.22.0 后端，并按发布页的 SHA-256 校验，校验不通过就不安装；
+   - 生成本地随机密钥，在后台启动后端（只监听 `127.0.0.1:8083`）；
+   - 打开 <https://gemini.google.com/app>，提示你复制 Cookie：
+     1. 确认网页已登录要使用的 Google 账号；
+     2. 按 F12（macOS 按 ⌥⌘I）打开开发者工具，切到 **Network（网络）**，刷新页面；
+     3. 点任意一个 `gemini.google.com` 的请求 → **Headers（标头）** → **Request Headers（请求标头）**；
+     4. 复制 `cookie` 那一行的值，粘贴回 Magpie。
+3. 插件把 Cookie 导入本地后端并检测能否登录 Gemini；检测通过即完成登录，检测失败会删掉这条账号并提示原因（例如缺少哪些 Cookie、账号未登录）。全程不需要手动填写 API key。
 
-1. **架构解耦与职责划分**：
-   - **Magpie 插件层**（本目录）：纯 JavaScript (ESM)，无第三方依赖。负责实现 Magpie / OpenCode v1 规范的认证生命周期 (`auth`)、动态模型目录发现 (`models`)、请求流式转发与输入过滤 (`forward`)。
-   - **原生后端层**（`gemini-web2api-go`）：由上游独立 Go 进程运行，负责维护 Google 账户 Cookie 会话池与 OpenAI 兼容格式转换。
-   - **凭证安全隔离**：插件与 Magpie **绝不直接接触 Google 账号 Cookie 或用户浏览器会话**，仅通过本地生成的随机 `apiKey` 与本地后端通信。
-2. **本地回环安全保护**：
-   - 上游原生后端默认配置监听 `0.0.0.0`。本插件安装助手生成的默认配置将监听地址**严格锁定为本地回环 `127.0.0.1:8083`**，避免服务与管理端端口暴露至局域网或公网。
-   - 转发层在请求到达后端前剥离调用方所有的 `Cookie`、`Authorization`、`x-api-key`、`anthropic-*` 等敏感头部。
-3. **并发抑制**：
-   - 插件声明了 `maxConcurrency: 1`。该配置旨在降低短时间内并发请求频率，但**不能保证账号绝不被 Google 风控或封禁**；用户应知悉使用网页逆向服务的潜在风险。
-4. **开源协议**：
-   - 上游项目与本插件均基于宽松的 MIT 许可证。
+之后每次 Magpie 启动，插件发现本地后端没在运行就会自动把它拉起来；请求时发现后端掉线也会先重启再重试一次。后端日志在数据目录下的 `backend.log`。
+
+> 要再加一个 Google 账号，重新走一遍一键配置即可，新账号会加入后端的账号池。
+>
+> Cookie 只发给本机的后端，保存在它的本地 SQLite 数据库里；Magpie 保存的是后端的本地 API key，而不是 Cookie。
+
+需要工具调用或图片输入时再开启插件选项（默认关闭，见第 4 节）：
+```bash
+magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
+```
+
+**支持的平台**：一键配置为以下平台锁定了官方二进制及其 SHA-256：macOS（Apple Silicon / Intel）、Linux（x64 / arm64）、Windows（x64 / arm64）。其他平台请用第 3 节的「连接已有后端」。
 
 ---
 
-## 2. 运行环境要求
+## 2. 架构与安全说明
 
-- **Node.js**：版本 `>= 22`（用于执行安装与管理脚本 `npm run backend:*` 及单元测试）。
-- **Magpie / Bun**：Magpie 客户端内置管理其插件运行环境（基于 Bun 执行插件），无需全局安装 Bun。
-- **操作系统支持**：
-  - 本项目的自动安装与启动助手（`npm run backend:install` / `backend:start`）**仅针对 macOS (arm64 Apple Silicon)** 进行了二进制锁定与 SHA-256 完整性强校验。
-  - **其他操作系统（Linux / Windows / Intel Mac）**：请**不要**将其他平台二进制放入助手目录。请直接参考上游 [gemini-web2api-go 文档](https://github.com/zexadev/gemini-web2api-go) 手动运行上游服务，并在 Magpie 登录插件时将 `baseURL` 指向上游监听地址即可。
+1. **架构解耦**：
+   - **Magpie 插件层**（本仓库）：纯 JavaScript (ESM)，无第三方依赖。负责认证与一键配置、动态模型目录 (`models`)、请求转发与输入过滤 (`forward`)，以及管理本地后端进程。
+   - **原生后端层**（`gemini-web2api-go`）：上游独立 Go 进程，维护 Google 账号 Cookie 池并提供 OpenAI 兼容接口。
+2. **凭证隔离**：一键配置时插件只把你粘贴的 Cookie 交给本机后端的管理接口，自身不保存、不转发到其他地方；之后插件与 Magpie 仅凭本地随机 `apiKey` 访问后端。
+3. **本地回环**：上游默认监听 `0.0.0.0`；本插件生成的配置**锁定为 `127.0.0.1:8083`**，启动前还会再次校验 host 与二进制哈希。若 8083 已被别的服务占用，一键配置会报错而不会覆盖，可修改数据目录下 `config.json` 的 `port`。
+4. **请求过滤**：转发前剥离调用方的 `Cookie`、`Authorization`、`x-api-key`、`anthropic-*` 等头部。
+5. **并发抑制**：插件声明 `maxConcurrency: 1`，降低请求频率，但**不能保证账号不被 Google 风控或封禁**；请知悉使用网页逆向服务的风险。
+6. **开源协议**：上游项目与本插件均为 MIT 许可证。
+
+**数据目录**：默认 `~/.local/share/magpie-gemini-web`（可用环境变量 `GEMINI_WEB_DATA_DIR` 自定义），包含：
+
+| 文件 | 内容 |
+| :--- | :--- |
+| `bin/gemini-web2api-go` | 后端二进制（权限 `0700`） |
+| `config.json` | 后端配置，host 固定 `127.0.0.1`（权限 `0600`） |
+| `secrets.json` | 本地随机生成的 `apiKey`（`gw_` 开头，插件访问后端用）和 `adminToken`（管理面板 `http://127.0.0.1:8083/admin` 的口令），均与 Google 账号无关（权限 `0600`） |
+| `gemini.db` | 后端的账号与请求记录 |
+| `backend.log` / `backend.pid` | 插件在后台启动的后端的日志与进程号 |
+
+只要不删除 `secrets.json`，重新配置不会更换这两个值。要查看或管理已导入的账号，可打开管理面板，用 `adminToken` 登录；把它复制到剪贴板（macOS，不在终端显示）：
+```bash
+node -p "require(require('path').join(process.env.GEMINI_WEB_DATA_DIR || require('os').homedir() + '/.local/share/magpie-gemini-web', 'secrets.json')).adminToken" | tr -d '\n' | pbcopy
+```
 
 ---
 
-## 3. 快速上手
+## 3. 连接已有后端（自定义地址 + API key）
 
-插件与后端需要分别安装。Magpie 安装插件时不会执行安装脚本，也不会自动启动 Go 后端。先获取管理脚本：
+已经自己运行了 gemini-web2api-go（其他机器、反向代理或自定义端口）时，登录时选 **「连接已有后端（自定义地址 + API key）」**：
+
+- **Backend OpenAI base URL**：留空使用默认的 `http://127.0.0.1:8083/v1`，或填入你的地址（必须以 `/v1` 结尾；本地只允许 loopback HTTP，远程须 HTTPS）。
+- **API key**：后端的 `API_KEY`（不是 Google Cookie）。
+
+这种方式下插件不会安装或启动任何后端，Cookie 也需要你自己在后端管理面板导入（关键项包括 `SID`、`HSID`、`SSID`、`APISID`、`SAPISID`、`__Secure-1PSID`、`__Secure-1PSIDTS`，仅有两个 `__Secure-*` 值未必足够）。
+
+> 重新登录（例如更换 API key 或 base URL）后，正在运行的 Magpie 不会重新读取 provider 地址，需要执行 `magpie plugin off magpie-gemini-web && magpie plugin on magpie-gemini-web` 或重启 Magpie App 才会生效。
+>
+> 0.1.0 登录时若留空 base URL，会把空字符串存进登录信息；0.1.1 起改为存入补全后的默认地址。若遇到网关返回 502「Gemini Web has no endpoint configured」（[#3](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/3)），升级后重新登录一次，或登录时显式填写 `http://127.0.0.1:8083/v1`。
+
+### 命令行管理脚本（开发者）
+
+从源码仓库也可以手动管理同一个数据目录里的后端（需要 Node.js >= 22）：
 ```bash
 git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git
 cd magpie-gemini-web
+npm run backend:install   # 下载并校验 v4.22.0 二进制，创建 config.json / secrets.json
+npm run backend:start     # 前台运行后端
+npm run backend:status    # 检查后端是否响应
 ```
-官方后端自 v4.22.0 起已包含 `gemini-4-argon` / `gemini-4-argon-thinking`，但不核对上游实际返回的模型：无权限、Cookie 失效或配额耗尽时会被静默降级成 3.5 Flash-Lite。需要身份校验与延迟优化时，请直接按第 5 节构建补丁版后端，再完成 Cookie 配置和插件登录；不要先启动官方后端占用同一端口。
-
-### 步骤 1：安装后端二进制（macOS arm64）
-
-运行内置下载安装脚本（锁定版本 v4.22.0，SHA-256 为 `c69ca75cf43017cf2a62dbf5c12b07f6bde66f403f714c32209b1ad350ed24c9`）：
-
-```bash
-npm run backend:install
-```
-
-该命令将在本地数据目录（默认 `~/.local/share/magpie-gemini-web`，或通过环境变量 `GEMINI_WEB_DATA_DIR` 自定义）完成：
-1. 校验哈希并原子化安装二进制至 `bin/gemini-web2api-go`（权限 `0700`）。
-2. 初始化 `config.json`（将 host 显式绑定为 `127.0.0.1`，权限 `0600`）。
-3. 生成随机的 `apiKey` 和 `adminToken` 并写入 `secrets.json`（权限 `0600`）。
-
-`secrets.json` 位于上述数据目录下（默认 `~/.local/share/magpie-gemini-web/secrets.json`），包含两个本地随机凭证，均与 Google 账号无关：
-
-| 字段 | 用途 |
-| :--- | :--- |
-| `apiKey` | 插件访问后端的密钥（`gw_` 开头），在 Magpie 登录插件时填写 |
-| `adminToken` | 后端管理面板 `http://127.0.0.1:8083/admin` 的登录口令 |
-
-只要不删除 `secrets.json`，重复执行 `backend:install` 不会重新生成这两个值；若重新生成了 `apiKey`，需要在 Magpie 中重新登录插件。
-
-### 步骤 2：启动后端服务
-
-```bash
-npm run backend:start
-```
-
-- 该服务在前台运行，会将日志输出至终端。
-- 可在另一终端执行以下命令确认后端已监听并响应：
-  ```bash
-  npm run backend:status
-  ```
+用这些脚本装好的后端，一键配置会直接复用（同一套密钥），不会重复下载。
 
 > 后端成功启动并列出基础模型目录，只代表本地服务通路正常，不代表全部能力可用。2026-10-14 已通过真实 Magpie 网关验证匿名 Flash Lite 普通对话；工具调用在非流式、流式和直连后端对照中均未成功，`tool_choice` 未得到满足。上游未返回缓存 token 统计，Magpie 显示的 0 不代表 Google 的实际缓存命中情况。登录态模型需要有效 Cookie。后续 Argon 补丁已验证真实 Magpie 普通对话、SSE 和首轮工具调用；工具结果回传含正确值但未严格遵循仅回显要求，图片和 Argon 缓存未验证。本地验收记录不随公开仓库或 npm 包分发。
-
-### 步骤 3：在后端管理后台配置 Google Cookie
-
-在本地浏览器中打开：
-```
-http://127.0.0.1:8083/admin
-```
-- 输入 `secrets.json` 中的 `adminToken` 登录管理面板。可用以下命令把它复制到剪贴板（macOS，不在终端显示）：
-  ```bash
-  node -p "require(require('path').join(process.env.GEMINI_WEB_DATA_DIR || require('os').homedir() + '/.local/share/magpie-gemini-web', 'secrets.json')).adminToken" | tr -d '\n' | pbcopy
-  ```
-- 在 Cookie 管理页面导入 Gemini 网页请求的完整 Cookie header；上游文档列出的关键项包括 `SID`、`HSID`、`SSID`、`APISID`、`SAPISID`、`__Secure-1PSID`、`__Secure-1PSIDTS`。仅有两个 `__Secure-*` 值未必足够。
-- **注意**：Cookie 仅保存在后端的本地 SQLite 数据库中，插件绝不存储或转发 Cookie。
-
-### 步骤 4：在 Magpie 中加载插件与登录
-
-1. **添加插件**（npm 安装）：
-   ```bash
-   magpie plugin add magpie-gemini-web
-   ```
-   > 尚未发布到 npm 或从源码调试时可用 `magpie plugin add github:BUKOWSKIREAL/magpie-gemini-web` 或 `magpie plugin add /absolute/path/to/magpie-gemini-web`。
-
-2. **登录提供商**：
-   ```bash
-   magpie plugin login gemini-web
-   ```
-   - **Backend OpenAI base URL**：留空使用默认的 `http://127.0.0.1:8083/v1`，或填入其他自定义本地/代理地址。
-   - **Gemini Web backend API key**：填入 `secrets.json` 中的 `apiKey`（不是 Google Cookie）。可先用以下命令把它复制到剪贴板（macOS，不在终端显示），登录时直接粘贴：
-     ```bash
-     node -p "require(require('path').join(process.env.GEMINI_WEB_DATA_DIR || require('os').homedir() + '/.local/share/magpie-gemini-web', 'secrets.json')).apiKey" | tr -d '\n' | pbcopy
-     ```
-     其他系统去掉末尾的 `| tr -d '\n' | pbcopy` 即可直接输出。
-
-   > 重新登录（例如更换 API key 或 base URL）后，正在运行的 Magpie 不会重新读取 provider 地址，需要执行 `magpie plugin off magpie-gemini-web && magpie plugin on magpie-gemini-web` 或重启 Magpie App 才会生效。
-   >
-   > 0.1.0 登录时若留空 base URL，会把空字符串存进登录信息；0.1.1 起改为存入补全后的默认地址。若遇到网关返回 502「Gemini Web has no endpoint configured」（[#3](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/3)），升级后重新登录一次，或登录时显式填写 `http://127.0.0.1:8083/v1`。
-
-3. **配置插件选项（开启工具或图片支持）**：
-   插件默认关闭工具调用与图片输入以确保安全和兼容性。若 Coding Agent（如 Claude Code / OpenCode / Cursor）需要使用工具调用，**必须显式开启 `allowTools`**，否则发送工具请求时将被插件直接返回 400 拦截：
-
-   ```bash
-   # 显式开启工具调用与图片输入
-   magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
-
-   # 仅保持默认保守配置（关闭工具与图片）
-   magpie plugin options magpie-gemini-web '{"allowTools":false,"allowImages":false}'
-   ```
 
 ---
 
@@ -208,6 +171,8 @@ git -C backend-source apply ../patches/argon.patch
    ```bash
    npm run backend:start:argon
    ```
+
+   装好后也可以不手动启动：插件认可已安装 Argon 版的哈希，Magpie 启动时会像官方版一样在后台拉起它。若插件已在后台运行旧版后端，先结束它（`kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`）再启动，否则端口会被占用。
 
 > **版本切换提示**：如果重新执行官方标准的 `npm run backend:install`，将自动下载官方原版二进制并覆盖当前版本：Argon 模型仍可用，但不再有身份校验与延迟优化；重新执行 `npm run backend:install:argon` 即可切回 Argon 版本。
 

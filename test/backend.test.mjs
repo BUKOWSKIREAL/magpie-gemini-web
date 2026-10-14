@@ -2,6 +2,9 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import zlib from 'node:zlib';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { GeminiWebPlugin } from '../index.mjs';
 import {
   DEFAULT_BASE,
@@ -11,6 +14,9 @@ import {
   listModels,
   forward
 } from '../lib/backend.mjs';
+
+// The plugin starts the backend it manages in the data dir; keep tests away from the real one.
+process.env.GEMINI_WEB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-gemini-web-test-'));
 
 describe('1. URL normalization/root/subpath/HTTPS/local IPv6', () => {
   it('normalizes root path to /v1', () => {
@@ -150,7 +156,7 @@ describe('6. Logged out loader returns {}', () => {
 describe('7. API prompt default validation', () => {
   it('validates blank or valid URL and returns error string for invalid', async () => {
     const plugin = await GeminiWebPlugin({});
-    const validate = plugin.auth.methods[0].prompts[0].validate;
+    const validate = plugin.auth.methods.find(m => m.type === 'api').prompts[0].validate;
 
     assert.equal(validate(''), undefined);
     assert.equal(validate('http://127.0.0.1:8083/v1'), undefined);
@@ -162,7 +168,7 @@ describe('7. API prompt default validation', () => {
 
   it('authorize persists the resolved baseURL when the prompt is left blank', async () => {
     const plugin = await GeminiWebPlugin({}, { baseURL: 'http://127.0.0.1:9000' });
-    const authorize = plugin.auth.methods[0].authorize;
+    const authorize = plugin.auth.methods.find(m => m.type === 'api').authorize;
 
     assert.deepEqual(await authorize({ baseURL: '' }), {
       type: 'success',
