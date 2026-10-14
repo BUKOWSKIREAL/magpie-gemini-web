@@ -8,12 +8,15 @@
 
 1. 在 Magpie 插件市场安装 **magpie-gemini-web**。
 2. 登录 Gemini Web，选 **「一键配置本地 Gemini Web（推荐）」**。插件会自动下载并校验后端，在后台启动它。
-3. 按提示复制 Cookie：
-   1. 打开 <https://gemini.google.com/app>，确认已登录 Google 账号；
+3. 按提示复制 Cookie，**一定要用无痕 / 隐私窗口**（推荐 Firefox）：
+   1. 在无痕窗口打开 <https://gemini.google.com/app>，登录要使用的 Google 账号；
    2. 按 F12（macOS 按 ⌥⌘I），切到 **Network（网络）**，刷新页面；
    3. 点任意一个 `gemini.google.com` 请求 → **Headers（标头）** → **Request Headers（请求标头）**；
-   4. 复制 `cookie` 那一行的值，粘贴回 Magpie。
+   4. 复制 `cookie` 那一行的值，粘贴回 Magpie；
+   5. 直接关掉无痕窗口，**不要点退出登录**（退出会让这份 Cookie 失效）。
 4. 插件检测账号可用后自动完成登录。
+
+> **为什么要用无痕窗口？** 后端会定时刷新这份登录来保活。如果它和你平时用的浏览器是同一个登录会话，Google 会把会话作废，你的浏览器就会退出所有 Google 服务。无痕窗口能给后端一份独立的会话；更稳妥的做法是给后端单独用一个 Google 小号。
 
 之后 Magpie 每次启动都会自动拉起后端，不用再管。想加更多账号，再走一遍一键配置即可。
 

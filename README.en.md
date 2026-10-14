@@ -8,12 +8,15 @@ Use Gemini on the web through your Google account in [Magpie](https://usemagpie.
 
 1. Install **magpie-gemini-web** from the Magpie plugin market.
 2. Sign in to Gemini Web and choose **一键配置本地 Gemini Web (one-click local setup, recommended)**. The plugin downloads the backend, verifies it and starts it in the background.
-3. Copy your cookie when prompted:
-   1. Open <https://gemini.google.com/app> and make sure you're signed in to your Google account.
+3. Copy your cookie when prompted. **Use a private / incognito window** (Firefox recommended):
+   1. In the private window, open <https://gemini.google.com/app> and sign in to the Google account you want to use.
    2. Press F12 (⌥⌘I on macOS), switch to **Network** and reload the page.
    3. Click any `gemini.google.com` request and go to **Headers** → **Request Headers**.
    4. Copy the value of the `cookie` line and paste it into Magpie.
+   5. Close the private window. **Don't sign out**, because signing out invalidates the cookie.
 4. The plugin checks that the account works, then finishes signing in.
+
+> **Why a private window?** The backend refreshes this sign-in periodically to keep it alive. If it shares a session with the browser you normally use, Google revokes the session and your browser gets signed out of every Google service. A private window gives the backend a session of its own. Using a separate Google account for the backend is safer still.
 
 From then on, Magpie starts the backend automatically every time it launches. To add another account, run the one-click setup again.
 
