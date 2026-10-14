@@ -81,6 +81,10 @@ npm run backend:install:argon
 
 安装后重启 Magpie 即可，插件会在后台启动 Argon 版（如有旧后端在运行，先 `kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`）。运行 `npm run backend:install` 可切回官方版。
 
+## 友链
+
+[LINUX DO](https://linux.do/) — 真诚、友善、团结、专业的技术社区。
+
 ## 许可证
 
 MIT。上游 gemini-web2api-go 同为 MIT（见 `LICENSE-UPSTREAM`）。
