@@ -28,7 +28,13 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
               return e.message;
             }
           }
-        }]
+        }],
+        // Magpie stores raw prompt inputs as metadata unless authorize returns its own;
+        // write the resolved URL so a blank answer doesn't persist as baseURL: "".
+        authorize: async inputs => ({
+          type: 'success',
+          metadata: { baseURL: normalizeBaseURL(inputs?.baseURL || opts.baseURL) }
+        })
       }],
       async loader(getAuth) {
         const auth = await getAuth();
