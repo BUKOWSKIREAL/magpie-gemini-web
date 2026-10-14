@@ -54,6 +54,15 @@ npm run backend:install
 2. 初始化 `config.json`（将 host 显式绑定为 `127.0.0.1`，权限 `0600`）。
 3. 生成随机的 `apiKey` 和 `adminToken` 并写入 `secrets.json`（权限 `0600`）。
 
+`secrets.json` 位于上述数据目录下（默认 `~/.local/share/magpie-gemini-web/secrets.json`），包含两个本地随机凭证，均与 Google 账号无关：
+
+| 字段 | 用途 |
+| :--- | :--- |
+| `apiKey` | 插件访问后端的密钥（`gw_` 开头），在 Magpie 登录插件时填写 |
+| `adminToken` | 后端管理面板 `http://127.0.0.1:8083/admin` 的登录口令 |
+
+只要不删除 `secrets.json`，重复执行 `backend:install` 不会重新生成这两个值；若重新生成了 `apiKey`，需要在 Magpie 中重新登录插件。
+
 ### 步骤 2：启动后端服务
 
 ```bash
@@ -74,7 +83,10 @@ npm run backend:start
 ```
 http://127.0.0.1:8083/admin
 ```
-- 输入 `secrets.json` 中的 `adminToken` 登录管理面板。
+- 输入 `secrets.json` 中的 `adminToken` 登录管理面板。可用以下命令把它复制到剪贴板（macOS，不在终端显示）：
+  ```bash
+  node -p "require(require('path').join(process.env.GEMINI_WEB_DATA_DIR || require('os').homedir() + '/.local/share/magpie-gemini-web', 'secrets.json')).adminToken" | tr -d '\n' | pbcopy
+  ```
 - 在 Cookie 管理页面导入 Gemini 网页请求的完整 Cookie header；上游文档列出的关键项包括 `SID`、`HSID`、`SSID`、`APISID`、`SAPISID`、`__Secure-1PSID`、`__Secure-1PSIDTS`。仅有两个 `__Secure-*` 值未必足够。
 - **注意**：Cookie 仅保存在后端的本地 SQLite 数据库中，插件绝不存储或转发 Cookie。
 
@@ -90,8 +102,12 @@ http://127.0.0.1:8083/admin
    ```bash
    magpie plugin login gemini-web
    ```
-   - **Gemini Web backend API key**：填入 `secrets.json` 中的 `apiKey`。
    - **Backend OpenAI base URL**：留空使用默认的 `http://127.0.0.1:8083/v1`，或填入其他自定义本地/代理地址。
+   - **Gemini Web backend API key**：填入 `secrets.json` 中的 `apiKey`（不是 Google Cookie）。可先用以下命令把它复制到剪贴板（macOS，不在终端显示），登录时直接粘贴：
+     ```bash
+     node -p "require(require('path').join(process.env.GEMINI_WEB_DATA_DIR || require('os').homedir() + '/.local/share/magpie-gemini-web', 'secrets.json')).apiKey" | tr -d '\n' | pbcopy
+     ```
+     其他系统去掉末尾的 `| tr -d '\n' | pbcopy` 即可直接输出。
 
    > 重新登录（例如更换 API key 或 base URL）后，正在运行的 Magpie 不会重新读取 provider 地址，需要执行 `magpie plugin off magpie-gemini-web && magpie plugin on magpie-gemini-web` 或重启 Magpie App 才会生效。
    >
