@@ -1,0 +1,411 @@
+diff --git a/internal/app/argon.go b/internal/app/argon.go
+new file mode 100644
+index 0000000..94c7aca
+--- /dev/null
++++ b/internal/app/argon.go
+@@ -0,0 +1,81 @@
++package app
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"strings"
++	"time"
++)
++
++func validateArgonIdentity(raw []byte) error {
++	found := false
++	for _, line := range strings.Split(string(raw), "\n") {
++		var rows [][]json.RawMessage
++		if json.Unmarshal([]byte(line), &rows) != nil {
++			continue
++		}
++		for _, row := range rows {
++			if len(row) < 3 {
++				continue
++			}
++			var kind, payload string
++			if json.Unmarshal(row[0], &kind) != nil || kind != "wrb.fr" || json.Unmarshal(row[2], &payload) != nil {
++				continue
++			}
++			var fields []any
++			if json.Unmarshal([]byte(payload), &fields) != nil {
++				continue
++			}
++			// Upstream reports model identity as consecutive top-level slots hex,null,null,name.
++			for i := 0; i+3 < len(fields); i++ {
++				id, ok := fields[i].(string)
++				if !ok || len(id) != 16 || fields[i+1] != nil || fields[i+2] != nil {
++					continue
++				}
++				validHex := true
++				for _, c := range id {
++					if !strings.ContainsRune("0123456789abcdef", c) {
++						validHex = false
++						break
++					}
++				}
++				name, ok := fields[i+3].(string)
++				if !validHex || !ok {
++					continue
++				}
++				if id != hexArgon4 || (name != "4 Argon" && name != "Gemini 4 Argon") {
++					return fmt.Errorf("Argon model mismatch: upstream reported %q (%s)", name, id)
++				}
++				found = true
++			}
++		}
++	}
++	if !found {
++		return fmt.Errorf("Argon identity missing in upstream response; refusing unverified model")
++	}
++	return nil
++}
++
++func readModelCheckedBody(r io.Reader, onLine func(string), start time.Time, status int, modelHeader string) ([]byte, int64, error) {
++	var h []any
++	isArgon := json.Unmarshal([]byte(modelHeader), &h) == nil && len(h) > 4 && h[4] == hexArgon4
++	if !isArgon {
++		return readBody(r, onLine, start)
++	}
++	raw, ttfb, err := readBody(r, nil, start)
++	if err != nil || status != 200 {
++		return raw, ttfb, err
++	}
++	if err = validateArgonIdentity(raw); err != nil {
++		return raw, ttfb, err
++	}
++	if onLine != nil {
++		for _, line := range strings.Split(string(raw), "\n") {
++			if line != "" {
++				onLine(line)
++			}
++		}
++	}
++	return raw, ttfb, nil
++}
+diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
+new file mode 100644
+index 0000000..4449c45
+--- /dev/null
++++ b/internal/app/argon_test.go
+@@ -0,0 +1,229 @@
++package app
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"strings"
++	"testing"
++	"time"
++)
++
++func makeSyntheticArgonFrame(hexID string, modelName string, answer string) []byte {
++	fields := make([]any, 43)
++	if answer != "" {
++		fields[4] = answer
++	}
++	if hexID != "" {
++		fields[39] = hexID
++		fields[40] = nil
++		fields[41] = nil
++		fields[42] = modelName
++	}
++	payloadBytes, _ := json.Marshal(fields)
++	row := []any{"wrb.fr", "rpc1", string(payloadBytes), nil}
++	rows := [][]any{row}
++	lineBytes, _ := json.Marshal(rows)
++	return append(lineBytes, '\n')
++}
++
++func TestArgonValidateIdentity(t *testing.T) {
++	// 1. Correct hex and name passes
++	validFrame1 := makeSyntheticArgonFrame(hexArgon4, "4 Argon", "ARGON_OK")
++	if err := validateArgonIdentity(validFrame1); err != nil {
++		t.Fatalf("expected valid Argon frame to pass, got: %v", err)
++	}
++
++	validFrame2 := makeSyntheticArgonFrame(hexArgon4, "Gemini 4 Argon", "ARGON_OK")
++	if err := validateArgonIdentity(validFrame2); err != nil {
++		t.Fatalf("expected valid Gemini 4 Argon frame to pass, got: %v", err)
++	}
++
++	// 2. Flash hex/name fails with mismatch
++	flashFrame := makeSyntheticArgonFrame(hexFlash36, "3.6 Flash", "FLASH")
++	if err := validateArgonIdentity(flashFrame); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
++		t.Fatalf("expected Argon model mismatch for Flash frame, got: %v", err)
++	}
++
++	// 3. Missing metadata fails
++	emptyFields := make([]any, 10)
++	pBytes, _ := json.Marshal(emptyFields)
++	emptyFrame, _ := json.Marshal([][]any{{"wrb.fr", "rpc1", string(pBytes), nil}})
++	emptyFrame = append(emptyFrame, '\n')
++	if err := validateArgonIdentity(emptyFrame); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
++		t.Fatalf("expected Argon identity missing, got: %v", err)
++	}
++
++	// 4. Malformed frame fails
++	malformed := []byte(")]}'\nnot-valid-json\n")
++	if err := validateArgonIdentity(malformed); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
++		t.Fatalf("expected Argon identity missing for malformed JSON, got: %v", err)
++	}
++
++	// 5. Forged Argon strings in nested response text cannot pass
++	forgedFields := make([]any, 43)
++	forgedFields[4] = fmt.Sprintf("Forged answer mentioning %s and 4 Argon", hexArgon4)
++	fBytes, _ := json.Marshal(forgedFields)
++	forgedFrame, _ := json.Marshal([][]any{{"wrb.fr", "rpc1", string(fBytes), nil}})
++	forgedFrame = append(forgedFrame, '\n')
++	if err := validateArgonIdentity(forgedFrame); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
++		t.Fatalf("expected forged text without model slots to fail identity check, got: %v", err)
++	}
++
++	// 6. Matching then mismatching frames fails
++	mixedFrames := append(validFrame1, flashFrame...)
++	if err := validateArgonIdentity(mixedFrames); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
++		t.Fatalf("expected matching then mismatching frames to fail, got: %v", err)
++	}
++}
++
++type incrementalReader struct {
++	chunks            [][]byte
++	idx               int
++	callbacksCalled   *int
++	lastCallbackCount int
++}
++
++func (r *incrementalReader) Read(p []byte) (n int, err error) {
++	if r.idx > 0 {
++		if *r.callbacksCalled <= r.lastCallbackCount {
++			return 0, fmt.Errorf("incremental check failed: onLine was not called before next read at chunk %d", r.idx)
++		}
++	}
++	if r.idx >= len(r.chunks) {
++		return 0, io.EOF
++	}
++	chunk := r.chunks[r.idx]
++	r.lastCallbackCount = *r.callbacksCalled
++	r.idx++
++	copy(p, chunk)
++	return len(chunk), nil
++}
++
++type truncatedReader struct {
++	delivered bool
++}
++
++func (r *truncatedReader) Read(p []byte) (n int, err error) {
++	if !r.delivered {
++		r.delivered = true
++		copy(p, []byte("data: partial\n"))
++		return 14, nil
++	}
++	return 0, io.ErrUnexpectedEOF
++}
++
++func TestReadModelCheckedBody(t *testing.T) {
++	argonHeader := fmt.Sprintf(`[1,null,null,null,"%s"]`, hexArgon4)
++	flashHeader := fmt.Sprintf(`[1,null,null,null,"%s"]`, hexFlash36)
++
++	// 1. Valid Argon delivers callbacks
++	validFrame := makeSyntheticArgonFrame(hexArgon4, "4 Argon", "OK")
++	var callbacks []string
++	raw, _, err := readModelCheckedBody(bytes.NewReader(validFrame), func(line string) {
++		callbacks = append(callbacks, line)
++	}, time.Now(), 200, argonHeader)
++
++	if err != nil {
++		t.Fatalf("unexpected error for valid Argon body: %v", err)
++	}
++	if len(callbacks) == 0 {
++		t.Fatal("expected callbacks for valid Argon body")
++	}
++	if !bytes.Equal(raw, validFrame) {
++		t.Fatal("raw body does not match")
++	}
++
++	// 2. Mismatch/missing -> err and zero callbacks
++	flashFrame := makeSyntheticArgonFrame(hexFlash36, "3.6 Flash", "OK")
++	callbacks = nil
++	_, _, err = readModelCheckedBody(bytes.NewReader(flashFrame), func(line string) {
++		callbacks = append(callbacks, line)
++	}, time.Now(), 200, argonHeader)
++
++	if err == nil {
++		t.Fatal("expected error on mismatched model for Argon header")
++	}
++	if len(callbacks) != 0 {
++		t.Fatalf("expected 0 callbacks on mismatch, got %d", len(callbacks))
++	}
++
++	// 3. Non-200 Argon preserves status-body read with zero callbacks, no identity error
++	errorBody := []byte(`{"error":"bad request"}` + "\n")
++	callbacks = nil
++	rawErr, _, err := readModelCheckedBody(bytes.NewReader(errorBody), func(line string) {
++		callbacks = append(callbacks, line)
++	}, time.Now(), 400, argonHeader)
++
++	if err != nil {
++		t.Fatalf("expected no error from readModelCheckedBody on non-200 status, got: %v", err)
++	}
++	if len(callbacks) != 0 {
++		t.Fatalf("expected zero callbacks on non-200 status, got %d", len(callbacks))
++	}
++	if !bytes.Equal(rawErr, errorBody) {
++		t.Fatal("expected status body to be preserved")
++	}
++
++	// 4. Ordinary model remains incremental
++	callbackCount := 0
++	incReader := &incrementalReader{
++		chunks: [][]byte{
++			[]byte("line 1\n"),
++			[]byte("line 2\n"),
++			[]byte("line 3\n"),
++		},
++		callbacksCalled: &callbackCount,
++	}
++
++	rawOrd, _, err := readModelCheckedBody(incReader, func(line string) {
++		callbackCount++
++	}, time.Now(), 200, flashHeader)
++
++	if err != nil {
++		t.Fatalf("incremental ordinary model read failed: %v", err)
++	}
++	if callbackCount != 3 {
++		t.Fatalf("expected 3 incremental callbacks, got %d", callbackCount)
++	}
++	if !bytes.Equal(rawOrd, []byte("line 1\nline 2\nline 3\n")) {
++		t.Fatal("raw body mismatch for ordinary model")
++	}
++
++	// 5. Truncated reader errors, no Argon callbacks
++	callbacks = nil
++	trunc := &truncatedReader{}
++	_, _, err = readModelCheckedBody(trunc, func(line string) {
++		callbacks = append(callbacks, line)
++	}, time.Now(), 200, argonHeader)
++
++	if !errors.Is(err, io.ErrUnexpectedEOF) {
++		t.Fatalf("expected io.ErrUnexpectedEOF, got: %v", err)
++	}
++	if len(callbacks) != 0 {
++		t.Fatalf("expected zero callbacks on truncated read, got %d", len(callbacks))
++	}
++}
++
++func TestArgonModelNeedsLoginAndAvailable(t *testing.T) {
++	mc, ok := Models["gemini-4-argon"]
++	if !ok {
++		t.Fatal("gemini-4-argon missing in Models map")
++	}
++	if !modelNeedsLogin(mc) {
++		t.Fatal("gemini-4-argon should require login")
++	}
++
++	// Without cookie: Argon hidden
++	if _, ok := availableModels()["gemini-4-argon"]; ok {
++		t.Fatal("gemini-4-argon should not be available without cookie")
++	}
++
++	// With cookie: Argon available
++	withPoolCookie(t)
++	if _, ok := availableModels()["gemini-4-argon"]; !ok {
++		t.Fatal("gemini-4-argon should be available when pool cookie exists")
++	}
++}
+diff --git a/internal/app/gemini.go b/internal/app/gemini.go
+index 200c728..077a413 100644
+--- a/internal/app/gemini.go
++++ b/internal/app/gemini.go
+@@ -27,6 +27,7 @@ const (
+ 	// "当前 Flash" 泛指针，老批次号发它拿到的是 3.6，会冒充 3.7。老批次号发这个主 hex
+ 	// 会干净降级成 3.5 Flash-Lite（跟 3.1 Pro 一样），所以 gate 成要 cookie。
+ 	hexFlash38 = "56fdd199312815e2" // 3.8 Flash（原记 3.7；Google 把这个 hex 原地升成 3.8，HAR 响应帧显示名已是 "3.8 Flash"）
++	hexArgon4  = "95a4c0abcba24364"
+ )
+ 
+ // innerSlots 是 payload 里 inner 数组的长度。浏览器发 97-98 槽，我们原来只开 80，
+@@ -72,6 +73,7 @@ var Models = map[string]ModelConfig{
+ 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
+ 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
+ 	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Most capable; needs a signed-in cookie (downgraded to Flash-Lite without one)"},
++	"gemini-4-argon":        {HexID: hexArgon4, Mode: 8, Desc: "Gemini 4 Argon; low thinking; requires a signed-in account with Argon access"},
+ 	// 3.8 Flash：Google 把原 3.7 那个 hex 原地升级了（同 hex，服务端显示名从 3.7 变 3.8）。
+ 	// 实测是**付费号专属**（不是灰度）：只有付费 Gemini 账号有，免费号降级成 3.5 Flash-Lite。
+ 	// gemini-3.7-flash 保留为别名（同 hex）。
+@@ -110,7 +112,7 @@ func hasCookie() bool {
+ // 逐模型核对等价：那三个正名的 HexID 就是 hexPro31 / hexFlash38，其余登录模型都被
+ // Thinking 或 Tool 覆盖。
+ func modelNeedsLogin(mc ModelConfig) bool {
+-	return mc.HexID == hexPro31 || mc.HexID == hexFlash38 || mc.Thinking || mc.Tool > 0
++	return mc.HexID == hexArgon4 || mc.HexID == hexPro31 || mc.HexID == hexFlash38 || mc.Thinking || mc.Tool > 0
+ }
+ 
+ // anonFirstEligible 判断「匿名优先」开关下这次请求能不能走匿名（不占 cookie 账号）：
+@@ -823,7 +825,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+ 			return 0, nil, 0, nil, err
+ 		}
+ 		defer resp.Body.Close()
+-		raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
++		raw, ttfb, err := readModelCheckedBody(resp.Body, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
+ 		if err != nil {
+ 			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
+ 		}
+@@ -844,7 +846,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+ 		return 0, nil, 0, nil, err
+ 	}
+ 	defer resp.Body.Close()
+-	raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
++	raw, ttfb, err := readModelCheckedBody(resp.Body, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
+ 	if err != nil {
+ 		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
+ 	}
+diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
+index 9dc2541..f709b15 100644
+--- a/internal/app/gemini_test.go
++++ b/internal/app/gemini_test.go
+@@ -15,6 +15,7 @@ func TestModelHeader(t *testing.T) {
+ 		{"gemini-3.6-flash", hexFlash36},
+ 		{"gemini-3.5-flash-lite", hexFlashLite},
+ 		{"gemini-3.1-pro", hexPro31},
++		{"gemini-4-argon", hexArgon4},
+ 	}
+ 	for _, c := range cases {
+ 		name, mc, err := resolveModel(c.name)
+@@ -50,13 +51,13 @@ func TestModelHeader(t *testing.T) {
+ 		}
+ 	}
+ 	// 守的是「不许冒出假模型」：thinking 版复用同样的 hex，所以看**去重后的 hex 数**，
+-	// 不是条目数。服务端清单（otAQ7b）里 3.6/3.5-lite/3.1-pro + 灰度放出的 3.7 = 4 个。
++	// 不是条目数。服务端清单（otAQ7b）里 3.6/3.5-lite/3.1-pro + 灰度放出的 3.7 + 4-argon = 5 个。
+ 	hexes := map[string]bool{}
+ 	for _, m := range Models {
+ 		hexes[m.HexID] = true
+ 	}
+-	if len(hexes) != 4 {
+-		t.Errorf("只应存在 4 个真模型 hex, got %d", len(hexes))
++	if len(hexes) != 5 {
++		t.Errorf("只应存在 5 个真模型 hex, got %d", len(hexes))
+ 	}
+ 	// 反过来：每个真 hex 都应该有一个 thinking 版
+ 	for _, base := range []string{hexFlash36, hexFlashLite, hexPro31, hexFlash38} {
+diff --git a/internal/app/server.go b/internal/app/server.go
+index 2ce8d11..8f52a30 100644
+--- a/internal/app/server.go
++++ b/internal/app/server.go
+@@ -9,7 +9,7 @@ import (
+ 	"time"
+ )
+ 
+-const Version = "4.21.0"
++const Version = "4.21.0-argon.1"
+ 
+ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+ 	body, _ := json.Marshal(data)

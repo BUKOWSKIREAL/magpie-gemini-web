@@ -1,0 +1,12 @@
+evidence/
+node_modules/
+*.tgz
+.runtime/
+.env
+backend-build/
+backend-source/
+.DS_Store
+.env.*
+*.db
+*.db-wal
+*.db-shm

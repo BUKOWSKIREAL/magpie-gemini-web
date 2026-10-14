@@ -1,0 +1,53 @@
+{
+  "name": "magpie-gemini-web",
+  "version": "0.1.0",
+  "description": "Gemini Web provider for Magpie, backed by gemini-web2api-go",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BUKOWSKIREAL/magpie-gemini-web.git"
+  },
+  "homepage": "https://github.com/BUKOWSKIREAL/magpie-gemini-web#readme",
+  "bugs": {
+    "url": "https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "files": [
+    "index.mjs",
+    "lib/",
+    "scripts/",
+    "patches/",
+    "README.md",
+    "LICENSE",
+    "LICENSE-UPSTREAM"
+  ],
+  "keywords": [
+    "magpie-plugin",
+    "opencode-plugin",
+    "opencode",
+    "provider",
+    "gemini",
+    "gemini-web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "backend:install": "node scripts/backend.mjs install",
+    "backend:start": "node scripts/backend.mjs start",
+    "backend:status": "node scripts/backend.mjs status",
+    "backend:build:argon": "node scripts/backend-argon.mjs build",
+    "backend:install:argon": "node scripts/backend-argon.mjs install",
+    "backend:start:argon": "node scripts/backend-argon.mjs start"
+  },
+  "magpie": {
+    "maxConcurrency": 1
+  }
+}
