@@ -83,6 +83,8 @@ describe('3. Invalid options validation', () => {
     assert.equal(s.outputLimit, 8192);
     assert.equal(s.requestTimeoutMs, 240000);
     assert.equal(s.modelTimeoutMs, 10000);
+    assert.equal(s.stripCitations, true);
+    assert.equal(settings({ stripCitations: false }).stripCitations, false);
   });
 
   it('rejects unknown options to catch typos', () => {
@@ -97,6 +99,7 @@ describe('3. Invalid options validation', () => {
     assert.throws(() => settings({ outputLimit: 50000, contextLimit: 32768 }), /outputLimit: cannot exceed contextLimit/);
     assert.throws(() => settings({ requestTimeoutMs: 'slow' }), /requestTimeoutMs: must be a positive integer/);
     assert.throws(() => settings({ modelTimeoutMs: -1 }), /modelTimeoutMs: must be a positive integer/);
+    assert.throws(() => settings({ stripCitations: 'off' }), /stripCitations: must be a boolean/);
   });
 });
 

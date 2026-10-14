@@ -39,6 +39,7 @@ magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
 | `baseURL` | `http://127.0.0.1:8083/v1` | 默认后端地址 |
 | `contextLimit` / `outputLimit` | `32768` / `8192` | 向客户端声明的上下文 / 输出上限 |
 | `requestTimeoutMs` / `modelTimeoutMs` | `240000` / `10000` | 请求 / 拉取模型列表的超时（毫秒） |
+| `stripCitations` | `true` | 去掉 Gemini 在回复里加的引用标记 `[cite: 1]`、`[cite_start]`（包括工具调用参数）。让 Gemini 编辑本身含有这类文本的代码时，可以设为 `false` |
 
 ## 思考档位
 
