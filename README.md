@@ -1,6 +1,6 @@
 # magpie-gemini-web
 
-Gemini Web provider plugin for [Magpie](https://usemagpie.ai/)（遵循 OpenCode v1 插件接口规范），基于 [zexadev/gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) (v4.21.0) 独立原生后端构建。
+Gemini Web provider plugin for [Magpie](https://usemagpie.ai/)（遵循 OpenCode v1 插件接口规范），基于 [zexadev/gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) (v4.22.0) 独立原生后端构建。
 
 ---
 
@@ -39,11 +39,11 @@ Gemini Web provider plugin for [Magpie](https://usemagpie.ai/)（遵循 OpenCode
 git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git
 cd magpie-gemini-web
 ```
-首次使用 Argon 请直接按第 5 节构建补丁版后端，再完成 Cookie 配置和插件登录；不要先启动官方后端占用同一端口。
+官方后端自 v4.22.0 起已包含 `gemini-4-argon` / `gemini-4-argon-thinking`，但不核对上游实际返回的模型：无权限、Cookie 失效或配额耗尽时会被静默降级成 3.5 Flash-Lite。需要身份校验与延迟优化时，请直接按第 5 节构建补丁版后端，再完成 Cookie 配置和插件登录；不要先启动官方后端占用同一端口。
 
 ### 步骤 1：安装后端二进制（macOS arm64）
 
-运行内置下载安装脚本（锁定版本 v4.21.0，SHA-256 为 `f27006e6a5146a01f596235fb485d6b2118dcf90e61563f653078cbd74a63ed6`）：
+运行内置下载安装脚本（锁定版本 v4.22.0，SHA-256 为 `c69ca75cf43017cf2a62dbf5c12b07f6bde66f403f714c32209b1ad350ed24c9`）：
 
 ```bash
 npm run backend:install
@@ -144,14 +144,21 @@ http://127.0.0.1:8083/admin
 
 ## 5. 本地开发与实验性 Argon 支持 (Local Development & Argon Support)
 
-针对具备 Gemini 4 Argon 访问权限的账号，本项目提供了本地构建与接入支持：
+官方后端自 v4.22.0 起已支持 Gemini 4 Argon。本项目的补丁版在其基础上增加 Argon 身份校验与延迟优化，适合拥有 Argon 访问权限（付费 / Ultra）的账号：
 
 ### 5.1 架构与协议保护机制
-- **模型标识**：`gemini-4-argon`（固定 HexID `95a4c0abcba24364`，Mode 8，仅支持 low thinking 基础档位）。
-- **账号权限要求**：必须在后端管理面板配置拥有 Argon 访问权限的 Google 登录 Cookie；无 Cookie 或未获授权的账号无法使用该模型（未配 Cookie 时后端自动隐藏）。
-- **结构化元数据校验**：由于 Google Web 存在对未授权模型静默降级的问题，后端在底层响应解析层（`argon.go`）对 Argon 请求实行严格的结构化元数据身份校验（解析 `wrb.fr` payload 中的模型 hex 与显示名，而非依赖模型自述文本）。流式请求逐帧校验：确认 Argon 身份之前的帧先暂存、不发给客户端，确认后放行并继续增量转发（实测身份与首段正文同帧到达）。身份缺失或首次出现即不符时请求报错，不发送任何未验证内容；若放行之后上游又报告了其他模型，后端立即停止读取并发送流错误，但已发出的内容无法撤回。非流式请求仍完整读取后再校验。
-- **协议验证状态**：已通过真实 Magpie 网关验证普通对话和 SSE；后端记录的实际模型均为 `4 Argon`。首轮工具调用名称与参数正确，第二轮含正确测试值但附带额外说明，不代表工具兼容性已完全解决。本地验收记录不随公开仓库或 npm 包分发。
-- **`4.21.0-argon.2` 延迟优化**（2026-10-14 直连后端实测，单次样本、上游波动大，仅供参考）：
+- **模型标识**（模型定义来自上游 v4.22.0）：均为 HexID `95a4c0abcba24364`、Mode 8。
+
+  | 模型 | 网页思考档位 | 上游自报模型名 |
+  | :--- | :--- | :--- |
+  | `gemini-4-argon` | 低 | `4 Argon` |
+  | `gemini-4-argon-thinking` | 高（带 `reasoning_content`） | `4 Argon High` |
+
+  网页端的「中」档上游尚未支持（见 [#5](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/5)）。
+- **账号权限要求**：必须在后端管理面板配置拥有 Argon 访问权限的 Google 登录 Cookie；无 Cookie 时后端自动隐藏这两个模型。
+- **结构化元数据校验**：由于 Google Web 对无权限、Cookie 失效或配额耗尽的请求会静默降级，后端在底层响应解析层（`argon.go`）对 Argon 请求实行严格的结构化元数据身份校验（解析 `wrb.fr` payload 中的模型 hex 与显示名，而非依赖模型自述文本），并按请求的思考档位只接受对应的显示名（普通档 `4 Argon`、扩展思考 `4 Argon High`），档位被静默替换同样视为不符。流式请求逐帧校验：确认 Argon 身份之前的帧先暂存、不发给客户端，确认后放行并继续增量转发（实测身份与首段正文同帧到达）。身份缺失或首次出现即不符时请求报错，不发送任何未验证内容；若放行之后上游又报告了其他模型，后端立即停止读取并发送流错误，但已发出的内容无法撤回。非流式请求仍完整读取后再校验。
+- **协议验证状态**：`4.22.0-argon.1` 已通过真实 Magpie 网关验证两档的普通对话和 SSE：`gemini-4-argon` 后端记录实际模型 `4 Argon`，`gemini-4-argon-thinking` 记录 `4 Argon High` 并返回 `reasoning_content`。工具调用沿用 `4.21.0-argon.2` 的结论：首轮工具调用名称与参数正确，第二轮含正确测试值但附带额外说明，不代表工具兼容性已完全解决。本地验收记录不随公开仓库或 npm 包分发。
+- **延迟优化**（自 `4.21.0-argon.2` 起；2026-10-14 直连后端实测，单次样本、上游波动大，仅供参考）：
   - XSRF token 按账号身份缓存，不再因每次响应刷新 SIDCC 而失效，登录态请求的前置开销由约 0.9–1.3 秒降至约 10 毫秒；Cookie 轮转后在后台重取 token。
   - Argon 流式首字约 5.4 秒（同次总耗时 9.8 秒），不再等待整段生成结束。
   - 工具调用块闭合且函数名有效时即结束读取上游并返回 `tool_calls`，Argon 首轮工具调用约 6.1 秒。
@@ -163,17 +170,19 @@ http://127.0.0.1:8083/admin
 需要 upstream `go.mod` 声明的 Go 版本（Go 1.26+）与 Git。从插件根目录执行：
 ```bash
 git clone https://github.com/zexadev/gemini-web2api-go.git backend-source
-git -C backend-source checkout 93d9b384b2453c495942080f5838b8e71d6c1e6f
+git -C backend-source checkout a65b1d1a5ac614c1b455857334b4f1c73ab8fcfb
 git -C backend-source apply ../patches/argon.patch
 ```
 
-源码基于 upstream tag `v4.21.0`（锁定 commit `93d9b384b2453c495942080f5838b8e71d6c1e6f`）：
+源码基于 upstream tag `v4.22.0`（锁定 commit `a65b1d1a5ac614c1b455857334b4f1c73ab8fcfb`）。
+
+> **从 `4.21.0-argon.*` 升级**：旧补丁新增的文件会与新补丁冲突，请删除 `backend-source/` 后按上面三行重新获取源码，再从下方第 1 步开始。
 
 1. **构建 Argon 增强版后端**：
    ```bash
    npm run backend:build:argon
    ```
-   该命令将在 `backend-source/` 目录执行 Go 编译，并在 `backend-build/` 生成校验清单 `manifest.json` 与二进制（版本 `4.21.0-argon.2`）。
+   该命令将在 `backend-source/` 目录执行 Go 编译，并在 `backend-build/` 生成校验清单 `manifest.json` 与二进制（版本 `4.22.0-argon.1`）。
 
 2. **安装到本地数据目录**：
    ```bash
@@ -186,7 +195,7 @@ git -C backend-source apply ../patches/argon.patch
    npm run backend:start:argon
    ```
 
-> **版本切换提示**：如果重新执行官方标准的 `npm run backend:install`，将自动下载官方原版二进制并覆盖当前版本，Argon 模型将暂时不可用；重新执行 `npm run backend:install:argon` 即可切回 Argon 版本。
+> **版本切换提示**：如果重新执行官方标准的 `npm run backend:install`，将自动下载官方原版二进制并覆盖当前版本：Argon 模型仍可用，但不再有身份校验与延迟优化；重新执行 `npm run backend:install:argon` 即可切回 Argon 版本。
 
 ---
 
