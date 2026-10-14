@@ -51,6 +51,15 @@ magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
 - 数据目录：`~/.local/share/magpie-gemini-web`（可用 `GEMINI_WEB_DATA_DIR` 修改），日志在 `backend.log`。
 - 插件限制并发为 1，但无法保证账号不被 Google 风控，请自行承担风险。
 
+## 用量
+
+Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用量与重置时间，和 <https://gemini.google.com/usage> 页面一致。每个 Google 账号单独一张卡片，标题是它的邮箱：
+
+- 一键配置添加的账号会自动成为单独的一张卡片；
+- 后端里已有的账号（比如旧版本添加的），在 Magpie 里给 Gemini Web 再添加一个账号，选 **「添加本地后端里已有的 Google 账号」**，从列表里选择即可。之后可以删掉旧的 `API key …` 登录，它显示的是整个账号池合在一起的用量（每个窗口取用得最多的那个账号）。
+
+注意：请求最终由后端在账号池里轮流挑选 Google 账号，Magpie 在几张卡片之间怎么分配请求，不决定实际用的是哪个账号。只有一键配置的本地后端能显示用量；「连接已有后端」模式下读不到账号的 Cookie。
+
 ## 局限
 
 - 工具调用由上游用提示词模拟，不一定可靠，Flash 系列经常不调用工具。

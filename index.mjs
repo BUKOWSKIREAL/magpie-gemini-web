@@ -1,6 +1,7 @@
 import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER } from './lib/backend.mjs';
 import { ensureBackend, localBackend } from './lib/native.mjs';
 import { parseCookieInput, importCookie } from './lib/setup.mjs';
+import { usage, poolChoices, accountEmail } from './lib/usage.mjs';
 
 const ID = 'gemini-web';
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -17,6 +18,19 @@ const COOKIE_STEPS = [
   '5. 直接关掉无痕窗口，不要点「退出登录」（退出会让这份 Cookie 失效）',
   'Cookie 只保存在本机的 Gemini Web 后端里，不会发到别处。'
 ].join('\n');
+
+// signInFor is the Magpie sign-in for one account of the local backend's pool: the backend's
+// key, with the account's id for its usage card and its Google email, which names the card and
+// keeps each Google account a sign-in of its own (Magpie takes two sign-ins with one email for
+// one account, and two with neither for one when their key is the same).
+async function signInFor(local, account) {
+  const email = account.email || await accountEmail(account).catch(() => undefined);
+  return {
+    type: 'success',
+    key: local.apiKey,
+    metadata: { baseURL: local.baseURL, account: account.id, ...(email ? { email } : {}) }
+  };
+}
 
 // managedBackend is the local backend this plugin set up, when baseURL points at it.
 function managedBackend(baseURL) {
@@ -66,7 +80,8 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
         type: 'oauth',
         label: '一键配置本地 Gemini Web（推荐）',
         // Installs and starts the pinned backend, then takes the Gemini cookie the user pastes.
-        // The result carries the backend's own API key, so Magpie saves an API-key sign-in.
+        // The result carries the backend's own API key, so Magpie saves an API-key sign-in,
+        // one for each Google account (see signInFor).
         async authorize() {
           const local = await ensureBackend();
           return {
@@ -74,12 +89,14 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
             method: 'code',
             instructions: COOKIE_STEPS,
             async callback(code) {
+              let cookie, added;
               try {
-                await importCookie(local, parseCookieInput(code));
+                cookie = parseCookieInput(code);
+                added = await importCookie(local, cookie);
               } catch (err) {
                 return { type: 'failed', error: err.message };
               }
-              return { type: 'success', key: local.apiKey, metadata: { baseURL: local.baseURL } };
+              return signInFor(local, { id: added.id, cookie });
             }
           };
         }
@@ -106,6 +123,38 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
           type: 'success',
           metadata: { baseURL: normalizeBaseURL(inputs?.baseURL || opts.baseURL) }
         })
+      }, {
+        type: 'oauth',
+        label: '添加本地后端里已有的 Google 账号',
+        // Magpie asks through ask(), listing the pool as it is now; prompts holds the question
+        // for OpenCode, and makes Magpie hand authorize the answer.
+        prompts: [{ type: 'select', key: 'account', message: '选择 Google 账号', options: [] }],
+        async ask(inputs) {
+          if (inputs?.account) return null;
+          if (!localBackend()) throw new Error('还没有本地后端：请先用「一键配置本地 Gemini Web」');
+          const choices = await poolChoices();
+          if (!choices.length) throw new Error('本地后端里没有启用的 Google 账号');
+          return {
+            type: 'select',
+            key: 'account',
+            message: '选择 Google 账号',
+            placeholder: '',
+            options: choices.map(c => ({ label: c.label, value: String(c.id), hint: c.hint }))
+          };
+        },
+        async authorize(inputs) {
+          const local = localBackend();
+          if (!local) throw new Error('还没有本地后端：请先用「一键配置本地 Gemini Web」');
+          const id = Number(inputs?.account);
+          const chosen = (await poolChoices()).find(c => c.id === id);
+          if (!chosen) throw new Error(`本地后端里没有启用的账号 #${inputs?.account}`);
+          return {
+            url: '',
+            method: 'auto',
+            instructions: '',
+            callback: async () => signInFor(local, chosen)
+          };
+        }
       }],
       async loader(getAuth) {
         const auth = await getAuth();
@@ -116,6 +165,25 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
           baseURL: c.baseURL,
           fetch: (input, init) => forwardManaged(input, init, getAuth, opts)
         };
+      },
+      // Magpie's usage card: the 5-hour and weekly limits of each Google account in the local
+      // backend's pool, as gemini.google.com/usage shows them. A backend this plugin doesn't
+      // manage keeps its accounts out of reach. No read marks the sign-in: the Magpie key
+      // belongs to the backend, not to Google.
+      async usage(getAuth) {
+        const auth = await getAuth();
+        if (auth?.type !== 'api') return { error: 'Gemini Web 还没有登录', windows: [], signIn: 'kept' };
+        let c;
+        try {
+          c = credentials(auth, opts);
+        } catch (err) {
+          return { error: err.message, windows: [], signIn: 'kept' };
+        }
+        if (!managedBackend(c.baseURL)) {
+          return { error: '只能读取插件自己管理的本地后端的额度（连接已有后端时读不到）', windows: [], signIn: 'kept' };
+        }
+        const account = auth.metadata?.account;
+        return { ...(await usage(Number.isInteger(account) ? { account } : {})), signIn: 'kept' };
       }
     },
     provider: {

@@ -6,6 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
 import { ensureBackend, localBackend } from '../lib/native.mjs';
 import { parseCookieInput, importCookie, REQUIRED_COOKIES } from '../lib/setup.mjs';
@@ -258,7 +259,7 @@ describe('27. One-click sign-in through the plugin', () => {
 
   it('offers one-click setup first and keeps the custom-backend method', async () => {
     const plugin = await GeminiWebPlugin({});
-    assert.deepEqual(plugin.auth.methods.map(m => m.type), ['oauth', 'api']);
+    assert.deepEqual(plugin.auth.methods.map(m => m.type), ['oauth', 'api', 'oauth']);
   });
 
   it('signs in with the local backend key after a working cookie is imported', async () => {
@@ -267,11 +268,21 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.match(pending.url, /^https:\/\/gemini\.google\.com\//);
     assert.match(pending.instructions, /cookie/);
 
-    const result = await pending.callback(`cookie: ${SIGNED_IN.replace('SID=v-SID', 'SID=good')}`);
+    // the Google email comes from the signed-in app page, answered here
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => url === 'https://gemini.google.com/app'
+      ? Promise.resolve(new Response('{"oPEP7c":"setup@gmail.com"}'))
+      : realFetch(url, init);
+    let result;
+    try {
+      result = await pending.callback(`cookie: ${SIGNED_IN.replace('SID=v-SID', 'SID=good')}`);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
     assert.deepEqual(result, {
       type: 'success',
       key: 'gw_test',
-      metadata: { baseURL: `http://127.0.0.1:${server.address().port}/v1` }
+      metadata: { baseURL: `http://127.0.0.1:${server.address().port}/v1`, account: [...accounts.keys()][0], email: 'setup@gmail.com' }
     });
     assert.equal(accounts.size, 1);
   });
@@ -283,6 +294,40 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.equal(result.type, 'failed');
     assert.match(result.error, /not signed in/);
     assert.equal(accounts.size, before);
+  });
+
+  it('signs in to an account already in the backend pool, one sign-in per Google account', async () => {
+    const db = new DatabaseSync(path.join(dataDir, 'gemini.db'));
+    db.exec(`CREATE TABLE proxies (id INTEGER PRIMARY KEY, name TEXT, url TEXT, enabled INTEGER);
+      CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER);
+      INSERT INTO accounts VALUES (41, 'Magpie', 'SID=pool-a', 'enabled', 0), (42, 'Magpie', 'SID=pool-b', 'enabled', 0),
+        (43, 'Magpie', 'SID=pool-c', 'disabled', 0);`);
+    db.close();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (url !== 'https://gemini.google.com/app') return realFetch(url, init);
+      return new Response(init.headers.Cookie === 'SID=pool-a' ? '{"oPEP7c":"pool-a@gmail.com"}' : '<html></html>');
+    };
+    try {
+      const method = (await GeminiWebPlugin({})).auth.methods[2];
+      assert.equal(method.prompts[0].key, 'account');
+      const question = await method.ask({});
+      assert.equal(question.type, 'select');
+      assert.deepEqual(question.options.map(o => [o.label, o.value]), [['pool-a@gmail.com', '41'], ['#42', '42']]);
+      assert.equal(await method.ask({ account: '41' }), null);
+
+      const pending = await method.authorize({ account: '41' });
+      assert.equal(pending.method, 'auto');
+      assert.deepEqual(await pending.callback(), {
+        type: 'success',
+        key: 'gw_test',
+        metadata: { baseURL: `http://127.0.0.1:${server.address().port}/v1`, account: 41, email: 'pool-a@gmail.com' }
+      });
+      await assert.rejects(method.authorize({ account: '43' }), /没有启用的账号 #43/);
+    } finally {
+      globalThis.fetch = realFetch;
+      fs.rmSync(path.join(dataDir, 'gemini.db'), { force: true });
+    }
   });
 
   it('fails with the missing cookie names before calling the backend', async () => {

@@ -51,6 +51,15 @@ You can switch a model between `low` and `high` effort in Magpie if it has a `-t
 - The data directory is `~/.local/share/magpie-gemini-web` (set `GEMINI_WEB_DATA_DIR` to change it). The backend writes its log to `backend.log` there.
 - The plugin sends one request at a time, but this can't guarantee that Google won't flag your account. Use it at your own risk.
 
+## Usage
+
+Magpie's usage cards show each Google account's **5-hour** and **weekly** usage and reset times, as <https://gemini.google.com/usage> does. Each Google account gets a card of its own, named by its email:
+
+- An account added by one-click setup becomes its own card.
+- For an account already in the backend (one added by an older version, say), add another Gemini Web account in Magpie and pick **「添加本地后端里已有的 Google 账号」** (add an account already in the local backend), then choose it from the list. The old `API key …` sign-in can then go: it shows the whole pool as one card (each window at the account that has used the most).
+
+Note that the backend picks the Google account for each request from its pool in turn: how Magpie spreads requests over the cards doesn't decide which account serves them. Only the one-click local backend has usage; a backend you connect to yourself keeps its cookies out of the plugin's reach.
+
 ## Limitations
 
 - Upstream emulates tool calls with prompts, so they aren't always reliable. Flash models often don't call tools.
