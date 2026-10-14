@@ -159,6 +159,24 @@ describe('7. API prompt default validation', () => {
     assert.equal(typeof err, 'string');
     assert.match(err, /protocol must be HTTP or HTTPS/);
   });
+
+  it('authorize persists the resolved baseURL when the prompt is left blank', async () => {
+    const plugin = await GeminiWebPlugin({}, { baseURL: 'http://127.0.0.1:9000' });
+    const authorize = plugin.auth.methods[0].authorize;
+
+    assert.deepEqual(await authorize({ baseURL: '' }), {
+      type: 'success',
+      metadata: { baseURL: 'http://127.0.0.1:9000/v1' }
+    });
+    assert.deepEqual(await authorize({}), {
+      type: 'success',
+      metadata: { baseURL: 'http://127.0.0.1:9000/v1' }
+    });
+    assert.deepEqual(await authorize({ baseURL: 'https://proxy.example.com/' }), {
+      type: 'success',
+      metadata: { baseURL: 'https://proxy.example.com/v1' }
+    });
+  });
 });
 
 describe('8. Dynamic model list dedup/media exclusion/empty/malformed 401 expired vs 429/403 not expired', () => {

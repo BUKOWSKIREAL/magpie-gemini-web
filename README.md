@@ -93,6 +93,10 @@ http://127.0.0.1:8083/admin
    - **Gemini Web backend API key**：填入 `secrets.json` 中的 `apiKey`。
    - **Backend OpenAI base URL**：留空使用默认的 `http://127.0.0.1:8083/v1`，或填入其他自定义本地/代理地址。
 
+   > 重新登录（例如更换 API key 或 base URL）后，正在运行的 Magpie 不会重新读取 provider 地址，需要执行 `magpie plugin off magpie-gemini-web && magpie plugin on magpie-gemini-web` 或重启 Magpie App 才会生效。
+   >
+   > 0.1.0 登录时若留空 base URL，会把空字符串存进登录信息；0.1.1 起改为存入补全后的默认地址。若遇到网关返回 502「Gemini Web has no endpoint configured」（[#3](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/3)），升级后重新登录一次，或登录时显式填写 `http://127.0.0.1:8083/v1`。
+
 3. **配置插件选项（开启工具或图片支持）**：
    插件默认关闭工具调用与图片输入以确保安全和兼容性。若 Coding Agent（如 Claude Code / OpenCode / Cursor）需要使用工具调用，**必须显式开启 `allowTools`**，否则发送工具请求时将被插件直接返回 400 拦截：
 
