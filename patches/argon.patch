@@ -1,22 +1,43 @@
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
-index 0000000..366b005
+index 0000000..98944ac
 --- /dev/null
 +++ b/internal/app/argon.go
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,174 @@
 +package app
 +
 +import (
 +	"encoding/json"
 +	"fmt"
 +	"io"
++	"slices"
 +	"strings"
 +	"time"
 +)
 +
++// argonDisplayNames 是上游对 Argon 各思考档位自报的显示名：普通档 "4 Argon"，
++// 扩展思考（think=2，上游叫 High）"4 Argon High"。按请求的档位只认对应名字，
++// 档位被静默换掉也算身份不符。
++func argonDisplayNames(think int) []string {
++	if think == thinkingExtended {
++		return []string{"4 Argon High", "Gemini 4 Argon High"}
++	}
++	return []string{"4 Argon", "Gemini 4 Argon"}
++}
++
++// argonThinkFromHeader 从模型 header 下标 15 取思考档位；最小形式没有这一槽，按普通档。
++func argonThinkFromHeader(h []any) int {
++	if len(h) > 15 {
++		if f, ok := h[15].(float64); ok {
++			return int(f)
++		}
++	}
++	return thinkingNormal
++}
++
 +// argonIdentityInLine 检查单行 wrb.fr 帧里的模型身份。
-+// 返回 found=true 表示这行带有正确的 Argon 身份；err 非 nil 表示这行报的是别的模型。
-+func argonIdentityInLine(line string) (found bool, err error) {
++// 返回 found=true 表示这行带有 names 之一的 Argon 身份；err 非 nil 表示这行报的是别的模型或档位。
++func argonIdentityInLine(line string, names []string) (found bool, err error) {
 +	var rows [][]json.RawMessage
 +	if json.Unmarshal([]byte(line), &rows) != nil {
 +		return false, nil
@@ -50,7 +71,7 @@ index 0000000..366b005
 +			if !validHex || !ok {
 +				continue
 +			}
-+			if id != hexArgon4 || (name != "4 Argon" && name != "Gemini 4 Argon") {
++			if id != hexArgon4 || !slices.Contains(names, name) {
 +				return false, fmt.Errorf("Argon model mismatch: upstream reported %q (%s)", name, id)
 +			}
 +			found = true
@@ -61,10 +82,10 @@ index 0000000..366b005
 +
 +var errArgonIdentityMissing = fmt.Errorf("Argon identity missing in upstream response; refusing unverified model")
 +
-+func validateArgonIdentity(raw []byte) error {
++func validateArgonIdentity(raw []byte, names []string) error {
 +	found := false
 +	for _, line := range strings.Split(string(raw), "\n") {
-+		ok, err := argonIdentityInLine(line)
++		ok, err := argonIdentityInLine(line, names)
 +		if err != nil {
 +			return err
 +		}
@@ -95,12 +116,13 @@ index 0000000..366b005
 +	if !isArgon {
 +		return readBody(r, onLine, start)
 +	}
++	names := argonDisplayNames(argonThinkFromHeader(h))
 +	if status != 200 || onLine == nil {
 +		raw, ttfb, err := readBody(r, nil, start)
 +		if err != nil || status != 200 {
 +			return raw, ttfb, err
 +		}
-+		return raw, ttfb, validateArgonIdentity(raw)
++		return raw, ttfb, validateArgonIdentity(raw, names)
 +	}
 +
 +	var pending []string
@@ -110,7 +132,7 @@ index 0000000..366b005
 +		if identityErr != nil {
 +			return
 +		}
-+		ok, lerr := argonIdentityInLine(line)
++		ok, lerr := argonIdentityInLine(line, names)
 +		if lerr != nil {
 +			identityErr = lerr
 +			return
@@ -156,12 +178,71 @@ index 0000000..366b005
 +	}
 +	return g.r.Read(p)
 +}
+diff --git a/internal/app/argon_probe_test.go b/internal/app/argon_probe_test.go
+new file mode 100644
+index 0000000..dd9e687
+--- /dev/null
++++ b/internal/app/argon_probe_test.go
+@@ -0,0 +1,53 @@
++package app
++
++import (
++ "encoding/json"
++ "fmt"
++ "net/url"
++ "os"
++ "regexp"
++ "strings"
++ "testing"
++ "time"
++ "github.com/google/uuid"
++)
++
++// Explicitly opted-in local protocol probe. Does not log cookies, tokens, or raw account responses.
++func TestArgonProtocolProbe(t *testing.T) {
++ cookie := os.Getenv("ARGON_PROBE_COOKIE")
++ if cookie == "" { t.Skip("local authenticated probe not enabled") }
++ dbPath := cfg.DBPath
++ cfg = defaultConfig(); cfg.DBPath = dbPath; cfg.RequestTimeout = 65
++ initRuntimeConfig()
++ page, err := fetchAppPage(cookie, ""); if err != nil { t.Fatal("page fetch failed") }
++ tok := snlm0eRe.FindSubmatch(page); if len(tok)<2 {t.Fatal("login token unavailable")}
++ bl := regexp.MustCompile(`"cfb2h":"([^"]+)"`).FindSubmatch(page)
++ if len(bl)<2 {t.Fatal("build version unavailable")}
++ headers := buildGeminiHeaders(cookie,extractSAPISID(cookie), "")
++ delete(headers,"x-goog-ext-525001261-jspb")
++ freq,_:=json.Marshal([]any{[]any{[]any{"otAQ7b","[]",nil,"generic"}}})
++ form:=url.Values{"f.req":{string(freq)},"at":{string(tok[1])}}
++ endpoint:="https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=otAQ7b&hl=en&rt=c&bl="+url.QueryEscape(string(bl[1]))
++ status,_,catalog,err:=uploadPost(endpoint,headers,[]byte(form.Encode()),"")
++ if err!=nil {t.Fatal("catalog request failed")}
++ t.Logf("catalog_status=%d argon_hex_present=%v argon_name_present=%v",status,strings.Contains(string(catalog),"95a4c0abcba24364"),strings.Contains(string(catalog),"Argon"))
++ if !strings.Contains(string(catalog),"95a4c0abcba24364") {t.Fatal("Argon not confirmed in account catalog")}
++ if os.Getenv("ARGON_PROBE_CATALOG_ONLY")=="1" { return }
++ inner:=make([]any,97)
++ inner[0]=[]any{"Reply with exactly ARGON_OK.",0,nil,nil,nil,nil,0}
++ inner[1]=[]any{"en"};inner[2]=[]any{"","","",nil,nil,nil,nil,nil,nil,""}
++ inner[6]=[]any{0};inner[7]=1;inner[10]=1;inner[11]=0;inner[17]=[]any{[]any{0}}
++ inner[18]=0;inner[27]=1;inner[30]=[]any{4};inner[41]=[]any{1};inner[45]=1
++ inner[53]=0;inner[59]=uuid.NewString();inner[61]=[]any{};inner[68]=1;inner[79]=8;inner[80]=1;inner[91]=0;inner[96]=0
++ ib,_:=json.Marshal(inner);outer,_:=json.Marshal([]any{nil,string(ib)})
++ form=url.Values{"f.req":{string(outer)},"at":{string(tok[1])}}
++ headers=buildGeminiHeaders(cookie,extractSAPISID(cookie),"95a4c0abcba24364")
++ headers["x-goog-ext-525001261-jspb"]=buildModelHeader("95a4c0abcba24364",8,1,uuid.NewString())
++ headers["x-goog-ext-525005358-jspb"]=fmt.Sprintf(`["%s",1]`,inner[59])
++ endpoint="https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?hl=en&rt=c&bl="+url.QueryEscape(string(bl[1]))
++ start:=time.Now();status,raw,_,_,err:=doGeminiRequest(endpoint,form.Encode(),headers,"",nil)
++ if err!=nil {t.Fatalf("generation transport failed (%T)",err)}
++ actual:=extractUpstreamModel(string(raw));answer:=extractResponseText(string(raw))
++ t.Logf("generation_status=%d mode=8 think=1 actual_model=%q answer=%q elapsed_ms=%d raw_bytes=%d",status,actual,answer,time.Since(start).Milliseconds(),len(raw))
++ if status!=200 || !strings.Contains(strings.ToLower(actual),"argon") || strings.TrimSpace(answer)!="ARGON_OK" {t.Fatal("Argon generation not verified")}
++}
 diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
 new file mode 100644
-index 0000000..4449c45
+index 0000000..3e62433
 --- /dev/null
 +++ b/internal/app/argon_test.go
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,266 @@
 +package app
 +
 +import (
@@ -196,18 +277,18 @@ index 0000000..4449c45
 +func TestArgonValidateIdentity(t *testing.T) {
 +	// 1. Correct hex and name passes
 +	validFrame1 := makeSyntheticArgonFrame(hexArgon4, "4 Argon", "ARGON_OK")
-+	if err := validateArgonIdentity(validFrame1); err != nil {
++	if err := validateArgonIdentity(validFrame1, argonDisplayNames(thinkingNormal)); err != nil {
 +		t.Fatalf("expected valid Argon frame to pass, got: %v", err)
 +	}
 +
 +	validFrame2 := makeSyntheticArgonFrame(hexArgon4, "Gemini 4 Argon", "ARGON_OK")
-+	if err := validateArgonIdentity(validFrame2); err != nil {
++	if err := validateArgonIdentity(validFrame2, argonDisplayNames(thinkingNormal)); err != nil {
 +		t.Fatalf("expected valid Gemini 4 Argon frame to pass, got: %v", err)
 +	}
 +
 +	// 2. Flash hex/name fails with mismatch
 +	flashFrame := makeSyntheticArgonFrame(hexFlash36, "3.6 Flash", "FLASH")
-+	if err := validateArgonIdentity(flashFrame); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
++	if err := validateArgonIdentity(flashFrame, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
 +		t.Fatalf("expected Argon model mismatch for Flash frame, got: %v", err)
 +	}
 +
@@ -216,13 +297,13 @@ index 0000000..4449c45
 +	pBytes, _ := json.Marshal(emptyFields)
 +	emptyFrame, _ := json.Marshal([][]any{{"wrb.fr", "rpc1", string(pBytes), nil}})
 +	emptyFrame = append(emptyFrame, '\n')
-+	if err := validateArgonIdentity(emptyFrame); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
++	if err := validateArgonIdentity(emptyFrame, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
 +		t.Fatalf("expected Argon identity missing, got: %v", err)
 +	}
 +
 +	// 4. Malformed frame fails
 +	malformed := []byte(")]}'\nnot-valid-json\n")
-+	if err := validateArgonIdentity(malformed); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
++	if err := validateArgonIdentity(malformed, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
 +		t.Fatalf("expected Argon identity missing for malformed JSON, got: %v", err)
 +	}
 +
@@ -232,13 +313,13 @@ index 0000000..4449c45
 +	fBytes, _ := json.Marshal(forgedFields)
 +	forgedFrame, _ := json.Marshal([][]any{{"wrb.fr", "rpc1", string(fBytes), nil}})
 +	forgedFrame = append(forgedFrame, '\n')
-+	if err := validateArgonIdentity(forgedFrame); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
++	if err := validateArgonIdentity(forgedFrame, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon identity missing") {
 +		t.Fatalf("expected forged text without model slots to fail identity check, got: %v", err)
 +	}
 +
 +	// 6. Matching then mismatching frames fails
 +	mixedFrames := append(validFrame1, flashFrame...)
-+	if err := validateArgonIdentity(mixedFrames); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
++	if err := validateArgonIdentity(mixedFrames, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
 +		t.Fatalf("expected matching then mismatching frames to fail, got: %v", err)
 +	}
 +}
@@ -390,6 +471,122 @@ index 0000000..4449c45
 +	if _, ok := availableModels()["gemini-4-argon"]; !ok {
 +		t.Fatal("gemini-4-argon should be available when pool cookie exists")
 +	}
++}
++
++// -thinking 版上游自报 "4 Argon High"：按请求 header 的思考位只认对应档位的名字，
++// 档位被静默换掉（要 High 回了普通档，或反过来）同样报身份不符。
++func TestArgonIdentityByThinkTier(t *testing.T) {
++	low := Models["gemini-4-argon"]
++	high := Models["gemini-4-argon-thinking"]
++	if low.Thinking || !high.Thinking || high.HexID != hexArgon4 || high.Mode != 8 {
++		t.Fatalf("unexpected Argon model table: low=%+v high=%+v", low, high)
++	}
++	lowHeader := buildModelHeader(low.HexID, low.Mode, thinkingNormal, "uuid-x")
++	highHeader := buildModelHeader(high.HexID, high.Mode, thinkingExtended, "uuid-x")
++
++	cases := []struct {
++		header, name string
++		ok           bool
++	}{
++		{lowHeader, "4 Argon", true},
++		{highHeader, "4 Argon High", true},
++		{highHeader, "Gemini 4 Argon High", true},
++		{lowHeader, "4 Argon High", false},
++		{highHeader, "4 Argon", false},
++	}
++	for _, c := range cases {
++		frame := makeSyntheticArgonFrame(hexArgon4, c.name, "ok")
++		var got []string
++		_, _, err := readModelCheckedBody(bytes.NewReader(frame), func(l string) { got = append(got, l) }, time.Now(), 200, c.header)
++		if c.ok && (err != nil || len(got) == 0) {
++			t.Errorf("%q with header %s: want pass, err=%v lines=%d", c.name, c.header, err, len(got))
++		}
++		if !c.ok && (err == nil || !strings.Contains(err.Error(), "Argon model mismatch") || len(got) != 0) {
++			t.Errorf("%q with header %s: want mismatch and no output, err=%v lines=%d", c.name, c.header, err, len(got))
++		}
++		if _, _, err := readModelCheckedBody(bytes.NewReader(frame), nil, time.Now(), 200, c.header); (err == nil) != c.ok {
++			t.Errorf("%q non-stream with header %s: ok=%v err=%v", c.name, c.header, c.ok, err)
++		}
++	}
++}
+diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
+new file mode 100644
+index 0000000..4ee5a3e
+--- /dev/null
++++ b/internal/app/argon_timing_probe_test.go
+@@ -0,0 +1,73 @@
++package app
++
++import (
++ "encoding/json"
++ "fmt"
++ "net/url"
++ "os"
++ "regexp"
++ "strings"
++ "testing"
++ "time"
++ "github.com/google/uuid"
++ fhttp "github.com/bogdanfinn/fhttp"
++)
++
++// Explicitly opted-in local protocol probe. Does not log cookies, tokens, or raw account responses.
++func TestArgonTimingProbe(t *testing.T) {
++ cookie := os.Getenv("ARGON_PROBE_COOKIE")
++ if cookie == "" { t.Skip("local authenticated probe not enabled") }
++ dbPath := cfg.DBPath
++ cfg = defaultConfig(); cfg.DBPath = dbPath; cfg.RequestTimeout = 65
++ initRuntimeConfig()
++ page, err := fetchAppPage(cookie, ""); if err != nil { t.Fatal("page fetch failed") }
++ tok := snlm0eRe.FindSubmatch(page); if len(tok)<2 {t.Fatal("login token unavailable")}
++ bl := regexp.MustCompile(`"cfb2h":"([^"]+)"`).FindSubmatch(page)
++ if len(bl)<2 {t.Fatal("build version unavailable")}
++ headers := buildGeminiHeaders(cookie,extractSAPISID(cookie), "")
++ delete(headers,"x-goog-ext-525001261-jspb")
++ freq,_:=json.Marshal([]any{[]any{[]any{"otAQ7b","[]",nil,"generic"}}})
++ form:=url.Values{"f.req":{string(freq)},"at":{string(tok[1])}}
++ endpoint:="https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=otAQ7b&hl=en&rt=c&bl="+url.QueryEscape(string(bl[1]))
++ status,_,catalog,err:=uploadPost(endpoint,headers,[]byte(form.Encode()),"")
++ if err!=nil {t.Fatal("catalog request failed")}
++ t.Logf("catalog_status=%d argon_hex_present=%v argon_name_present=%v",status,strings.Contains(string(catalog),"95a4c0abcba24364"),strings.Contains(string(catalog),"Argon"))
++ if !strings.Contains(string(catalog),"95a4c0abcba24364") {t.Fatal("Argon not confirmed in account catalog")}
++ if os.Getenv("ARGON_PROBE_CATALOG_ONLY")=="1" { return }
++ inner:=make([]any,97)
++ inner[0]=[]any{"Explain how rain forms in 12 short numbered sentences. Begin directly with sentence 1.",0,nil,nil,nil,nil,0}
++ inner[1]=[]any{"en"};inner[2]=[]any{"","","",nil,nil,nil,nil,nil,nil,""}
++ inner[6]=[]any{0};inner[7]=1;inner[10]=1;inner[11]=0;inner[17]=[]any{[]any{0}}
++ inner[18]=0;inner[27]=1;inner[30]=[]any{4};inner[41]=[]any{1};inner[45]=1
++ inner[53]=0;inner[59]=uuid.NewString();inner[61]=[]any{};inner[68]=1;inner[79]=8;inner[80]=1;inner[91]=0;inner[96]=0
++ ib,_:=json.Marshal(inner);outer,_:=json.Marshal([]any{nil,string(ib)})
++ form=url.Values{"f.req":{string(outer)},"at":{string(tok[1])}}
++ headers=buildGeminiHeaders(cookie,extractSAPISID(cookie),"95a4c0abcba24364")
++ headers["x-goog-ext-525001261-jspb"]=buildModelHeader("95a4c0abcba24364",8,1,uuid.NewString())
++ headers["x-goog-ext-525005358-jspb"]=fmt.Sprintf(`["%s",1]`,inner[59])
++ endpoint="https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?hl=en&rt=c&bl="+url.QueryEscape(string(bl[1]))
++ start:=time.Now()
++ req,e:=fhttp.NewRequest("POST",endpoint,strings.NewReader(form.Encode()));if e!=nil{t.Fatal("request construction failed")}
++ for k,v:=range headers{req.Header.Set(k,v)}
++ resp,e:=getTLSClient().Do(req);if e!=nil{t.Fatalf("transport failed (%T)",e)}
++ defer resp.Body.Close()
++ status=resp.StatusCode
++ firstIdentity,firstText,firstReasoning,lastText:=int64(-1),int64(-1),int64(-1),int64(-1)
++ lineCount,textFrames:=0,0
++ lastContent:=""
++ raw,firstLine,err:=readBody(resp.Body,func(line string){
++  lineCount++;ms:=time.Since(start).Milliseconds()
++  if firstIdentity<0 && validateArgonIdentity([]byte(line), argonDisplayNames(thinkingNormal))==nil{firstIdentity=ms}
++  if firstReasoning<0 && reasoningInLine(line)!=""{firstReasoning=ms}
++  texts:=textsInLine(line)
++  if len(texts)>0 && strings.Join(texts,"\n")!=lastContent {
++   lastContent=strings.Join(texts,"\n");textFrames++;lastText=ms
++   if firstText<0{firstText=ms}
++  }
++ },start)
++ t.Logf("TIMING first_line_ms=%d first_identity_ms=%d first_text_ms=%d first_reasoning_ms=%d last_text_ms=%d complete_ms=%d lines=%d text_updates=%d",firstLine,firstIdentity,firstText,firstReasoning,lastText,time.Since(start).Milliseconds(),lineCount,textFrames)
++ if err!=nil {t.Fatalf("generation transport failed (%T)",err)}
++ actual:=extractUpstreamModel(string(raw));answer:=extractResponseText(string(raw))
++ t.Logf("generation_status=%d mode=8 think=1 actual_model=%q answer_bytes=%d elapsed_ms=%d raw_bytes=%d",status,actual,len(answer),time.Since(start).Milliseconds(),len(raw))
++ if status!=200 || !strings.Contains(strings.ToLower(actual),"argon") || strings.TrimSpace(answer)=="" {t.Fatal("Argon generation not verified")}
 +}
 diff --git a/internal/app/cancel_test.go b/internal/app/cancel_test.go
 new file mode 100644
@@ -657,7 +854,7 @@ index aef12eb..cbf1371 100644
  		if !fresh {
  			// 续接失败：这路会话作废，客户端重试时会当新会话全量重发。
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 200c728..83256f3 100644
+index 723725f..a1e5221 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -676,32 +873,7 @@ index 200c728..83256f3 100644
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -27,6 +29,7 @@ const (
- 	// "当前 Flash" 泛指针，老批次号发它拿到的是 3.6，会冒充 3.7。老批次号发这个主 hex
- 	// 会干净降级成 3.5 Flash-Lite（跟 3.1 Pro 一样），所以 gate 成要 cookie。
- 	hexFlash38 = "56fdd199312815e2" // 3.8 Flash（原记 3.7；Google 把这个 hex 原地升成 3.8，HAR 响应帧显示名已是 "3.8 Flash"）
-+	hexArgon4  = "95a4c0abcba24364"
- )
- 
- // innerSlots 是 payload 里 inner 数组的长度。浏览器发 97-98 槽，我们原来只开 80，
-@@ -72,6 +75,7 @@ var Models = map[string]ModelConfig{
- 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
- 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
- 	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Most capable; needs a signed-in cookie (downgraded to Flash-Lite without one)"},
-+	"gemini-4-argon":        {HexID: hexArgon4, Mode: 8, Desc: "Gemini 4 Argon; low thinking; requires a signed-in account with Argon access"},
- 	// 3.8 Flash：Google 把原 3.7 那个 hex 原地升级了（同 hex，服务端显示名从 3.7 变 3.8）。
- 	// 实测是**付费号专属**（不是灰度）：只有付费 Gemini 账号有，免费号降级成 3.5 Flash-Lite。
- 	// gemini-3.7-flash 保留为别名（同 hex）。
-@@ -110,7 +114,7 @@ func hasCookie() bool {
- // 逐模型核对等价：那三个正名的 HexID 就是 hexPro31 / hexFlash38，其余登录模型都被
- // Thinking 或 Tool 覆盖。
- func modelNeedsLogin(mc ModelConfig) bool {
--	return mc.HexID == hexPro31 || mc.HexID == hexFlash38 || mc.Thinking || mc.Tool > 0
-+	return mc.HexID == hexArgon4 || mc.HexID == hexPro31 || mc.HexID == hexFlash38 || mc.Thinking || mc.Tool > 0
- }
- 
- // anonFirstEligible 判断「匿名优先」开关下这次请求能不能走匿名（不占 cookie 账号）：
-@@ -298,7 +302,7 @@ func (d *deltaTracker) Push(fullText string) string {
+@@ -311,7 +313,7 @@ func (d *deltaTracker) Push(fullText string) string {
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -710,7 +882,7 @@ index 200c728..83256f3 100644
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -313,8 +317,16 @@ type fileRef struct {
+@@ -326,8 +328,16 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -729,7 +901,7 @@ index 200c728..83256f3 100644
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -324,6 +336,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -337,6 +347,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -739,7 +911,7 @@ index 200c728..83256f3 100644
  	var acct *CookieAccount
  	if !anonFirstEligible(mc, len(pending) > 0) {
  		if a, ok := pickCookieAccount(); ok {
-@@ -379,6 +394,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -392,6 +405,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -749,7 +921,7 @@ index 200c728..83256f3 100644
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -406,6 +424,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -419,6 +435,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  			rotatedOnce[acct.ID] = true
  			if _, _, rerr := rotateAccount(*acct); rerr == nil {
  				if fresh := accountByID(acct.ID); fresh != nil {
@@ -758,7 +930,7 @@ index 200c728..83256f3 100644
  					if tok2, err2 := getXSRF(fresh.Cookie, proxyURL); err2 == nil {
  						logf("[cookie] 账号 #%d 轮转后恢复可用", acct.ID)
  						acct = fresh
-@@ -445,7 +465,10 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -458,7 +476,10 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -770,7 +942,7 @@ index 200c728..83256f3 100644
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -462,7 +485,10 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -475,7 +496,10 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -782,7 +954,7 @@ index 200c728..83256f3 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -583,32 +609,18 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -596,32 +620,18 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -824,7 +996,7 @@ index 200c728..83256f3 100644
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
  				cookieStr = merged
-@@ -616,6 +628,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -629,6 +639,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  			}
  		}
  		if err != nil {
@@ -834,7 +1006,7 @@ index 200c728..83256f3 100644
  			lastErr = err
  			if pickedOK {
  				recordProxyResult(picked.ID, false, err.Error())
-@@ -626,7 +641,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -639,7 +652,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -845,7 +1017,7 @@ index 200c728..83256f3 100644
  			}
  			continue
  		}
-@@ -654,7 +671,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -667,7 +682,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -856,7 +1028,7 @@ index 200c728..83256f3 100644
  			}
  			continue
  		}
-@@ -677,7 +696,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -690,7 +707,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -867,7 +1039,7 @@ index 200c728..83256f3 100644
  			}
  			continue
  		}
-@@ -737,6 +758,54 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -750,6 +769,54 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return attrib(lastErr)
  }
  
@@ -922,7 +1094,7 @@ index 200c728..83256f3 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -806,10 +875,43 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
+@@ -819,10 +886,43 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string)) (int, []byte, int64, []string, error) {
@@ -967,7 +1139,7 @@ index 200c728..83256f3 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -823,7 +925,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -836,7 +936,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  			return 0, nil, 0, nil, err
  		}
  		defer resp.Body.Close()
@@ -976,7 +1148,7 @@ index 200c728..83256f3 100644
  		if err != nil {
  			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
  		}
-@@ -831,7 +933,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -844,7 +944,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  	}
  
  	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
@@ -985,7 +1157,7 @@ index 200c728..83256f3 100644
  	if err != nil {
  		return 0, nil, 0, nil, err
  	}
-@@ -844,7 +946,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -857,7 +957,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		return 0, nil, 0, nil, err
  	}
  	defer resp.Body.Close()
@@ -995,7 +1167,7 @@ index 200c728..83256f3 100644
  		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
  	}
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
-index 9dc2541..f709b15 100644
+index 00eb305..2b4c6ca 100644
 --- a/internal/app/gemini_test.go
 +++ b/internal/app/gemini_test.go
 @@ -15,6 +15,7 @@ func TestModelHeader(t *testing.T) {
@@ -1006,23 +1178,6 @@ index 9dc2541..f709b15 100644
  	}
  	for _, c := range cases {
  		name, mc, err := resolveModel(c.name)
-@@ -50,13 +51,13 @@ func TestModelHeader(t *testing.T) {
- 		}
- 	}
- 	// 守的是「不许冒出假模型」：thinking 版复用同样的 hex，所以看**去重后的 hex 数**，
--	// 不是条目数。服务端清单（otAQ7b）里 3.6/3.5-lite/3.1-pro + 灰度放出的 3.7 = 4 个。
-+	// 不是条目数。服务端清单（otAQ7b）里 3.6/3.5-lite/3.1-pro + 灰度放出的 3.7 + 4-argon = 5 个。
- 	hexes := map[string]bool{}
- 	for _, m := range Models {
- 		hexes[m.HexID] = true
- 	}
--	if len(hexes) != 4 {
--		t.Errorf("只应存在 4 个真模型 hex, got %d", len(hexes))
-+	if len(hexes) != 5 {
-+		t.Errorf("只应存在 5 个真模型 hex, got %d", len(hexes))
- 	}
- 	// 反过来：每个真 hex 都应该有一个 thinking 版
- 	for _, base := range []string{hexFlash36, hexFlashLite, hexPro31, hexFlash38} {
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
 index 0000000..9329309
@@ -1546,7 +1701,7 @@ index e082b15..908a052 100644
  	if len(names) > 0 {
  		logf("[rotate] 账号 #%d 刷新了 %s", a.ID, strings.Join(names, ", "))
 diff --git a/internal/app/server.go b/internal/app/server.go
-index 2ce8d11..4ae16b2 100644
+index c3a7df1..eb02909 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -1561,8 +1716,8 @@ index 2ce8d11..4ae16b2 100644
  	"time"
  )
  
--const Version = "4.21.0"
-+const Version = "4.21.0-argon.2"
+-const Version = "4.22.0"
++const Version = "4.22.0-argon.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
