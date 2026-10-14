@@ -43,7 +43,7 @@ magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
 
 ## Thinking effort
 
-You can switch a model between `low` and `high` effort in Magpie if it has a `-thinking` version. `low` uses the base model and `high` uses the `-thinking` model with extended thinking. After upgrading the plugin, run `magpie provider models gemini-web` to refresh the model list. Argon's medium tier will be added once upstream supports it ([#5](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/5)).
+You can switch a model between `low` and `high` effort in Magpie if it has a `-thinking` version. `low` uses the base model and `high` uses the `-thinking` model with extended thinking, so the `-thinking` model isn't listed on its own. After upgrading the plugin, run `magpie provider models gemini-web` to refresh the model list. Argon's medium tier will be added once upstream supports it ([#5](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/5)).
 
 ## Security and data
 

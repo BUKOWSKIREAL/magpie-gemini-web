@@ -901,7 +901,7 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
   });
 
   const reset = () => {
-    modelIds = ['gemini-4-argon', 'gemini-4-argon-thinking', 'gemini-3.6-flash', 'gemini-3.6-flash-thinking', 'gemini-canvas', 'gemini-solo'];
+    modelIds = ['gemini-4-argon', 'gemini-4-argon-thinking', 'gemini-3.6-flash', 'gemini-3.6-flash-thinking', 'gemini-canvas', 'gemini-solo', 'gemini-lone-thinking'];
     modelsStatus = 200;
     modelsCalls = 0;
     chatModels = [];
@@ -916,15 +916,17 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
     }, async () => ({ type: 'api', key, metadata: { baseURL } }), settings({ baseURL }));
   };
 
-  it('declares low/high variants only on base models that have a -thinking twin', async () => {
+  it('declares low/high variants only on base models that have a -thinking twin, and hides the twin', async () => {
     reset();
     const c = { key: 'variants_key', baseURL: `http://127.0.0.1:${serverPort}/v1` };
     const models = await listModels(c, settings({ baseURL: c.baseURL }));
 
     assert.deepEqual(models['gemini-4-argon'].variants, { low: {}, high: {} });
     assert.deepEqual(models['gemini-3.6-flash'].variants, { low: {}, high: {} });
-    assert.deepEqual(models['gemini-4-argon-thinking'].variants, {});
+    assert.equal(models['gemini-4-argon-thinking'], undefined);
+    assert.equal(models['gemini-3.6-flash-thinking'], undefined);
     assert.deepEqual(models['gemini-solo'].variants, {});
+    assert.deepEqual(models['gemini-lone-thinking'].variants, {}, 'a twin with no base stays');
     assert.equal(models['gemini-canvas'], undefined);
   });
 

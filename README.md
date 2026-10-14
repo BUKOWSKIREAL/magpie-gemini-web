@@ -43,7 +43,7 @@ magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
 
 ## 思考档位
 
-有 `-thinking` 版本的模型可以在 Magpie 里切换 `low` / `high`：`low` 用普通模型，`high` 用 `-thinking` 模型（扩展思考）。升级插件后执行 `magpie provider models gemini-web` 刷新模型列表。Argon 的「中」档等上游支持（[#5](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/5)）。
+有 `-thinking` 版本的模型可以在 Magpie 里切换 `low` / `high`：`low` 用普通模型，`high` 用 `-thinking` 模型（扩展思考）。`-thinking` 模型因此不再单独列出。升级插件后执行 `magpie provider models gemini-web` 刷新模型列表。Argon 的「中」档等上游支持（[#5](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/5)）。
 
 ## 安全与数据
 
