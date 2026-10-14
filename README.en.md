@@ -37,7 +37,7 @@ magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
 | `allowTools` | `false` | Allows tool calls (experimental). When off, requests with tools get a 400 |
 | `allowImages` | `false` | Allows image input |
 | `baseURL` | `http://127.0.0.1:8083/v1` | Default backend URL |
-| `contextLimit` / `outputLimit` | `32768` / `8192` | Context and output limits reported to clients |
+| `contextLimit` / `outputLimit` | `1000000` / `8192` | Context and output limits reported to clients |
 | `requestTimeoutMs` / `modelTimeoutMs` | `240000` / `10000` | Timeouts in ms for requests and for fetching the model list |
 | `stripCitations` | `true` | Removes the citation markers Gemini adds to replies, `[cite: 1]` and `[cite_start]`, tool call arguments included. Set it to `false` while Gemini edits code that contains such text itself |
 
