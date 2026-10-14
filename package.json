@@ -23,6 +23,7 @@
     "scripts/",
     "patches/",
     "README.md",
+    "README.en.md",
     "LICENSE",
     "LICENSE-UPSTREAM"
   ],
