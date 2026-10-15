@@ -61,6 +61,15 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 
 注意：请求最终由后端在账号池里轮流挑选 Google 账号，Magpie 在几张卡片之间怎么分配请求，不决定实际用的是哪个账号。只有一键配置的本地后端能显示用量；「连接已有后端」模式下读不到账号的 Cookie。
 
+为了少向 Google 发请求，用量不会每次刷新都去查：账号经后端用过、或者某个窗口到了重置时间，才重新读取，两次至少间隔 10 分钟；账号闲着时最多每 6 小时读一次（顺带反映你在 Gemini 网页里的用量）。
+
+读取用量和邮箱时，走的是后端访问 Google 的同一个出口。出口不确定时不读取，卡片上会写明原因：
+
+- 配了代理池，但账号还没绑定代理（后端在它第一次请求时绑定）；
+- 账号绑定的代理已停用，或者是 SOCKS 代理。
+
+所以配了代理池时，一键配置刚添加的账号暂时没有邮箱。先用它发一次请求，再用「添加本地后端里已有的 Google 账号」重新登录它，然后删掉没有邮箱的那个登录。
+
 ## 局限
 
 - 工具调用由上游用提示词模拟，不一定可靠，Flash 系列经常不调用工具。
@@ -68,7 +77,7 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 
 ## Argon 增强版（可选）
 
-官方后端已支持 `gemini-4-argon`（需付费 / Ultra 账号）。本仓库的补丁版额外校验返回的确实是 Argon（防止被静默降级），并降低延迟。需要 Go 1.26+：
+官方后端已支持 `gemini-4-argon`（需付费 / Ultra 账号）。本仓库的补丁版额外校验返回的确实是 Argon（防止被静默降级），并降低延迟。它也让后端的请求更像浏览器：直连时每个请求都带齐 Chrome 请求头（官方版直连时，对话请求的 UA 是 `Go-http-client/2.0`），保活刷新 Cookie 后也不再立即重新抓取 `/app` 页面。需要 Go 1.26+：
 
 ```bash
 git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git && cd magpie-gemini-web
@@ -80,6 +89,15 @@ npm run backend:install:argon
 ```
 
 安装后重启 Magpie 即可，插件会在后台启动 Argon 版（如有旧后端在运行，先 `kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`）。运行 `npm run backend:install` 可切回官方版。
+
+`patches/argon.patch` 更新后（比如拉取了本仓库的新版本），需要在干净的源码上重新应用补丁并重新构建。停掉旧后端后，插件会在下一个请求时启动新版：
+
+```bash
+git -C backend-source checkout -- . && git -C backend-source clean -fdq
+git -C backend-source apply ../patches/argon.patch
+npm run backend:build:argon && npm run backend:install:argon
+kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)
+```
 
 ## 友链
 

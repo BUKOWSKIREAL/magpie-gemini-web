@@ -1,7 +1,7 @@
 import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER } from './lib/backend.mjs';
 import { ensureBackend, localBackend } from './lib/native.mjs';
 import { parseCookieInput, importCookie } from './lib/setup.mjs';
-import { usage, poolChoices, accountEmail } from './lib/usage.mjs';
+import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
 
 const ID = 'gemini-web';
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -22,7 +22,9 @@ const COOKIE_STEPS = [
 // signInFor is the Magpie sign-in for one account of the local backend's pool: the backend's
 // key, with the account's id for its usage card and its Google email, which names the card and
 // keeps each Google account a sign-in of its own (Magpie takes two sign-ins with one email for
-// one account, and two with neither for one when their key is the same).
+// one account, and two with neither for one when their key is the same). The account is the
+// pool's own entry (see poolAccounts), which says the way out to read the email by; without
+// one the email isn't read.
 async function signInFor(local, account) {
   const email = account.email || await accountEmail(account).catch(() => undefined);
   return {
@@ -96,7 +98,8 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
               } catch (err) {
                 return { type: 'failed', error: err.message };
               }
-              return signInFor(local, { id: added.id, cookie });
+              const account = (await poolAccounts().catch(() => [])).find(a => a.id === added.id);
+              return signInFor(local, account || { id: added.id });
             }
           };
         }
@@ -182,8 +185,8 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
         if (!managedBackend(c.baseURL)) {
           return { error: '只能读取插件自己管理的本地后端的额度（连接已有后端时读不到）', windows: [], signIn: 'kept' };
         }
-        const account = auth.metadata?.account;
-        return { ...(await usage(Number.isInteger(account) ? { account } : {})), signIn: 'kept' };
+        const { account, email } = auth.metadata || {};
+        return { ...(await usage(Number.isInteger(account) ? { account, email } : {})), signIn: 'kept' };
       }
     },
     provider: {
