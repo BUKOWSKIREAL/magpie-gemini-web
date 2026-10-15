@@ -26,15 +26,15 @@
 
 ## 插件选项
 
-工具调用和图片输入默认关闭，Coding Agent 需要工具时请开启：
+工具调用默认开启（Coding Agent 每个请求都带工具），图片输入默认关闭。需要图片输入时：
 
 ```bash
-magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
+magpie plugin options magpie-gemini-web '{"allowImages":true}'
 ```
 
 | 选项 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `allowTools` | `false` | 允许工具调用（实验性）。关闭时带工具的请求会返回 400 |
+| `allowTools` | `true` | 允许工具调用（实验性，由上游用提示词模拟）。设为 `false` 时带工具的请求会返回 400 |
 | `allowImages` | `false` | 允许图片输入 |
 | `baseURL` | `http://127.0.0.1:8083/v1` | 默认后端地址 |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | 向客户端声明的上下文 / 输出上限 |

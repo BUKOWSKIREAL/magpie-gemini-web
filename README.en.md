@@ -26,15 +26,15 @@ From then on, Magpie starts the backend automatically every time it launches. To
 
 ## Plugin options
 
-Tool calls and image input are off by default. Turn them on if a coding agent needs tools:
+Tool calls are on by default (coding agents send tools with every request); image input is off. To allow images:
 
 ```bash
-magpie plugin options magpie-gemini-web '{"allowTools":true,"allowImages":true}'
+magpie plugin options magpie-gemini-web '{"allowImages":true}'
 ```
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-| `allowTools` | `false` | Allows tool calls (experimental). When off, requests with tools get a 400 |
+| `allowTools` | `true` | Allows tool calls (experimental; upstream emulates them with prompts). When `false`, requests with tools get a 400 |
 | `allowImages` | `false` | Allows image input |
 | `baseURL` | `http://127.0.0.1:8083/v1` | Default backend URL |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | Context and output limits reported to clients |

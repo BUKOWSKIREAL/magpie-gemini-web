@@ -77,7 +77,7 @@ describe('3. Invalid options validation', () => {
   it('accepts valid options and sets defaults', () => {
     const s = settings();
     assert.equal(s.baseURL, DEFAULT_BASE);
-    assert.equal(s.allowTools, false);
+    assert.equal(s.allowTools, true);
     assert.equal(s.allowImages, false);
     assert.equal(s.contextLimit, 1000000);
     assert.equal(s.outputLimit, 8192);
@@ -639,7 +639,7 @@ describe('11-21. Forwarding, security stripping, tool/image validation, and stre
     assert.equal(resDisabled.status, 400);
     assert.equal(fetched, false);
     const jsonErr = await resDisabled.json();
-    assert.match(jsonErr.error.message, /Experimental tools are disabled; set allowTools: true/);
+    assert.match(jsonErr.error.message, /Tool calls are turned off.*magpie plugin options magpie-gemini-web '\{"allowTools":true\}'/);
 
     // allowTools: true -> passes
     const optsEnabled = settings({ baseURL, allowTools: true });
@@ -686,7 +686,7 @@ describe('11-21. Forwarding, security stripping, tool/image validation, and stre
     assert.equal(resDisabled.status, 400);
     assert.equal(fetched, false);
     const jsonErr = await resDisabled.json();
-    assert.match(jsonErr.error.message, /Image input is disabled; set allowImages: true/);
+    assert.match(jsonErr.error.message, /Image input is turned off.*magpie plugin options magpie-gemini-web '\{"allowImages":true\}'/);
 
     // allowImages: true -> passes with valid image_url
     const optsEnabled = settings({ baseURL, allowImages: true });
