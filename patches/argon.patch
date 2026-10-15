@@ -1180,10 +1180,10 @@ index 00eb305..2b4c6ca 100644
  		name, mc, err := resolveModel(c.name)
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
-index 0000000..9329309
+index 0000000..b30336f
 --- /dev/null
 +++ b/internal/app/latency_test.go
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,297 @@
 +package app
 +
 +import (
@@ -1406,17 +1406,15 @@ index 0000000..9329309
 +	}
 +}
 +
-+// 轮转后重取失败时必须作废缓存，否则失效的号会一直拿着旧 token 被当成可用。
-+func TestRefreshXSRFFailureDropsCache(t *testing.T) {
++// 后台重取失败时必须作废缓存，否则失效的号会一直拿着旧 token 被当成可用。
++func TestRefreshAppTokensFailureDropsCache(t *testing.T) {
 +	cookie := "SAPISID=sap2; __Secure-1PSID=psid2"
 +	xsrfMu.Lock()
 +	xsrfCache[cookieKey(cookie)] = xsrfEntry{token: "stale", fetched: time.Now()}
 +	xsrfMu.Unlock()
 +	t.Cleanup(func() { invalidateXSRF(cookie) })
 +
-+	if err := refreshXSRF(cookie, "http://127.0.0.1:1"); err == nil {
-+		t.Fatal("不可达出口应报错")
-+	}
++	refreshAppTokens(cookieKey(cookie), cookie, "http://127.0.0.1:1")
 +	xsrfMu.Lock()
 +	_, ok := xsrfCache[cookieKey(cookie)]
 +	xsrfMu.Unlock()
@@ -1680,26 +1678,6 @@ index 376171f..87b91fe 100644
  // parseToolChoice 解析 OpenAI 的 tool_choice。
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
-diff --git a/internal/app/rotate.go b/internal/app/rotate.go
-index e082b15..908a052 100644
---- a/internal/app/rotate.go
-+++ b/internal/app/rotate.go
-@@ -95,7 +95,14 @@ func rotateAccount(a CookieAccount) (time.Duration, []string, error) {
- 	if cookie != a.Cookie {
- 		old := a.Cookie
- 		updateAccountCookie(a.ID, cookie)
--		invalidateXSRF(old)
-+		// 轮转本身不在请求路径上，顺手用新 cookie 重取 token：既验证轮转结果，
-+		// 又让下一个请求直接命中缓存。失败时缓存已作废，下个请求同步重取。
-+		if err := refreshXSRF(cookie, proxyURL); err != nil {
-+			logf("[rotate] 账号 #%d 轮转后取 XSRF 失败: %v", a.ID, err)
-+		}
-+		if cookieKey(old) != cookieKey(cookie) {
-+			invalidateXSRF(old) // 身份项都变了（理论上不会）：旧键别留着
-+		}
- 	}
- 	if len(names) > 0 {
- 		logf("[rotate] 账号 #%d 刷新了 %s", a.ID, strings.Join(names, ", "))
 diff --git a/internal/app/server.go b/internal/app/server.go
 index c3a7df1..eb02909 100644
 --- a/internal/app/server.go
@@ -1896,7 +1874,7 @@ index 390b580..0365a78 100644
  		recordRequest("videos", j.Model, j.Prompt, "", res, 502, err.Error(), false)
  		finishVideoJob(j, nil, "", err.Error())
 diff --git a/internal/app/xsrf.go b/internal/app/xsrf.go
-index c43b104..55634b6 100644
+index c43b104..9af1078 100644
 --- a/internal/app/xsrf.go
 +++ b/internal/app/xsrf.go
 @@ -27,15 +27,23 @@ var (
@@ -1961,7 +1939,7 @@ index c43b104..55634b6 100644
  
  	e, err := fetchAppTokens(cookie, proxyURL)
  	if err != nil {
-@@ -84,16 +99,59 @@ func getXSRF(cookie, proxyURL string) (string, error) {
+@@ -84,16 +99,48 @@ func getXSRF(cookie, proxyURL string) (string, error) {
  	return e.token, nil
  }
  
@@ -1986,17 +1964,6 @@ index c43b104..55634b6 100644
 +	if err := storeAppTokens(key, cookie, proxyURL); err != nil {
 +		logf("[xsrf] 后台刷新失败，已作废缓存: %v", err)
 +	}
-+}
-+
-+// refreshXSRF 立即重抓页面并写回缓存，失败则作废缓存。
-+//
-+// 给本来就不在请求关键路径上的调用方用（cookie 轮转）：轮转后直接作废的话，
-+// 缓存按账号身份取键，下一个请求就得同步抓一次页面（实测约 1.2 秒）。
-+func refreshXSRF(cookie, proxyURL string) error {
-+	if cookie == "" {
-+		return nil
-+	}
-+	return storeAppTokens(cookieKey(cookie), cookie, proxyURL)
 +}
 +
 +func storeAppTokens(key, cookie, proxyURL string) error {
