@@ -699,6 +699,53 @@ index 0000000..e5f1b6f
 +	}
 +	t.Fatal("没有记录这次请求")
 +}
+diff --git a/internal/app/client.go b/internal/app/client.go
+index 1750391..e613956 100644
+--- a/internal/app/client.go
++++ b/internal/app/client.go
+@@ -154,17 +154,32 @@ func makeSAPISIDHash(sapisid string) string {
+ 	return fmt.Sprintf("SAPISIDHASH %d_%s", ts, hex.EncodeToString(h[:]))
+ }
+ 
+-// ChromeUA 是给 stdlib 走代理时用的 Chrome 146 真实 UA 模板。
++// ChromeUA 是 Chrome 146 的真实 UA 模板。
+ const ChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+ 
+-// applyChromeHeaders 给 stdlib 请求填上模拟 Chrome 146 的应用层 header。
+-// utls 那层做 TLS/HTTP2 指纹我们做不到（走代理），但 header 一定要齐。
++// chromeHeaders 是模拟 Chrome 146 的应用层 header，两条传输路径都要带齐：
++// 走代理时 utls 那层的 TLS/HTTP2 指纹我们做不到（stdlib），但 header 一定要齐；
++// 直连时 tls-client 只管指纹、不填 header，什么都不带的话 UA 是 Go-http-client/2.0，
++// 跟 Chrome 的握手对不上，同一个账号也会因为走没走代理而呈现两种客户端。
++var chromeHeaders = [][2]string{
++	{"User-Agent", ChromeUA},
++	{"Sec-CH-UA", `"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="24"`},
++	{"Sec-CH-UA-Mobile", "?0"},
++	{"Sec-CH-UA-Platform", `"Windows"`},
++	{"Sec-Fetch-Dest", "empty"},
++	{"Sec-Fetch-Mode", "cors"},
++	{"Sec-Fetch-Site", "same-origin"},
++}
++
++// setChromeHeaders 把 chromeHeaders 填进 net/http 或 fhttp 的 Header（两者都有 Set）。
++// 调用方之后再写自己的 header，同名的以调用方为准。
++func setChromeHeaders(h interface{ Set(key, value string) }) {
++	for _, kv := range chromeHeaders {
++		h.Set(kv[0], kv[1])
++	}
++}
++
++// applyChromeHeaders 给 stdlib 请求填上 chromeHeaders。
+ func applyChromeHeaders(req *http.Request) {
+-	req.Header.Set("User-Agent", ChromeUA)
+-	req.Header.Set("Sec-CH-UA", `"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="24"`)
+-	req.Header.Set("Sec-CH-UA-Mobile", "?0")
+-	req.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
+-	req.Header.Set("Sec-Fetch-Dest", "empty")
+-	req.Header.Set("Sec-Fetch-Mode", "cors")
+-	req.Header.Set("Sec-Fetch-Site", "same-origin")
++	setChromeHeaders(req.Header)
+ }
 diff --git a/internal/app/context_file.go b/internal/app/context_file.go
 index bfc577b..cb60661 100644
 --- a/internal/app/context_file.go
@@ -779,7 +826,7 @@ index bfc577b..cb60661 100644
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index aef12eb..cbf1371 100644
+index aef12eb..8ba963f 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -790,7 +837,23 @@ index aef12eb..cbf1371 100644
  	"crypto/sha256"
  	"encoding/hex"
  	"encoding/json"
-@@ -244,8 +245,11 @@ const webUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+@@ -205,7 +206,7 @@ func getAnonSession(proxyURL string) (string, error) {
+ 		if err != nil {
+ 			return nil, nil, nil, err
+ 		}
+-		r.Header.Set("User-Agent", webUA)
++		setChromeHeaders(r.Header)
+ 		resp, err := getTLSClient().Do(r)
+ 		if err != nil {
+ 			return nil, nil, nil, err
+@@ -237,15 +238,14 @@ func getAnonSession(proxyURL string) (string, error) {
+ 	return strings.Join(pairs, "; "), nil
+ }
+ 
+-// webUA 是匿名 GET /app 的 User-Agent（tls-client 路径要手动带）。
+-const webUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+-	"(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+-
  // streamGenerateConv 发一路会话的一轮。turn==0 是首轮（建会话），>0 是续接（只发新消息）。
  // 整条会话绑定 conv.cookie / conv.proxyID，中途不换号不换出口。成功后回填 conv 的
  // cid/rid/rcid/tok26 和 turn+1，供下一轮续接。
@@ -803,7 +866,7 @@ index aef12eb..cbf1371 100644
  	p, slotOK, slotErr := acquireSlot(conv.proxyID)
  	if !slotOK {
  		return &StreamResult{}, slotErr
-@@ -365,13 +369,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -365,13 +365,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  	t0 := time.Now()
  	var lastErr error
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
@@ -824,7 +887,7 @@ index aef12eb..cbf1371 100644
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -386,7 +396,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -386,7 +392,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -835,7 +898,7 @@ index aef12eb..cbf1371 100644
  			}
  			continue
  		}
-@@ -427,7 +439,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -427,7 +435,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -844,7 +907,7 @@ index aef12eb..cbf1371 100644
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -462,7 +474,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+@@ -462,7 +470,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
  		logf("[conv] 续接命中 turn=%d，只发 %d 字节（历史留服务端）", conv.turn, len(prompt))
  	}
  
@@ -854,7 +917,7 @@ index aef12eb..cbf1371 100644
  		if !fresh {
  			// 续接失败：这路会话作废，客户端重试时会当新会话全量重发。
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 723725f..a1e5221 100644
+index 723725f..150b022 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -1148,7 +1211,7 @@ index 723725f..a1e5221 100644
  		if err != nil {
  			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
  		}
-@@ -844,7 +944,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -844,10 +944,11 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  	}
  
  	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
@@ -1157,7 +1220,11 @@ index 723725f..a1e5221 100644
  	if err != nil {
  		return 0, nil, 0, nil, err
  	}
-@@ -857,7 +957,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
++	setChromeHeaders(req.Header)
+ 	for k, v := range headers {
+ 		req.Header.Set(k, v)
+ 	}
+@@ -857,7 +958,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		return 0, nil, 0, nil, err
  	}
  	defer resp.Body.Close()
@@ -1166,6 +1233,14 @@ index 723725f..a1e5221 100644
  	if err != nil {
  		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
  	}
+@@ -1159,6 +1260,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+ 			res.Diagnostic = "构建请求失败: " + e.Error()
+ 			return res
+ 		}
++		setChromeHeaders(req.Header)
+ 		for k, v := range headers {
+ 			req.Header.Set(k, v)
+ 		}
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
 index 00eb305..2b4c6ca 100644
 --- a/internal/app/gemini_test.go
@@ -1178,6 +1253,108 @@ index 00eb305..2b4c6ca 100644
  	}
  	for _, c := range cases {
  		name, mc, err := resolveModel(c.name)
+diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
+new file mode 100644
+index 0000000..b80a9fa
+--- /dev/null
++++ b/internal/app/headers_test.go
+@@ -0,0 +1,96 @@
++package app
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	tls_client "github.com/bogdanfinn/tls-client"
++)
++
++// 同一个账号的请求不能因为走没走代理而呈现两种客户端：两条路径都要带齐 chromeHeaders，
++// 调用方自己的 header 照样生效。直连那条以前一个都不带，UA 是 Go-http-client/2.0。
++//
++// 直连走 tls-client，这里换成跳过证书校验的同款客户端，打本机的 HTTPS 测试服务器；
++// 代理那条把 http:// 目标以绝对 URI 发给代理，测试服务器本身就能当代理（同 cancel_test）。
++func TestDirectAndProxyPathsSendSameBrowserHeaders(t *testing.T) {
++	got := map[string]http.Header{}
++	record := func(name string) http.Handler {
++		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++			got[name] = r.Header.Clone()
++			w.WriteHeader(200)
++		})
++	}
++	direct := httptest.NewUnstartedServer(record("direct"))
++	direct.EnableHTTP2 = true
++	direct.StartTLS()
++	defer direct.Close()
++	proxy := httptest.NewServer(record("proxy"))
++	defer proxy.Close()
++
++	key := rtCfg().Impersonate
++	insecure, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
++		tls_client.WithClientProfile(resolveProfile(key)),
++		tls_client.WithInsecureSkipVerify(),
++		tls_client.WithNotFollowRedirects())
++	if err != nil {
++		t.Fatal(err)
++	}
++	clientCacheMu.Lock()
++	prev, had := clientCache[key]
++	clientCache[key] = insecure
++	clientCacheMu.Unlock()
++	t.Cleanup(func() {
++		clientCacheMu.Lock()
++		defer clientCacheMu.Unlock()
++		if had {
++			clientCache[key] = prev
++		} else {
++			delete(clientCache, key)
++		}
++	})
++
++	own := map[string]string{"Accept-Language": "en-US,en;q=0.9", "X-Same-Domain": "1"}
++	paths := []struct {
++		name string
++		send func(endpoint, proxyURL string)
++	}{
++		{"StreamGenerate", func(endpoint, proxyURL string) {
++			doGeminiRequestStop(context.Background(), endpoint, "f.req=x", own, proxyURL, nil, nil)
++		}},
++		{"upload", func(endpoint, proxyURL string) {
++			uploadPostCtx(context.Background(), endpoint, own, []byte("x"), proxyURL)
++		}},
++		{"media", func(endpoint, proxyURL string) {
++			mediaGetOnce(endpoint, own, proxyURL)
++		}},
++		{"image", func(endpoint, proxyURL string) {
++			fetchImage(endpoint, proxyURL, 0)
++		}},
++	}
++	for _, p := range paths {
++		clear(got)
++		p.send(direct.URL+"/x", "")
++		p.send("http://upstream.invalid/x", proxy.URL)
++		d, pr := got["direct"], got["proxy"]
++		if d == nil || pr == nil {
++			t.Fatalf("%s: 没收到请求（direct=%v proxy=%v）", p.name, d != nil, pr != nil)
++		}
++		if ua := d.Get("User-Agent"); ua != ChromeUA {
++			t.Errorf("%s: 直连 UA = %q", p.name, ua)
++		}
++		for _, kv := range chromeHeaders {
++			if d.Get(kv[0]) != pr.Get(kv[0]) {
++				t.Errorf("%s: %s 直连 %q，代理 %q", p.name, kv[0], d.Get(kv[0]), pr.Get(kv[0]))
++			}
++		}
++		if p.name != "image" {
++			for k, v := range own {
++				if d.Get(k) != v || pr.Get(k) != v {
++					t.Errorf("%s: 调用方的 %s 没生效（直连 %q，代理 %q）", p.name, k, d.Get(k), pr.Get(k))
++				}
++			}
++		}
++	}
++}
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
 index 0000000..b30336f
@@ -1481,6 +1658,18 @@ index 0000000..b30336f
 +		t.Fatalf("非流式: stop=%v reads=%d tracker=%q", lh.stop.Load(), src.reads, lh.tracker.emitted)
 +	}
 +}
+diff --git a/internal/app/media.go b/internal/app/media.go
+index 9844778..03610f9 100644
+--- a/internal/app/media.go
++++ b/internal/app/media.go
+@@ -505,6 +505,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
+ 	if err != nil {
+ 		return 0, nil, nil, err
+ 	}
++	setChromeHeaders(req.Header)
+ 	for k, v := range headers {
+ 		req.Header.Set(k, v)
+ 	}
 diff --git a/internal/app/messages.go b/internal/app/messages.go
 index 376171f..87b91fe 100644
 --- a/internal/app/messages.go
@@ -1786,7 +1975,7 @@ index c3a7df1..eb02909 100644
  		if stream {
  			writeEvent("response.failed", map[string]interface{}{
 diff --git a/internal/app/upload.go b/internal/app/upload.go
-index 7747a72..09e8a04 100644
+index 7747a72..2753f93 100644
 --- a/internal/app/upload.go
 +++ b/internal/app/upload.go
 @@ -2,6 +2,7 @@ package app
@@ -1843,7 +2032,7 @@ index 7747a72..09e8a04 100644
  		if err != nil {
  			return 0, nil, nil, err
  		}
-@@ -131,7 +142,7 @@ func uploadPost(url string, headers map[string]string, body []byte, proxyURL str
+@@ -131,10 +142,11 @@ func uploadPost(url string, headers map[string]string, body []byte, proxyURL str
  		}
  		return resp.StatusCode, h, b, err
  	}
@@ -1851,6 +2040,10 @@ index 7747a72..09e8a04 100644
 +	req, err := fhttp.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
  	if err != nil {
  		return 0, nil, nil, err
+ 	}
++	setChromeHeaders(req.Header)
+ 	for k, v := range headers {
+ 		req.Header.Set(k, v)
  	}
 diff --git a/internal/app/videos.go b/internal/app/videos.go
 index 390b580..0365a78 100644
@@ -1873,8 +2066,20 @@ index 390b580..0365a78 100644
  	if err != nil {
  		recordRequest("videos", j.Model, j.Prompt, "", res, 502, err.Error(), false)
  		finishVideoJob(j, nil, "", err.Error())
+diff --git a/internal/app/vision.go b/internal/app/vision.go
+index b0c9724..b1ca7cb 100644
+--- a/internal/app/vision.go
++++ b/internal/app/vision.go
+@@ -160,6 +160,7 @@ func fetchImage(src, proxyURL string, idx int) (pendingUpload, error) {
+ 		if err != nil {
+ 			return pendingUpload{}, err
+ 		}
++		setChromeHeaders(req.Header)
+ 		resp, err := getTLSClient().Do(req)
+ 		if err != nil {
+ 			return pendingUpload{}, fmt.Errorf("image %d: fetch failed: %w", idx, err)
 diff --git a/internal/app/xsrf.go b/internal/app/xsrf.go
-index c43b104..9af1078 100644
+index c43b104..d3d7145 100644
 --- a/internal/app/xsrf.go
 +++ b/internal/app/xsrf.go
 @@ -27,15 +27,23 @@ var (
@@ -1992,3 +2197,11 @@ index c43b104..9af1078 100644
  
  	e, err := fetchAppTokens(cookie, proxyURL)
  	if err != nil {
+@@ -146,6 +193,7 @@ func fetchAppPage(cookie, proxyURL string) ([]byte, error) {
+ 		if err != nil {
+ 			return nil, err
+ 		}
++		setChromeHeaders(req.Header)
+ 		for k, v := range headers {
+ 			req.Header.Set(k, v)
+ 		}

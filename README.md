@@ -77,7 +77,7 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 
 ## Argon 增强版（可选）
 
-官方后端已支持 `gemini-4-argon`（需付费 / Ultra 账号）。本仓库的补丁版额外校验返回的确实是 Argon（防止被静默降级），并降低延迟。需要 Go 1.26+：
+官方后端已支持 `gemini-4-argon`（需付费 / Ultra 账号）。本仓库的补丁版额外校验返回的确实是 Argon（防止被静默降级），并降低延迟。它也让后端的请求更像浏览器：直连时每个请求都带齐 Chrome 请求头（官方版直连时，对话请求的 UA 是 `Go-http-client/2.0`），保活刷新 Cookie 后也不再立即重新抓取 `/app` 页面。需要 Go 1.26+：
 
 ```bash
 git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git && cd magpie-gemini-web
@@ -89,6 +89,15 @@ npm run backend:install:argon
 ```
 
 安装后重启 Magpie 即可，插件会在后台启动 Argon 版（如有旧后端在运行，先 `kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`）。运行 `npm run backend:install` 可切回官方版。
+
+`patches/argon.patch` 更新后（比如拉取了本仓库的新版本），需要在干净的源码上重新应用补丁并重新构建。停掉旧后端后，插件会在下一个请求时启动新版：
+
+```bash
+git -C backend-source checkout -- . && git -C backend-source clean -fdq
+git -C backend-source apply ../patches/argon.patch
+npm run backend:build:argon && npm run backend:install:argon
+kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)
+```
 
 ## 友链
 

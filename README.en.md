@@ -77,7 +77,7 @@ So with a proxy pool, an account just added by one-click setup has no email yet.
 
 ## Argon patched build (optional)
 
-The official backend already supports `gemini-4-argon`, which needs a paid or Ultra account. This repo's patched build also verifies that responses really come from Argon, so a silent downgrade is caught, and it lowers latency. Building it requires Go 1.26+:
+The official backend already supports `gemini-4-argon`, which needs a paid or Ultra account. This repo's patched build also verifies that responses really come from Argon, so a silent downgrade is caught, and it lowers latency. It also makes the backend's requests look more like a browser's: on a direct connection every request carries the full set of Chrome headers (the official build's direct chat requests say `Go-http-client/2.0`), and refreshing the cookies to keep a session alive no longer fetches the `/app` page right away. Building it requires Go 1.26+:
 
 ```bash
 git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git && cd magpie-gemini-web
@@ -89,6 +89,15 @@ npm run backend:install:argon
 ```
 
 Restart Magpie when the install finishes, and the plugin starts the Argon build in the background. If an older backend is still running, stop it first with `kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`. Run `npm run backend:install` to switch back to the official build.
+
+When `patches/argon.patch` changes (after you pull a new version of this repo, say), apply it again to clean sources and rebuild. Once the old backend is stopped, the plugin starts the new one on the next request:
+
+```bash
+git -C backend-source checkout -- . && git -C backend-source clean -fdq
+git -C backend-source apply ../patches/argon.patch
+npm run backend:build:argon && npm run backend:install:argon
+kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)
+```
 
 ## License
 
