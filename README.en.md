@@ -75,6 +75,12 @@ So with a proxy pool, an account just added by one-click setup has no email yet.
 - Upstream emulates tool calls with prompts, so they aren't always reliable. Flash models often don't call tools.
 - Only text models whose names start with `gemini-` are exposed. A `cost` of 0 doesn't reflect your actual Google quota.
 
+## Native Task on macOS (experimental)
+
+On macOS, sign-in offers one more option, "macOS 原生 Task（实验性）": requests skip the Gemini Web backend and go to a local daemon that runs them in Gemini.app's own Task mode, with tool calls on its native Function Calling channel, as the model `gemini-task-argon`. Windows and Linux don't offer it; keep using one-click setup there.
+
+This is an alpha: it supports only the verified Gemini.app build, needs a local setup first (Gemini.app signed in, plus session templates), hasn't passed an end-to-end check against real Argon yet, and shows no usage. See [native-task/README.md](native-task/README.md) for setup, session requirements and limitations.
+
 ## Argon patched build (optional)
 
 The official backend already supports `gemini-4-argon`, which needs a paid or Ultra account. This repo's patched build also verifies that responses really come from Argon, so a silent downgrade is caught, and it lowers latency. It also makes the backend's requests look more like a browser's: on a direct connection every request carries the full set of Chrome headers (the official build's direct chat requests say `Go-http-client/2.0`), and refreshing the cookies to keep a session alive no longer fetches the `/app` page right away. Building it requires Go 1.26+:

@@ -75,6 +75,12 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 - 工具调用由上游用提示词模拟，不一定可靠，Flash 系列经常不调用工具。
 - 只开放 `gemini-` 开头的文本模型；`cost` 显示为 0 不代表 Google 的实际配额。
 
+## macOS 原生 Task（实验性）
+
+在 macOS 上登录时会多出一个「macOS 原生 Task（实验性）」选项：请求不走 Gemini Web 后端，而是交给本机常驻服务，由 Gemini.app 自己的 Task 模式执行，工具调用走原生的 Function Calling 通道，模型为 `gemini-task-argon`。Windows 和 Linux 上不会出现这个选项，请继续使用上面的一键配置。
+
+当前为 Alpha：仅支持已验证的 Gemini.app 版本，选这个选项之前需要先在本机完成 setup（需要 Gemini.app 已登录，以及会话模板），尚未完成真实 Argon 的端到端验收，读不到额度。配置步骤、会话要求和限制见 [native-task/README.md](native-task/README.md)。
+
 ## Argon 增强版（可选）
 
 官方后端已支持 `gemini-4-argon`（需付费 / Ultra 账号）。本仓库的补丁版额外校验返回的确实是 Argon（防止被静默降级），并降低延迟。它也让后端的请求更像浏览器：直连时每个请求都带齐 Chrome 请求头（官方版直连时，对话请求的 UA 是 `Go-http-client/2.0`），保活刷新 Cookie 后也不再立即重新抓取 `/app` 页面。需要 Go 1.26+：

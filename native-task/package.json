@@ -1,0 +1,28 @@
+{
+  "name": "magpie-gemini-native-task",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "magpie": {
+    "maxConcurrency": 1
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "bridge": "node scripts/bridge.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "lib",
+    "scripts",
+    "bridge",
+    "requirements.txt",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE"
+  ]
+}

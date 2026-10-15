@@ -10,3 +10,13 @@ backend-source/
 *.db
 *.db-wal
 *.db-shm
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Notes, captures and probes from researching the Gemini app: kept local only
+docs/research/
+docs/design/
+scripts/research/
+native-task/scripts/verify-live.py

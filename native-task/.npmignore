@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+sessions/
+source/
+*.log
+daemon.lock
+bootstrap.lock

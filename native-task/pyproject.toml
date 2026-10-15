@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gemini-native-bridge"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "h2==4.3.0",
+    "jsonschema==4.25.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["bridge"]
+
+[tool.setuptools.package-data]
+gemini_native_bridge = ["native_auth_keychain.swift"]

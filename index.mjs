@@ -2,6 +2,7 @@ import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHAB
 import { ensureBackend, localBackend } from './lib/native.mjs';
 import { parseCookieInput, importCookie } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
+import { taskSupported, taskMethod, taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
 
 const ID = 'gemini-web';
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -158,9 +159,10 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
             callback: async () => signInFor(local, chosen)
           };
         }
-      }],
+      }, ...(taskSupported() ? [taskMethod] : [])],
       async loader(getAuth) {
         const auth = await getAuth();
+        if (isTaskAuth(auth)) return taskLoader(auth);
         if (auth?.type !== 'api') return {};
         const c = credentials(auth, opts);
         return {
@@ -176,6 +178,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       async usage(getAuth) {
         const auth = await getAuth();
         if (auth?.type !== 'api') return { error: 'Gemini Web 还没有登录', windows: [], signIn: 'kept' };
+        if (isTaskAuth(auth)) return { error: '原生 Task 登录读不到额度', windows: [], signIn: 'kept' };
         let c;
         try {
           c = credentials(auth, opts);
@@ -193,6 +196,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       id: ID,
       async models(provider, { auth } = {}) {
         if (auth?.type !== 'api') return provider.models;
+        if (isTaskAuth(auth)) return taskModels(auth, ID);
         const c = credentials(auth, opts);
         try {
           return await listModels(c, opts);
@@ -201,6 +205,16 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
           await ensureBackend();
           return listModels(c, opts);
         }
+      }
+    },
+    // The Task bridge keeps a conversation's state by its session, so each request carries the
+    // host's session id. The Web backend's forward() passes on only the headers it needs, so
+    // this doesn't reach it.
+    async 'chat.headers'(input, output) {
+      if (input?.model?.providerID !== ID && input?.provider?.info?.id !== ID) return;
+      if (typeof input.sessionID === 'string' && input.sessionID) {
+        output.headers ??= {};
+        output.headers['X-Gemini-Session'] = input.sessionID;
       }
     }
   };
