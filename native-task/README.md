@@ -29,7 +29,9 @@
 
 2026-10-15：已执行通过 41 项 Python 测试和 12 项 Node 测试；真实 Magpie `0.1.1244` 的隔离环境完成了插件安装、本地连接、模型发现及 8 个 HTTP 请求的工具往返测试。该网关测试使用模拟原生上游，包含两次串行工具、最终答案重试、错误会话/调用 ID 拒绝、旧工具阶段拒绝和下一轮用户消息。
 
-当前实现已使用现有登录完成 OAuth 续期及保存轮次读取，但真实 Task 请求被 Google 返回的 `Remy quota exhausted`（gRPC 8）拒绝，尚未完成本版真实 Argon 工具端到端验收。服务将该错误映射为 `native_quota_exhausted`，不会自动重发 Task。
+2026-10-15：通过 `magpie-gemini-web` 0.4.0 的 Task 登录方式（直接加载插件，未经 Magpie 网关）完成了一次真实 Argon 工具往返：模型返回 `Read` 工具调用（19.2 秒），回传工具结果后得到正确的最终答案（13.7 秒）。此前真实 Task 请求曾被 Google 以 `Remy quota exhausted`（gRPC 8）拒绝，服务将该错误映射为 `native_quota_exhausted`，不会自动重发 Task。
+
+已知问题：客户端收到工具调用后若不回传结果（例如 agent 中途被打断），该 Task 会一直占用唯一的名额，直到工具等待和任务超时到期（最长约 4 分钟），期间其他请求返回 409 `concurrency_limit`。另外曾出现过一次首个健康检查超时（2 秒），未能复现。
 
 ## Magpie 插件安装与登录
 

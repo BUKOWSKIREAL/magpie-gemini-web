@@ -79,7 +79,7 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 
 在 macOS 上登录时会多出一个「macOS 原生 Task（实验性）」选项：请求不走 Gemini Web 后端，而是交给本机常驻服务，由 Gemini.app 自己的 Task 模式执行，工具调用走原生的 Function Calling 通道，模型为 `gemini-task-argon`。Windows 和 Linux 上不会出现这个选项，请继续使用上面的一键配置。
 
-当前为 Alpha：仅支持已验证的 Gemini.app 版本，选这个选项之前需要先在本机完成 setup（需要 Gemini.app 已登录，以及会话模板），尚未完成真实 Argon 的端到端验收，读不到额度。配置步骤、会话要求和限制见 [native-task/README.md](native-task/README.md)。
+当前为 Alpha：仅支持已验证的 Gemini.app 版本，选这个选项之前需要先在本机完成 setup（需要 Gemini.app 已登录，以及会话模板），只完成过一次真实 Argon 的工具往返验证，读不到额度；Agent 中途打断时，未回传结果的工具调用会占住唯一的 Task 名额最长约 4 分钟。配置步骤、会话要求和限制见 [native-task/README.md](native-task/README.md)。
 
 ## Argon 增强版（可选）
 
