@@ -206,8 +206,15 @@ describe('27. One-click sign-in through the plugin', () => {
   let previousDataDir;
   const accounts = new Map();
   let nextId = 1;
+  // The backend's database, which the plugin reads the pool from: the fake backend keeps its
+  // accounts there too.
+  let db;
+  const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
+  const savedEnv = {};
 
   before(async () => {
+    // Magpie's host has no proxy variables of its own (see egress in lib/usage.mjs).
+    PROXY_ENV.forEach(k => { savedEnv[k] = process.env[k]; delete process.env[k]; });
     server = http.createServer((req, res) => {
       let body = '';
       req.on('data', c => { body += c; });
@@ -223,6 +230,8 @@ describe('27. One-click sign-in through the plugin', () => {
         if (req.method === 'POST' && req.url === '/admin/api/cookies') {
           const id = nextId++;
           accounts.set(id, JSON.parse(body).cookie);
+          db.prepare(`INSERT INTO accounts (id, label, cookie, status, proxy_id) VALUES (?, 'Magpie', ?, 'enabled', 0)`)
+            .run(id, JSON.parse(body).cookie);
           return send(200, { id });
         }
         const m = req.url.match(/^\/admin\/api\/cookies\/(\d+)(\/check)?$/);
@@ -232,6 +241,7 @@ describe('27. One-click sign-in through the plugin', () => {
         }
         if (m && req.method === 'DELETE') {
           accounts.delete(Number(m[1]));
+          db.prepare('DELETE FROM accounts WHERE id = ?').run(Number(m[1]));
           return send(200, {});
         }
         send(404, { error: 'not found' });
@@ -239,12 +249,19 @@ describe('27. One-click sign-in through the plugin', () => {
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     dataDir = makeDataDir({ port: server.address().port });
+    db = new DatabaseSync(path.join(dataDir, 'gemini.db'));
+    db.exec(`CREATE TABLE proxies (id INTEGER PRIMARY KEY, name TEXT, url TEXT, enabled INTEGER);
+      CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER,
+        last_used_at INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE requests (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, account_id INTEGER);`);
     previousDataDir = process.env.GEMINI_WEB_DATA_DIR;
     process.env.GEMINI_WEB_DATA_DIR = dataDir;
   });
 
   after(() => {
     server.close();
+    db.close();
+    PROXY_ENV.forEach(k => { if (savedEnv[k] !== undefined) process.env[k] = savedEnv[k]; });
     if (previousDataDir === undefined) delete process.env.GEMINI_WEB_DATA_DIR;
     else process.env.GEMINI_WEB_DATA_DIR = previousDataDir;
     fs.rmSync(dataDir, { recursive: true, force: true });
@@ -287,6 +304,29 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.equal(accounts.size, 1);
   });
 
+  it('signs in without the email while the new account has no known way out', async () => {
+    // A pool with proxies: the backend binds the account to one on its first request.
+    db.exec(`INSERT INTO proxies VALUES (1, 'p1', 'http://127.0.0.1:7890', 1)`);
+    const pending = await (await oauthMethod()).authorize();
+    const realFetch = globalThis.fetch;
+    const google = [];
+    globalThis.fetch = (url, init) => {
+      if (String(url).startsWith('https://gemini.google.com/')) google.push(url);
+      return realFetch(url, init);
+    };
+    let result;
+    try {
+      result = await pending.callback(SIGNED_IN.replace('SID=v-SID', 'SID=good-pooled'));
+    } finally {
+      globalThis.fetch = realFetch;
+      db.exec('DELETE FROM proxies');
+    }
+    assert.equal(result.type, 'success');
+    assert.equal(result.metadata.account, nextId - 1);
+    assert.equal(result.metadata.email, undefined);
+    assert.deepEqual(google, []);
+  });
+
   it('fails without keeping the account when the cookie does not sign in', async () => {
     const before = accounts.size;
     const pending = await (await oauthMethod()).authorize();
@@ -297,12 +337,10 @@ describe('27. One-click sign-in through the plugin', () => {
   });
 
   it('signs in to an account already in the backend pool, one sign-in per Google account', async () => {
-    const db = new DatabaseSync(path.join(dataDir, 'gemini.db'));
-    db.exec(`CREATE TABLE proxies (id INTEGER PRIMARY KEY, name TEXT, url TEXT, enabled INTEGER);
-      CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER);
-      INSERT INTO accounts VALUES (41, 'Magpie', 'SID=pool-a', 'enabled', 0), (42, 'Magpie', 'SID=pool-b', 'enabled', 0),
-        (43, 'Magpie', 'SID=pool-c', 'disabled', 0);`);
-    db.close();
+    // Only these accounts in the pool.
+    db.exec(`UPDATE accounts SET status = 'disabled';
+      INSERT INTO accounts (id, label, cookie, status, proxy_id) VALUES (41, 'Magpie', 'SID=pool-a', 'enabled', 0),
+        (42, 'Magpie', 'SID=pool-b', 'enabled', 0), (43, 'Magpie', 'SID=pool-c', 'disabled', 0);`);
     const realFetch = globalThis.fetch;
     globalThis.fetch = async (url, init) => {
       if (url !== 'https://gemini.google.com/app') return realFetch(url, init);
@@ -326,7 +364,7 @@ describe('27. One-click sign-in through the plugin', () => {
       await assert.rejects(method.authorize({ account: '43' }), /没有启用的账号 #43/);
     } finally {
       globalThis.fetch = realFetch;
-      fs.rmSync(path.join(dataDir, 'gemini.db'), { force: true });
+      db.exec(`DELETE FROM accounts WHERE id IN (41, 42, 43); UPDATE accounts SET status = 'enabled';`);
     }
   });
 
