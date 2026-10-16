@@ -1,0 +1,66 @@
+name: Verify published package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compare public npm and GitHub packages
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import crypto from 'node:crypto';
+          import { setTimeout } from 'node:timers/promises';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const registry = `https://registry.npmjs.org/${pkg.name}`;
+          let info;
+          // npm can accept publication before its public index is ready.
+          for (let attempt = 0; attempt < 20; attempt++) {
+            try {
+              const response = await fetch(`${registry}/${pkg.version}`, { signal: AbortSignal.timeout(15000) });
+              if (response.ok) {
+                info = await response.json();
+                break;
+              }
+              assert.ok(response.status === 404 || response.status >= 500, `Unexpected registry status ${response.status}`);
+              console.log(`Registry status ${response.status}; waiting for ${pkg.name}@${pkg.version}`);
+            } catch (error) {
+              if (error.code === 'ERR_ASSERTION') throw error;
+              console.log(`Registry request failed: ${error.message}`);
+            }
+            if (attempt < 19) await setTimeout(15000);
+          }
+          assert.ok(info, 'Package did not become publicly available within the verification window');
+          assert.equal(info.version, pkg.version);
+          assert.equal(info.name, pkg.name);
+          const urls = [info.dist.tarball, `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${pkg.version}/${pkg.name}-${pkg.version}.tgz`];
+          const files = await Promise.all(urls.map(async url => {
+            const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+            assert.equal(response.status, 200, url);
+            return Buffer.from(await response.arrayBuffer());
+          }));
+          assert.ok(files[0].equals(files[1]), 'npm and GitHub tarballs must match byte for byte');
+          assert.equal(crypto.createHash('sha1').update(files[0]).digest('hex'), info.dist.shasum);
+          assert.equal(`sha512-${crypto.createHash('sha512').update(files[0]).digest('base64')}`, info.dist.integrity);
+          const metadata = await fetch(registry, { signal: AbortSignal.timeout(15000) });
+          assert.equal(metadata.status, 200);
+          assert.equal((await metadata.json())['dist-tags'].latest, pkg.version);
+          fs.mkdirSync('published-package', { recursive: true });
+          fs.writeFileSync('published-package/package.tgz', files[0]);
+          console.log(JSON.stringify({ version: pkg.version, latest: pkg.version, shasum: info.dist.shasum, integrity: info.dist.integrity, exactBytesMatch: true }));
+          JS
+      - name: Install and start the publicly distributed package
+        run: |
+          tar -xzf published-package/package.tgz -C published-package
+          node scripts/backend-smoke.mjs --download --package-root=published-package/package
