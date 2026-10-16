@@ -54,7 +54,9 @@ try {
   }
   const archive = path.join(scratch, 'upstream.tar');
   execFileSync('git', ['-C', upstream, 'archive', '--format=tar', `--output=${archive}`, release.upstream.commit]);
-  execFileSync('tar', ['-xf', archive, '-C', source]);
+  // Relative archive paths also work with Git for Windows' tar, which otherwise
+  // treats the drive letter in C:\\... as a remote archive host.
+  execFileSync('tar', ['-xf', 'upstream.tar', '-C', 'source'], { cwd: scratch });
   execFileSync('git', ['apply', '--check', patchPath], { cwd: source, stdio: 'inherit' });
   execFileSync('git', ['apply', patchPath], { cwd: source, stdio: 'inherit' });
   const versionPath = path.join(source, 'internal/app/server.go');
@@ -88,7 +90,12 @@ try {
 
   if (!target) {
     const sourceName = `gemini-web2api-go_v${release.version}_source.tar.gz`;
-    execFileSync('tar', ['-czf', path.join(output, sourceName), '-C', source, '.']);
+    const sourceArchive = fs.openSync(path.join(output, sourceName), 'w');
+    try {
+      execFileSync('tar', ['-czf', '-', '.'], { cwd: source, stdio: ['ignore', sourceArchive, 'inherit'] });
+    } finally {
+      fs.closeSync(sourceArchive);
+    }
     fs.copyFileSync(path.join(root, 'LICENSE-UPSTREAM'), path.join(output, 'LICENSE-UPSTREAM'));
     const build = { version: release.version, upstream: release.upstream, goVersion: release.goVersion,
       patch: 'patches/argon.patch', patchSha256: hash(fs.readFileSync(patchPath)),
