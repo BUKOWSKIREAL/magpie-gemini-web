@@ -43,8 +43,10 @@ jobs:
           assert.equal(run.event, 'workflow_dispatch');
           assert.equal(run.path, '.github/workflows/backend.yml');
           const release = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
-          const draft = api(`repos/${repo}/releases/tags/${release.tag}`);
-          assert.equal(draft.draft, true, 'Only a private draft can receive these assets');
+          // The tag endpoint excludes drafts for GitHub App tokens; gh also
+          // searches the releases list, which includes writable private drafts.
+          const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft'], { encoding: 'utf8' }));
+          assert.equal(draft.isDraft, true, 'Only a private draft can receive these assets');
           fs.mkdirSync('verified-artifacts', { recursive: true });
           execFileSync('gh', ['run', 'download', id, '--repo', repo, '--pattern', 'backend-*', '--dir', 'verified-artifacts'], { stdio: 'inherit' });
           JS
