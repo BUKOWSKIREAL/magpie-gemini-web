@@ -9,7 +9,7 @@ Use Gemini on the web through your Google account in [Magpie](https://usemagpie.
 ## Getting started
 
 1. Install **magpie-gemini-web** from the Magpie plugin market.
-2. Sign in to Gemini Web and choose **一键配置本地 Gemini Web (one-click local setup, recommended)**. The plugin downloads the backend, verifies it and starts it in the background.
+2. Sign in to Gemini Web and choose **一键配置本地 Gemini Web (one-click local setup, recommended)**. The plugin downloads this project's optimized backend, verifies its SHA-256 and starts it in the background. No Go installation or manual patching is needed.
 3. Copy your cookie when prompted. **Use a private / incognito window** (Firefox recommended):
    1. In the private window, open <https://gemini.google.com/app> and sign in to the Google account you want to use.
    2. Press F12 (⌥⌘I on macOS), switch to **Network** and reload the page.
@@ -50,7 +50,7 @@ You can switch a model between `low` and `high` effort in Magpie if it has a `-t
 ## Security and data
 
 - The backend listens on `127.0.0.1` only. Your cookie goes only to that local backend, and Magpie stores a locally generated API key instead.
-- The plugin pins the official v4.22.0 backend binary and checks its SHA-256 on download and on every start. Builds are available for macOS, Linux and Windows on x64 and arm64.
+- The default backend is this project's **4.22.0-magpie.1**, built from pinned upstream v4.22.0 sources with this repository's patch. SHA-256 is checked on download and before launching a new process. Builds cover macOS, Linux and Windows on x64 and arm64; the release includes sources, build metadata and checksums.
 - The data directory is `~/.local/share/magpie-gemini-web` (set `GEMINI_WEB_DATA_DIR` to change it). The backend writes its log to `backend.log` there.
 - The plugin sends one request at a time, but this can't guarantee that Google won't flag your account. Use it at your own risk.
 
@@ -83,29 +83,33 @@ On macOS, sign-in offers one more option, "macOS 原生 Task（实验性）": re
 
 This is an alpha: it supports only the verified Gemini.app build, needs a local setup first (Gemini.app signed in, plus session templates), has passed only one live tool round trip against real Argon, and shows no usage; if an agent is interrupted before it returns a tool result, that call holds the only Task slot for up to about 4 minutes. See [native-task/README.md](native-task/README.md) for setup, session requirements and limitations.
 
-## Argon patched build (optional)
+## Default optimized backend and rollback
 
-The official backend already supports `gemini-4-argon`, which needs a paid or Ultra account. This repo's patched build also verifies that responses really come from Argon, so a silent downgrade is caught, and it lowers latency. It also makes the backend's requests look more like a browser's: on a direct connection every request carries the full set of Chrome headers (the official build's direct chat requests say `Go-http-client/2.0`), and refreshing the cookies to keep a session alive no longer fetches the `/app` page right away. Building it requires Go 1.26+:
+Starting with plugin **0.4.1**, one-click setup uses [4.22.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.22.0-magpie.1). It includes the changes that previously required a manual build: stable XSRF caching, cancellation propagation for the main generation and upload requests, early completion after complete tool calls, browser headers, and verification of the returned Argon model. Your Google account still needs access to the requested model.
 
-```bash
-git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git && cd magpie-gemini-web
-git clone https://github.com/zexadev/gemini-web2api-go.git backend-source
-git -C backend-source checkout a65b1d1a5ac614c1b455857334b4f1c73ab8fcfb
-git -C backend-source apply ../patches/argon.patch
-npm run backend:build:argon
-npm run backend:install:argon
-```
+**Upgrading an existing installation:** the plugin leaves a running backend alone. Stop the existing backend process (its process ID is in `backend.pid` in the data directory), then start Magpie or send a request. A stopped old official backend is upgraded automatically, preserving configuration, the cookie database and API keys. Explicitly installed local Argon builds are kept; to replace one with the published build, stop it and run `backend:install` below.
 
-Restart Magpie when the install finishes, and the plugin starts the Argon build in the background. If an older backend is still running, stop it first with `kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`. Run `npm run backend:install` to switch back to the official build.
-
-When `patches/argon.patch` changes (after you pull a new version of this repo, say), apply it again to clean sources and rebuild. Once the old backend is stopped, the plugin starts the new one on the next request:
+To roll back, stop the backend and run this from the plugin directory:
 
 ```bash
-git -C backend-source checkout -- . && git -C backend-source clean -fdq
-git -C backend-source apply ../patches/argon.patch
-npm run backend:build:argon && npm run backend:install:argon
-kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)
+npm run backend:install:upstream
 ```
+
+This installs the checksum-verified official v4.22.0 and saves the selection, so automatic starts keep using upstream. To restore the default optimized build:
+
+```bash
+npm run backend:install
+```
+
+A failed download or checksum verification keeps the previous binary. On Windows, stop the old process before replacing its executable.
+
+The backend release includes source and build metadata. Developers with Git, Node 22+ and Go 1.27.1 can reproduce all six builds and compare the pinned hashes from this repository:
+
+```bash
+npm run backend:release:build
+```
+
+The script extracts clean sources from the pinned upstream commit and applies `patches/argon.patch`; it never changes the developer's `backend-source` working tree. See [docs/backend-release.md](docs/backend-release.md) for the release procedure.
 
 ## License
 

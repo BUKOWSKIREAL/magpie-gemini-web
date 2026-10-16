@@ -8,6 +8,9 @@ async function main() {
     case 'install':
       await installBackend();
       break;
+    case 'install-upstream':
+      await installBackend({ channel: 'upstream' });
+      break;
     case 'start':
       startBackend();
       break;
@@ -15,7 +18,7 @@ async function main() {
       await statusBackend();
       break;
     default:
-      console.error('Usage: node scripts/backend.mjs <install|start|status>');
+      console.error('Usage: node scripts/backend.mjs <install|install-upstream|start|status>');
       process.exit(1);
   }
 }

@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
-import { ensureBackend, localBackend } from '../lib/native.mjs';
+import { ensureBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
 import { parseCookieInput, importCookie, REQUIRED_COOKIES } from '../lib/setup.mjs';
 
 const SIGNED_IN = REQUIRED_COOKIES.map(n => `${n}=v-${n}`).join('; ');
@@ -169,7 +169,7 @@ describe('26. ensureBackend', () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('replaces an untrusted binary from the pinned release and fails closed on a bad download', async () => {
+  it('fetches the pinned release and does not launch or delete the old binary on a bad download', async () => {
     const dataDir = makeDataDir();
     const spawned = [];
     const urls = [];
@@ -187,8 +187,8 @@ describe('26. ensureBackend', () => {
       }),
       /SHA256 checksum mismatch/
     );
-    assert.ok(urls.some(u => u.endsWith('/v4.22.0/gemini-web2api-go_v4.22.0_darwin_arm64')));
-    assert.equal(fs.existsSync(path.join(dataDir, 'bin', 'gemini-web2api-go')), false);
+    assert.ok(urls.includes(pinnedBinary('darwin', 'arm64').url));
+    assert.equal(fs.readFileSync(path.join(dataDir, 'bin', 'gemini-web2api-go'), 'utf8'), 'fake backend');
     assert.equal(spawned.length, 0);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });

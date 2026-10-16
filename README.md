@@ -9,7 +9,7 @@
 ## 开始使用
 
 1. 在 Magpie 插件市场安装 **magpie-gemini-web**。
-2. 登录 Gemini Web，选 **「一键配置本地 Gemini Web（推荐）」**。插件会自动下载并校验后端，在后台启动它。
+2. 登录 Gemini Web，选 **「一键配置本地 Gemini Web（推荐）」**。插件会自动下载本项目发布的优化后端、校验 SHA-256，并在后台启动；不需要安装 Go 或手动打补丁。
 3. 按提示复制 Cookie，**一定要用无痕 / 隐私窗口**（推荐 Firefox）：
    1. 在无痕窗口打开 <https://gemini.google.com/app>，登录要使用的 Google 账号；
    2. 按 F12（macOS 按 ⌥⌘I），切到 **Network（网络）**，刷新页面；
@@ -50,7 +50,7 @@ magpie plugin options magpie-gemini-web '{"allowImages":true}'
 ## 安全与数据
 
 - 后端只监听 `127.0.0.1`；Cookie 只交给本机后端，Magpie 保存的是本地生成的 API key。
-- 后端二进制锁定官方 v4.22.0，下载和每次启动都校验 SHA-256。支持 macOS、Linux、Windows（x64 / arm64）。
+- 默认后端为本项目发布的 **4.22.0-magpie.1**，基于固定的上游 v4.22.0 源码应用本仓库补丁。下载和启动新进程前校验 SHA-256。支持 macOS、Linux、Windows（x64 / arm64），发布页提供源码、构建记录和校验和。
 - 数据目录：`~/.local/share/magpie-gemini-web`（可用 `GEMINI_WEB_DATA_DIR` 修改），日志在 `backend.log`。
 - 插件限制并发为 1，但无法保证账号不被 Google 风控，请自行承担风险。
 
@@ -83,29 +83,33 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 
 当前为 Alpha：仅支持已验证的 Gemini.app 版本，选这个选项之前需要先在本机完成 setup（需要 Gemini.app 已登录，以及会话模板），只完成过一次真实 Argon 的工具往返验证，读不到额度；Agent 中途打断时，未回传结果的工具调用会占住唯一的 Task 名额最长约 4 分钟。配置步骤、会话要求和限制见 [native-task/README.md](native-task/README.md)。
 
-## Argon 增强版（可选）
+## 默认优化后端与回退
 
-官方后端已支持 `gemini-4-argon`（需付费 / Ultra 账号）。本仓库的补丁版额外校验返回的确实是 Argon（防止被静默降级），并降低延迟。它也让后端的请求更像浏览器：直连时每个请求都带齐 Chrome 请求头（官方版直连时，对话请求的 UA 是 `Go-http-client/2.0`），保活刷新 Cookie 后也不再立即重新抓取 `/app` 页面。需要 Go 1.26+：
+从插件 **0.4.1** 起，一键配置默认使用 [4.22.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.22.0-magpie.1)。它包含原先需要手动编译的优化：稳定的 XSRF 缓存、主要生成与上传请求的取消传播、完整工具调用后的提前收尾、浏览器请求头，以及 Argon 返回模型校验。Google 账号仍需具备对应模型权限。
 
-```bash
-git clone https://github.com/BUKOWSKIREAL/magpie-gemini-web.git && cd magpie-gemini-web
-git clone https://github.com/zexadev/gemini-web2api-go.git backend-source
-git -C backend-source checkout a65b1d1a5ac614c1b455857334b4f1c73ab8fcfb
-git -C backend-source apply ../patches/argon.patch
-npm run backend:build:argon
-npm run backend:install:argon
-```
+**已有用户升级**：插件不会中断正在运行的后端。先停止现有后端进程（进程 ID 在数据目录的 `backend.pid`），再启动 Magpie 或发送请求；停止状态的旧官方后端会自动更新，配置、Cookie 数据库和 API key 保留。已经手动安装的本地 Argon 构建会继续复用；要切到发布版，可在停止后端后运行下面的 `backend:install`。
 
-安装后重启 Magpie 即可，插件会在后台启动 Argon 版（如有旧后端在运行，先 `kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)`）。运行 `npm run backend:install` 可切回官方版。
-
-`patches/argon.patch` 更新后（比如拉取了本仓库的新版本），需要在干净的源码上重新应用补丁并重新构建。停掉旧后端后，插件会在下一个请求时启动新版：
+需要回退时，在插件目录停止后端后运行：
 
 ```bash
-git -C backend-source checkout -- . && git -C backend-source clean -fdq
-git -C backend-source apply ../patches/argon.patch
-npm run backend:build:argon && npm run backend:install:argon
-kill $(cat ~/.local/share/magpie-gemini-web/backend.pid)
+npm run backend:install:upstream
 ```
+
+这会安装经过 SHA-256 校验的官方 v4.22.0，并记住回退选择，之后自动启动也使用官方版。恢复默认优化版：
+
+```bash
+npm run backend:install
+```
+
+下载失败或校验不通过时保留旧二进制。Windows 上必须先停止旧进程，才能替换正在使用的可执行文件。
+
+源码与构建记录随后端 Release 提供。开发者使用 Git、Node 22+、Go 1.27.1，可从本仓库复现全部六个平台的构建并核对哈希：
+
+```bash
+npm run backend:release:build
+```
+
+构建脚本从固定的上游提交提取干净源码、应用 `patches/argon.patch`，不会修改本地 `backend-source` 的工作内容。发布流程见 [docs/backend-release.md](docs/backend-release.md)。
 
 ## 友链
 

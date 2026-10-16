@@ -1,6 +1,6 @@
 {
   "name": "magpie-gemini-web",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Gemini Web provider for Magpie, backed by gemini-web2api-go",
   "type": "module",
   "main": "./index.mjs",
@@ -22,6 +22,7 @@
     "lib/",
     "scripts/backend.mjs",
     "scripts/backend-argon.mjs",
+    "scripts/backend-release.mjs",
     "patches/",
     "native-task/lib/",
     "native-task/bridge/",
@@ -32,6 +33,7 @@
     "native-task/LICENSE",
     "README.md",
     "README.en.md",
+    "docs/backend-release.md",
     "LICENSE",
     "LICENSE-UPSTREAM"
   ],
@@ -50,6 +52,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs native-task/test/*.test.mjs",
     "backend:install": "node scripts/backend.mjs install",
+    "backend:install:upstream": "node scripts/backend.mjs install-upstream",
+    "backend:release:build": "node scripts/backend-release.mjs --verify",
     "backend:start": "node scripts/backend.mjs start",
     "backend:status": "node scripts/backend.mjs status",
     "backend:build:argon": "node scripts/backend-argon.mjs build",
