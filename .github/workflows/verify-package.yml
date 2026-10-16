@@ -46,9 +46,20 @@ jobs:
           assert.equal(info.name, pkg.name);
           const urls = [info.dist.tarball, `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/v${pkg.version}/${pkg.name}-${pkg.version}.tgz`];
           const files = await Promise.all(urls.map(async url => {
-            const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
-            assert.equal(response.status, 200, url);
-            return Buffer.from(await response.arrayBuffer());
+            // npm metadata can become visible before the tarball reaches the CDN.
+            for (let attempt = 0; attempt < 20; attempt++) {
+              try {
+                const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+                if (response.ok) return Buffer.from(await response.arrayBuffer());
+                assert.ok(response.status === 404 || response.status >= 500, `Unexpected download status ${response.status}: ${url}`);
+                console.log(`Download status ${response.status}; waiting for ${url}`);
+              } catch (error) {
+                if (error.code === 'ERR_ASSERTION') throw error;
+                console.log(`Download request failed: ${error.message}`);
+              }
+              if (attempt < 19) await setTimeout(15000);
+            }
+            throw new Error(`Public download did not become available: ${url}`);
           }));
           assert.ok(files[0].equals(files[1]), 'npm and GitHub tarballs must match byte for byte');
           assert.equal(crypto.createHash('sha1').update(files[0]).digest('hex'), info.dist.shasum);
