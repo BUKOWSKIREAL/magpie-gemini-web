@@ -4,6 +4,8 @@
 
 让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 Gemini 网页版。插件在本机运行 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) 后端，把 Gemini 网页转成 OpenAI 兼容接口。
 
+> **2026-10-16 更新**：现在正价支付的 Google AI Pro 可以直接在 Antigravity 中使用 `gemini-4-argon`，同理也可以直接用 Magpie 反代。
+
 ## 开始使用
 
 1. 在 Magpie 插件市场安装 **magpie-gemini-web**。

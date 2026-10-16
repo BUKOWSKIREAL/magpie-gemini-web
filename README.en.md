@@ -4,6 +4,8 @@
 
 Use Gemini on the web through your Google account in [Magpie](https://usemagpie.ai/). The plugin runs the [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) backend on your machine. The backend turns the Gemini web app into an OpenAI-compatible API.
 
+> **2026-10-16 update:** Full-price Google AI Pro accounts can now use `gemini-4-argon` directly in Antigravity, and can likewise be proxied directly with Magpie.
+
 ## Getting started
 
 1. Install **magpie-gemini-web** from the Magpie plugin market.
