@@ -1,0 +1,88 @@
+name: Upload verified backend release
+
+on:
+  workflow_dispatch:
+    inputs:
+      verification_run:
+        description: Successful Verify backend release run ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify source run and private release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_RUN: ${{ inputs.verification_run }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          import assert from 'node:assert/strict';
+          const repo = process.env.GITHUB_REPOSITORY;
+          const id = process.env.VERIFICATION_RUN;
+          assert.match(id, /^\d+$/);
+          const api = endpoint => JSON.parse(execFileSync('gh', ['api', endpoint], { encoding: 'utf8' }));
+          const run = api(`repos/${repo}/actions/runs/${id}`);
+          assert.equal(run.conclusion, 'success');
+          assert.equal(run.repository.full_name, repo);
+          assert.equal(run.head_repository.full_name, repo);
+          assert.equal(run.event, 'workflow_dispatch');
+          assert.equal(run.path, '.github/workflows/backend.yml');
+          const release = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
+          const draft = api(`repos/${repo}/releases/tags/${release.tag}`);
+          assert.equal(draft.draft, true, 'Only a private draft can receive these assets');
+          fs.mkdirSync('verified-artifacts', { recursive: true });
+          execFileSync('gh', ['run', 'download', id, '--repo', repo, '--pattern', 'backend-*', '--dir', 'verified-artifacts'], { stdio: 'inherit' });
+          JS
+      - name: Check pinned hashes and upload missing executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import crypto from 'node:crypto';
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          const release = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
+          const repo = process.env.GITHUB_REPOSITORY;
+          const groups = fs.readdirSync('verified-artifacts');
+          const files = Object.values(release.binaries).map(pin => {
+            const matches = groups.map(group => path.join('verified-artifacts', group, pin.asset)).filter(file => fs.existsSync(file));
+            assert.equal(matches.length, 1, `Expected exactly one artifact: ${pin.asset}`);
+            const sha256 = crypto.createHash('sha256').update(fs.readFileSync(matches[0])).digest('hex');
+            assert.equal(sha256, pin.sha256, `Hash mismatch: ${pin.asset}`);
+            return matches[0];
+          });
+          // Validate every file before uploading any. Never replace published assets.
+          for (const file of files) {
+            const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft,assets'], { encoding: 'utf8' }));
+            assert.equal(draft.isDraft, true);
+            const existing = draft.assets.find(asset => asset.name === path.basename(file));
+            if (existing) {
+              assert.equal(existing.state, 'uploaded');
+              const dir = fs.mkdtempSync('existing-');
+              try {
+                execFileSync('gh', ['release', 'download', release.tag, '--repo', repo, '--pattern', existing.name, '--dir', dir]);
+                assert.ok(fs.readFileSync(path.join(dir, existing.name)).equals(fs.readFileSync(file)), `Existing asset differs: ${existing.name}`);
+              } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+              continue;
+            }
+            execFileSync('gh', ['release', 'upload', release.tag, file, '--repo', repo], { stdio: 'inherit' });
+          }
+          console.log(`All ${files.length} pinned executables uploaded to private draft ${release.tag}`);
+          JS
