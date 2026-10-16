@@ -104,6 +104,37 @@ describe('25. Cookie import through the admin API', () => {
     );
     assert.equal(calls.at(-1).method, 'DELETE');
   });
+
+  // The check is the backend fetching gemini.google.com; one that never answers is the backend
+  // not reaching Google, not the plugin not reaching the backend.
+  it('says a check that times out is the backend not reaching Google, and removes the account', async () => {
+    const calls = [];
+    const timeout = () => { throw new DOMException('The operation timed out.', 'TimeoutError'); };
+    await assert.rejects(importCookie(setup, SIGNED_IN, { fetchFn: adminFetch(timeout, calls) }), err => {
+      assert.match(err.message, /60 秒内没检测完这个 Cookie/);
+      assert.match(err.message, /http:\/\/127\.0\.0\.1:1\/admin 的代理池/);
+      assert.doesNotMatch(err.message, /连不上本地/);
+      return true;
+    });
+    assert.equal(calls.at(-1).method, 'DELETE');
+  });
+
+  it('says the backend could not reach Google when its check fetch fails, not that the cookie is bad', async () => {
+    const calls = [];
+    const failed = () => Response.json({ ok: false, detail: '检测失败：dial tcp 1.2.3.4:443: i/o timeout' });
+    await assert.rejects(importCookie(setup, SIGNED_IN, { fetchFn: adminFetch(failed, calls) }), err => {
+      assert.match(err.message, /没能访问 gemini\.google\.com.*i\/o timeout/);
+      assert.match(err.message, /代理池/);
+      assert.doesNotMatch(err.message, /无法登录/);
+      return true;
+    });
+    assert.equal(calls.at(-1).method, 'DELETE');
+  });
+
+  it('still says the backend is unreachable when the request itself fails', async () => {
+    const refused = async () => { throw new TypeError('fetch failed'); };
+    await assert.rejects(importCookie(setup, SIGNED_IN, { fetchFn: refused }), /连不上本地 Gemini Web 后端（http:\/\/127\.0\.0\.1:1）：fetch failed/);
+  });
 });
 
 describe('26. ensureBackend', () => {
