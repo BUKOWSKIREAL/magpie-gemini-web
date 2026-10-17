@@ -1101,7 +1101,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     installedStandIn('relogin-hint-test');
     ensureStudioConfig(dataDir);
     const signedOut = adminFetch(() => launchingStatus('STOPPED', { total: 1, ready: 0, busy: 0, cooldown: 0, auth_required: 1 }));
-    await assert.rejects(ensureStudio({ dataDir, fetchFn: signedOut }), err => err.message.includes('重新登录失效的 AI Studio 账号') && err.message.includes(command));
+    await assert.rejects(ensureStudio({ dataDir, fetchFn: signedOut }), err => err.message.includes('用 Google 账号登录（推荐）') && err.message.includes(command));
   });
 
   // The release archive this machine installed, if any, to install again from without a download.

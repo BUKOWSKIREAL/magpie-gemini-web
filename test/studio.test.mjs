@@ -645,54 +645,51 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   const signInFor = account => ({ type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL, account, email: account } });
 
-  it('9d. choosing an account already signed in needs a local setup, and shows each account state', async () => {
+  it('9d. one sign-in way asks nothing the first time, then offers a new account or a local one', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    const existing = plugin.auth.methods[1];
-    assert.equal(existing.label, '使用本机已登录的 AI Studio 账号');
+    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['用 Google 账号登录（推荐）', '连接已有 AIStudio2API（地址 + API key）']);
+    const google = plugin.auth.methods[0];
 
-    // Nothing set up: say so instead of installing one
-    await assert.rejects(existing.ask({}), /还没有本地 Google AI Studio 服务/);
-    await assert.rejects(existing.authorize({ account: 'a@example.com' }), /还没有本地 Google AI Studio 服务/);
+    // Nothing set up: no question, and asking installs nothing (authorize sets it up)
+    assert.equal(await google.ask({}), null);
     assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'nothing may be installed');
 
     const setup = standInSetup('managed-key');
     try {
       serverResponses['/api/accounts'] = accountsResponse([POOL[2]]);
-      await assert.rejects(existing.ask({}), /没有启用的 Google 账号/);
+      assert.equal(await google.ask({}), null, 'no enabled account: straight to adding one');
 
       serverResponses['/api/accounts'] = accountsResponse(POOL);
-      const question = await existing.ask({});
+      const question = await google.ask({});
       assert.deepEqual(question.options, [
+        { label: '添加新的 Google 账号', value: '+new', hint: '打开登录窗口' },
         { label: 'a@example.com', value: 'a@example.com', hint: '可用' },
-        { label: 'b@example.com', value: 'b@example.com', hint: '需要重新登录' }
+        { label: 'b@example.com', value: 'b@example.com', hint: '需要重新登录：会打开登录窗口' }
       ]);
-      await assert.rejects(existing.authorize({ account: 'c@example.com' }), /没有启用的账号 c@example\.com/);
-      const pending = await existing.authorize({ account: 'a@example.com' });
-      assert.deepEqual(await pending.callback(), signInFor('a@example.com'));
+      assert.equal(await google.ask({ account: 'a@example.com' }), null, 'answered: nothing more to ask');
+
+      // An account that serves gets its card at once
+      const ready = await google.authorize({ account: 'a@example.com' });
+      assert.equal(ready.instructions, '');
+      assert.deepEqual(await ready.callback(), signInFor('a@example.com'));
+
+      // A new one opens the login window
+      assert.match((await google.authorize({ account: '+new' })).instructions, /Camoufox/);
+      await assert.rejects(google.authorize({ account: 'c@example.com' }), /没有启用的账号 c@example\.com/);
     } finally {
       delete serverResponses['/api/accounts'];
       setup.remove();
     }
   });
 
-  it('9e. signing an expired account in again lists only those, and reports a login that failed', async () => {
+  it('9e. choosing an account that must sign in again opens the login window, and reports a login that failed', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    const relogin = plugin.auth.methods[2];
-    assert.equal(relogin.label, '重新登录失效的 AI Studio 账号');
-    await assert.rejects(relogin.ask({}), /还没有本地 Google AI Studio 服务/);
-
+    const google = plugin.auth.methods[0];
     const setup = standInSetup('managed-key');
     const loginURL = '/api/accounts/b%40example.com/login';
     try {
-      serverResponses['/api/accounts'] = accountsResponse([POOL[0]]);
-      await assert.rejects(relogin.ask({}), /没有需要重新登录的账号/);
-
       serverResponses['/api/accounts'] = accountsResponse(POOL);
-      const question = await relogin.ask({});
-      assert.deepEqual(question.options, [{ label: 'b@example.com', value: 'b@example.com', hint: 'refresh token revoked' }]);
-      await assert.rejects(relogin.authorize({ account: 'a@example.com' }), /不需要重新登录/);
-
-      const pending = await relogin.authorize({ account: 'b@example.com' });
+      const pending = await google.authorize({ account: 'b@example.com' });
       assert.match(pending.instructions, /Camoufox/);
 
       serverResponses[loginURL] = { status: 500, headers: jsonHeaders, body: JSON.stringify({ error: { message: 'login window closed' } }) };
@@ -755,7 +752,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.deepEqual(a, { user: 'a@example.com', windows: [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '冷却中：quota exhausted' }], signIn: 'kept' });
 
       const b = await plugin.auth.usage(async () => authFor('b@example.com'));
-      assert.match(b.error, /这个 Google 账号需要重新登录.*重新登录失效的 AI Studio 账号/);
+      assert.match(b.error, /这个 Google 账号需要重新登录.*用 Google 账号登录（推荐）.*再选这个账号/);
       assert.equal(b.signIn, 'kept', 'signing the account in again fixes this card as it is');
 
       const gone = await plugin.auth.usage(async () => authFor('c@example.com'));
@@ -794,7 +791,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // No account can serve until one signs in again: say how to fix it
       serverResponses['/api/accounts'] = accountsResponse([POOL[1]]);
       const expired = await plugin.auth.usage(async () => managedAuth);
-      assert.match(expired.error, /1 个 Google 账号都需要重新登录.*重新登录失效的 AI Studio 账号/);
+      assert.match(expired.error, /1 个 Google 账号都需要重新登录.*用 Google 账号登录（推荐）/);
       assert.equal(expired.signIn, 'kept', 'signing the account in again fixes this card as it is');
 
       // The service isn't running: it starts on the next request
