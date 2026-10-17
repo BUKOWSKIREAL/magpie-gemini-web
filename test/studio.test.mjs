@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
-import { studioSettings, listStudioModels, cooldownWindows, poolUsage, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
+import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward } from '../lib/backend.mjs';
 import { generateEnv, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION } from '../lib/studio-native.mjs';
 
@@ -600,7 +600,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       serverResponses['/api/accounts'] = { status: 500, headers: jsonHeaders, body: JSON.stringify({ error: { message: 'login window closed' } }) };
       const failing = await oneClick.authorize();
       assert.match(failing.instructions, /Camoufox/);
-      assert.match(failing.instructions, /添加更多 Google 账号/);
+      assert.match(failing.instructions, /每个账号一张卡片/);
       const failed = await failing.callback();
       assert.equal(failed.type, 'failed');
       assert.match(failed.error, /login window closed/);
@@ -623,8 +623,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.notEqual(result, 'waited', 'the sign-in must not wait for generation to launch');
       assert.equal(result.type, 'success');
       assert.equal(result.key, 'managed-key');
-      // One sign-in for the whole pool: no account or email, so adding another account keeps the one card
-      assert.deepEqual(result.metadata, { mode: 'studio', managed: true, baseURL: serverURL });
+      // Each Google account is a sign-in of its own, named by its email
+      assert.deepEqual(result.metadata, { mode: 'studio', managed: true, baseURL: serverURL, account: 'user@example.com', email: 'user@example.com' });
 
       // Let the start the sign-in left running see generation come up
       launching = false;
@@ -643,25 +643,32 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
   ];
   const accountsResponse = accounts => ({ status: 200, headers: jsonHeaders, body: JSON.stringify({ accounts }) });
 
-  it('9d. using the existing service needs a local setup with an account, and signs in to the pool', async () => {
+  const signInFor = account => ({ type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL, account, email: account } });
+
+  it('9d. choosing an account already signed in needs a local setup, and shows each account state', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
     const existing = plugin.auth.methods[1];
-    assert.equal(existing.label, '使用本机已有的 AI Studio 服务');
-    assert.equal(existing.prompts, undefined, 'there is no account to choose: the service picks one');
+    assert.equal(existing.label, '使用本机已登录的 AI Studio 账号');
 
     // Nothing set up: say so instead of installing one
-    await assert.rejects(existing.authorize({}), /还没有本地 Google AI Studio 服务/);
+    await assert.rejects(existing.ask({}), /还没有本地 Google AI Studio 服务/);
+    await assert.rejects(existing.authorize({ account: 'a@example.com' }), /还没有本地 Google AI Studio 服务/);
     assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'nothing may be installed');
 
     const setup = standInSetup('managed-key');
     try {
       serverResponses['/api/accounts'] = accountsResponse([POOL[2]]);
-      await assert.rejects(existing.authorize({}), /没有启用的 Google 账号/);
+      await assert.rejects(existing.ask({}), /没有启用的 Google 账号/);
 
       serverResponses['/api/accounts'] = accountsResponse(POOL);
-      const pending = await existing.authorize({});
-      const result = await pending.callback();
-      assert.deepEqual(result, { type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL } });
+      const question = await existing.ask({});
+      assert.deepEqual(question.options, [
+        { label: 'a@example.com', value: 'a@example.com', hint: '可用' },
+        { label: 'b@example.com', value: 'b@example.com', hint: '需要重新登录' }
+      ]);
+      await assert.rejects(existing.authorize({ account: 'c@example.com' }), /没有启用的账号 c@example\.com/);
+      const pending = await existing.authorize({ account: 'a@example.com' });
+      assert.deepEqual(await pending.callback(), signInFor('a@example.com'));
     } finally {
       delete serverResponses['/api/accounts'];
       setup.remove();
@@ -701,7 +708,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       serverResponses[loginURL] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ account: { ...POOL[1], state: 'ready', message: '' } }) };
       const before = serverRequests.length;
       const result = await pending.callback();
-      assert.deepEqual(result, { type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL } });
+      assert.deepEqual(result, signInFor('b@example.com'), 'the account signed in again keeps its own card');
       assert.ok(serverRequests.slice(before).some(r => r.method === 'POST' && r.url === loginURL));
       await new Promise(r => setTimeout(r, 300));
     } finally {
@@ -729,7 +736,38 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.ok(loggedOutUsage.error.includes('还没有登录'));
   });
 
-  it('10b. the managed usage card names the pool and shows cooldowns, not a status line as an error', async () => {
+  it('10b. an account\'s usage card shows its own cooldowns, or why it can\'t serve', async () => {
+    const setup = standInSetup('managed-key');
+    const authFor = account => ({ type: 'api', key: 'managed-key', metadata: signInFor(account).metadata });
+    const until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      serverResponses['/api/accounts'] = accountsResponse(POOL);
+      serverResponses['/api/cooldowns'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ cooldowns: [
+          { account_id: 'a@example.com', model_id: 'gemini-4-argon', until, reason: 'quota exhausted' },
+          { account_id: 'b@example.com', model_id: 'gemini-3-flash', until }
+        ] })
+      };
+      const a = await plugin.auth.usage(async () => authFor('a@example.com'));
+      assert.deepEqual(a, { user: 'a@example.com', windows: [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '冷却中：quota exhausted' }], signIn: 'kept' });
+
+      const b = await plugin.auth.usage(async () => authFor('b@example.com'));
+      assert.match(b.error, /这个 Google 账号需要重新登录.*重新登录失效的 AI Studio 账号/);
+      assert.equal(b.signIn, 'kept', 'signing the account in again fixes this card as it is');
+
+      const gone = await plugin.auth.usage(async () => authFor('c@example.com'));
+      assert.match(gone.error, /已经没有这个账号（c@example\.com）/);
+    } finally {
+      delete serverResponses['/api/accounts'];
+      delete serverResponses['/api/cooldowns'];
+      setup.remove();
+    }
+  });
+
+  it('10b2. a 0.5.0 sign-in for the whole pool names the pool and shows its cooldowns', async () => {
     const setup = standInSetup('managed-key');
     const managedAuth = { type: 'api', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL } };
     const until = new Date(Date.now() + 30 * 60 * 1000).toISOString();
@@ -805,6 +843,19 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
     assert.deepEqual(poolUsage([{ id: 'solo', state: 'ready' }], [], now), { user: 'solo', windows: [] });
     assert.match(poolUsage([], [], now).error, /还没有 Google 账号/);
+    // One account: its cooldowns alone, soonest back first; one with no model is all of them
+    const mine = accountUsage(accounts[0], [
+      { account_id: 'a', model_id: 'm1', until: at(20), reason: 'r1' },
+      { account_id: 'b', model_id: 'm1', until: at(10) },
+      { account_id: 'a', until: at(5), reason: 'x'.repeat(41) },
+      { account_id: 'a', model_id: 'm2', until: at(-1) }
+    ], now);
+    assert.deepEqual(mine, { user: 'a@x', windows: [
+      { name: '所有模型', used: 100, resetsAt: at(5), display: '冷却中' },
+      { name: 'm1', used: 100, resetsAt: at(20), display: '冷却中：r1' }
+    ] });
+    assert.deepEqual(accountUsage({ id: 'u', state: 'unavailable', message: 'proxy down' }, [], now), { user: 'u', error: '这个 Google 账号暂时不可用：proxy down', windows: [] });
+
     const unavailable = poolUsage([{ id: 'u', label: 'u@x', state: 'unavailable' }], [], now);
     assert.equal(unavailable.user, 'u@x（1 个暂时不可用）');
     assert.match(unavailable.error, /暂时都不可用/);

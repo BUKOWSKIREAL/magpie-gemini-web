@@ -90,15 +90,15 @@ Uses Google AI Studio through [AIStudio2API](https://github.com/Mag1cFall/AIStud
 1. Sign in to Google AI Studio and choose **一键配置本地 Google AI Studio（推荐）** (one-click local setup). The plugin downloads AIStudio2API, verifies its SHA-256 and starts it in the background.
 2. Sign in to your Google account in the separate login window that opens (your usual browser is not affected), then close it. The first time, the login browser Camoufox is downloaded first, so the window can take a few minutes to appear; the login must finish within 15 minutes.
 
-To add another account, run the one-click setup again. All accounts share one sign-in card: the local service picks the account for each request, using one until it cools down, then the next.
+To add another account, run the one-click setup again; each Google account gets a card of its own. As with Gemini Web, the local service picks the account for each request (one until it cools down, then the next), whichever card Magpie uses.
 
 Other sign-in options:
 
-- **使用本机已有的 AI Studio 服务** (use the local service already set up): signs in when the machine already has accounts (added from the command line, say), without a login window.
+- **使用本机已登录的 AI Studio 账号** (use an account already signed in locally): makes a card for an account the local service already has (added from the command line, say), without a login window.
 - **重新登录失效的 AI Studio 账号** (sign an expired account in again): when an account's Google login expires, choose it here to sign in again.
 - **连接已有 AIStudio2API** (connect an existing AIStudio2API): if you run AIStudio2API yourself, enter its address (default `http://127.0.0.1:2048/v1`) and `PROXY_API_KEY`.
 
-Usage card: AI Studio reports no remaining quota, so the card shows the pool's accounts and the models they are cooling down on. Each model gets a meter; a full one means no account can use it for now, with the time it comes back.
+Usage card: AI Studio reports no remaining quota. The card shows the models the account is cooling down on and when each comes back, or that the account needs to sign in again.
 
 ### Plugin options
 
