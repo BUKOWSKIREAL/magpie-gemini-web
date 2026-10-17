@@ -2,11 +2,15 @@
 
 中文 | [English](README.en.md)
 
-让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 Gemini 网页版。插件在本机运行 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) 后端，把 Gemini 网页转成 OpenAI 兼容接口。
+让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 Gemini 网页版与 Google AI Studio。插件在本机运行 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) 与 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 后端，把 Google 网页转成 OpenAI 兼容接口。
+
+插件提供两个互相独立的 Provider：
+- `gemini-web`：Gemini 网页版，见下面的[开始使用](#开始使用-gemini-web)；
+- `ai-studio`：Google AI Studio，原生工具调用，见 [Google AI Studio](#google-ai-studio-ai-studio)。
 
 > **2026-10-16 更新**：现在正价支付的 Google AI Pro 可以直接在 Antigravity 中使用 `gemini-4-argon`，同理也可以直接用 Magpie 反代。
 
-## 开始使用
+## 开始使用 (Gemini Web)
 
 1. 在 Magpie 插件市场安装 **magpie-gemini-web**。
 2. 登录 Gemini Web，选 **「一键配置本地 Gemini Web（推荐）」**。插件会自动下载本项目发布的优化后端、校验 SHA-256，并在后台启动；不需要安装 Go 或手动打补丁。
@@ -26,7 +30,7 @@
 
 **连接已有后端**：如果你自己运行了 gemini-web2api-go，登录时选「连接已有后端（自定义地址 + API key）」，填后端地址（以 `/v1` 结尾）和它的 `API_KEY`。
 
-## 插件选项
+## 插件选项 (Gemini Web)
 
 工具调用默认开启（Coding Agent 每个请求都带工具），图片输入默认关闭。需要图片输入时：
 
@@ -40,7 +44,7 @@ magpie plugin options magpie-gemini-web '{"allowImages":true}'
 | `allowImages` | `false` | 允许图片输入 |
 | `baseURL` | `http://127.0.0.1:8083/v1` | 默认后端地址 |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | 向客户端声明的上下文 / 输出上限 |
-| `requestTimeoutMs` / `modelTimeoutMs` | `240000` / `10000` | 请求 / 拉取模型列表的超时（毫秒） |
+| `requestTimeoutMs` / `modelTimeoutMs` | `240000` / `10000` | 请求 / 拉取模型列表的超时（毫秒）。请求超时按每次等待后端计算，回复持续输出时不会被打断 |
 | `stripCitations` | `true` | 去掉 Gemini 在回复里加的引用标记 `[cite: 1]`、`[cite_start]`（包括工具调用参数）。让 Gemini 编辑本身含有这类文本的代码时，可以设为 `false` |
 
 ## 思考档位
@@ -72,10 +76,68 @@ Magpie 的额度卡片会显示 Google 账号的 **5 小时** 和 **每周** 用
 
 所以配了代理池时，一键配置刚添加的账号暂时没有邮箱。先用它发一次请求，再用「添加本地后端里已有的 Google 账号」重新登录它，然后删掉没有邮箱的那个登录。
 
-## 局限
+## 局限 (Gemini Web)
 
 - 工具调用由上游用提示词模拟，不一定可靠，Flash 系列经常不调用工具。
 - 只开放 `gemini-` 开头的文本模型；`cost` 显示为 0 不代表 Google 的实际配额。
+
+## Google AI Studio (`ai-studio`)
+
+通过 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API)（固定 v0.2.12）使用 Google AI Studio。和 Gemini Web 相比，工具调用走原生 Function Calling，思考模型可以在 Magpie 里切换 `minimal` / `low` / `medium` / `high` 四档（`minimal` 最快、最省额度），日常生成不需要浏览器。
+
+### 开始使用
+
+1. 登录 Google AI Studio，选 **「一键配置本地 Google AI Studio（推荐）」**。插件会自动下载 AIStudio2API、校验 SHA-256 并在后台启动。
+2. 在弹出的独立登录窗口里登录 Google 账号（不影响你平时用的浏览器），完成后关掉窗口即可。第一次要先下载登录用的浏览器 Camoufox，窗口可能要等几分钟才出现；需要在 15 分钟内完成登录。
+
+想加更多账号，再走一遍一键配置。所有账号共用一张登录卡片：每个请求用哪个账号由本地服务决定，先用一个，冷却了再换下一个。
+
+其他登录选项：
+
+- **使用本机已有的 AI Studio 服务**：本机已经有账号（比如用命令行添加的）时直接登录，不打开登录窗口。
+- **重新登录失效的 AI Studio 账号**：账号的 Google 登录过期后，在这里选中它重新登录。
+- **连接已有 AIStudio2API**：你自己运行了 AIStudio2API 时，填它的地址（默认 `http://127.0.0.1:2048/v1`）和 `PROXY_API_KEY`。
+
+额度卡片：AI Studio 不提供剩余额度，卡片显示账号池里的账号和正在冷却的模型。每个模型一条进度条，满格表示暂时没有账号能用它，旁边是恢复时间。
+
+### 插件选项
+
+`allowTools`、`allowImages`、`requestTimeoutMs`、`modelTimeoutMs` 两个 Provider 共用；其余 AI Studio 选项放在 `studio` 里，根级别的 `baseURL`、`contextLimit`、`outputLimit`、`stripCitations` 只对 Gemini Web 生效。
+
+```bash
+magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
+```
+
+| 选项 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `studio.proxy` | 无 | 访问 Google 用的代理（http / https / socks5）。也可以用环境变量 `AI_STUDIO_PROXY` |
+| `studio.baseURL` | `http://127.0.0.1:2048/v1` | 「连接已有 AIStudio2API」的默认地址 |
+| `studio.contextLimit` / `studio.outputLimit` | 模型目录的值 | 向客户端声明的上限，只会调低 |
+| `studio.allowTools` 等 | 同根级别 | 只对 AI Studio 覆盖根级别的同名选项 |
+
+AI Studio 的回复保留引用标记 `[cite: 1]`，不能去掉。
+
+### 命令行
+
+插件报错里需要你运行命令时，会给出带完整路径的命令，复制即可运行。在插件目录里也可以用：
+
+| 命令 | 作用 |
+| :--- | :--- |
+| `npm run studio:status` | 查看服务和账号状态 |
+| `npm run studio:start` / `studio:stop` | 启动 / 停止本地服务 |
+| `npm run studio:login` | 添加 Google 账号 |
+| `npm run studio:relogin -- [<账号>]` | 重新登录过期的账号（只有一个时可省略） |
+| `npm run studio:install -- --archive <文件>` | 用下载好的安装包离线安装 |
+| `node scripts/studio.mjs import <目录>` | 服务停止时导入已有账号 |
+| `npm run studio:smoke` | 真实请求验收（会用掉账号额度） |
+
+### 数据与安全
+
+- 服务只监听 `127.0.0.1`，Magpie 保存的是本地生成的 API key。
+- 数据目录：`~/.local/share/magpie-ai-studio`（可用 `AI_STUDIO_DATA_DIR` 修改）。日志在 `backend.log`，超过 10 MB 时下次启动换新。
+- 第一次配置使用 2048 端口；被占用时（比如你自己也在跑 AIStudio2API）自动换一个，记在数据目录的 `config.json`。
+- 下载的安装包留在数据目录，重装时校验通过就不再下载。
+- 支持 macOS、Linux（x64 / arm64）和 Windows x64。
 
 ## macOS 原生 Task（实验性）
 

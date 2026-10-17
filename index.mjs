@@ -63,7 +63,11 @@ async function forwardManaged(input, init, getAuth, opts) {
 }
 
 export const GeminiWebPlugin = async (_input, options = {}) => {
-  const opts = settings(options);
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    settings(options);
+  }
+  const { studio: _studio, ...webOptions } = options;
+  const opts = settings(webOptions);
 
   // Bring a backend set up earlier back after Magpie or the computer restarts. Not awaited:
   // requests that arrive first start it themselves through forwardManaged.
@@ -220,4 +224,5 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
   };
 };
 
+export { AIStudioPlugin } from './lib/studio.mjs';
 export default GeminiWebPlugin;

@@ -1,0 +1,27 @@
+{
+  "version": "0.2.12",
+  "repository": "Mag1cFall/AIStudio2API",
+  "tag": "v0.2.12",
+  "binaries": {
+    "darwin-x64": {
+      "asset": "aistudio2api-v0.2.12-darwin-amd64.tar.gz",
+      "sha256": "d7700be498293539c551671c582c4112997873593dcea6dee5cf9f23562f0331"
+    },
+    "darwin-arm64": {
+      "asset": "aistudio2api-v0.2.12-darwin-arm64.tar.gz",
+      "sha256": "a24bdc093e024e6c5d737ebdaed719c9cf5d6418c4f2edbf907f3c2979a9bb63"
+    },
+    "linux-x64": {
+      "asset": "aistudio2api-v0.2.12-linux-amd64.tar.gz",
+      "sha256": "fa2de6053b2bf8c8188cef39751a31bd0f88a07c67f34ad59a8bce29b0069b6a"
+    },
+    "linux-arm64": {
+      "asset": "aistudio2api-v0.2.12-linux-arm64.tar.gz",
+      "sha256": "32c9cbe63fa0b864f201e917aaa2c9b3b5a2be6c3f7734ad4f2328df7ed5e19c"
+    },
+    "win32-x64": {
+      "asset": "aistudio2api-v0.2.12-windows-amd64.zip",
+      "sha256": "e03235bc5aecc6e81c2c609ca4cc010afb6b88ce98ac87934603a59fe625b493"
+    }
+  }
+}

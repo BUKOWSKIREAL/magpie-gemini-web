@@ -866,6 +866,69 @@ describe('11-21. Forwarding, security stripping, tool/image validation, and stre
     const body502 = await res502.json();
     assert.equal(body502.error.code, 'bad_gateway');
   });
+
+  it('21. A streamed reply longer than requestTimeoutMs runs to the end while pieces keep coming', async () => {
+    serverHandler = (req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        let n = 0;
+        const tick = setInterval(() => {
+          res.write(`data: {"choices":[{"index":0,"delta":{"content":"${n}"}}]}\n\n`);
+          if (++n === 8) {
+            clearInterval(tick);
+            res.end('data: [DONE]\n\n');
+          }
+        }, 60);
+      });
+    };
+
+    const baseURL = `http://127.0.0.1:${serverPort}/v1`;
+    const getAuth = async () => ({ type: 'api', key: 'key_123', metadata: { baseURL } });
+    const opts = settings({ baseURL, requestTimeoutMs: 200 });
+
+    const started = Date.now();
+    const res = await forward(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    }, getAuth, opts);
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.ok(Date.now() - started > 400, 'the reply must outlast requestTimeoutMs');
+    for (let n = 0; n < 8; n++) assert.match(text, new RegExp(`"content":"${n}"`));
+    assert.match(text, /\[DONE\]/);
+  });
+
+  it('21. A reply that goes quiet for requestTimeoutMs is cut off', async () => {
+    let upstreamClosed;
+    const closed = new Promise(resolve => { upstreamClosed = resolve; });
+    serverHandler = (req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('data: {"choices":[{"index":0,"delta":{"content":"first"}}]}\n\n');
+        res.on('close', upstreamClosed);
+      });
+    };
+
+    const baseURL = `http://127.0.0.1:${serverPort}/v1`;
+    const getAuth = async () => ({ type: 'api', key: 'key_123', metadata: { baseURL } });
+    const opts = settings({ baseURL, requestTimeoutMs: 150 });
+
+    const res = await forward(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    }, getAuth, opts);
+    assert.equal(res.status, 200);
+    const reader = res.body.getReader();
+    assert.match(new TextDecoder().decode((await reader.read()).value), /first/);
+    await assert.rejects(async () => {
+      for (;;) if ((await reader.read()).done) break;
+    }, err => err.name === 'TimeoutError' && /sent nothing for 150 ms/.test(err.message));
+    await closed;
+  });
 });
 
 describe('22. Reasoning effort maps onto the backend -thinking twin', () => {

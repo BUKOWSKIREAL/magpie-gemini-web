@@ -1,0 +1,1627 @@
+{
+  "data": [
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_search": true,
+        "media_resolution": true,
+        "output_continuation": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 4 Argon",
+      "id": "gemini-4-argon",
+      "input_token_limit": 1048576,
+      "name": "Gemini 4 Argon",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-1.5-flash",
+          "gemini-1.5-flash-8b",
+          "gemini-2.0-flash-thinking-exp-01-21",
+          "gemini-2.0-flash-thinking-exp-1219",
+          "gemini-2.5-flash",
+          "gemini-2.5-flash-preview-04-17",
+          "gemini-2.5-flash-preview-05-20",
+          "gemini-3.7-flash",
+          "learnlm-1.5-pro-experimental",
+          "learnlm-2.0-flash-experimental"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.8 Flash",
+      "id": "gemini-3.8-flash",
+      "input_token_limit": 1048576,
+      "name": "Gemini 3.8 Flash",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "speech_metadata": true,
+        "speech_route": true
+      },
+      "capability_options": {
+        "voices": [
+          "Achernar",
+          "Achird",
+          "Algenib",
+          "Algieba",
+          "Alnilam",
+          "Aoede",
+          "Arlo",
+          "Autonoe",
+          "Bodi",
+          "Brio",
+          "Callirrhoe",
+          "Charon",
+          "Cleo",
+          "Cruz",
+          "Daro",
+          "Despina",
+          "Elio",
+          "Enceladus",
+          "Enya",
+          "Enzo",
+          "Erinome",
+          "Fenrir",
+          "Finn",
+          "Fola",
+          "Gacrux",
+          "Gero",
+          "Hali",
+          "Iapetus",
+          "Jett",
+          "Jori",
+          "Kira",
+          "Knox",
+          "Koda",
+          "Kore",
+          "Laomedeia",
+          "Leda",
+          "Lora",
+          "Ludo",
+          "Lumi",
+          "Mako",
+          "Milo",
+          "Neno",
+          "Nika",
+          "Nyla",
+          "Olin",
+          "Orus",
+          "Puck",
+          "Pulcherrima",
+          "Rami",
+          "Rasalgethi",
+          "Riko",
+          "Rina",
+          "Sadachbia",
+          "Sadaltager",
+          "Sami",
+          "Schedar",
+          "Sola",
+          "Sulafat",
+          "Tari",
+          "Tavi",
+          "Tova",
+          "Umbriel",
+          "Varo",
+          "Veda",
+          "Vindemiatrix",
+          "Zali",
+          "Zeno",
+          "Zephyr",
+          "Zubenelgenubi",
+          "Zuri"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.8 Flash TTS",
+      "id": "gemini-3.8-flash-tts",
+      "input_token_limit": 8192,
+      "name": "Gemini 3.8 Flash TTS",
+      "object": "model",
+      "output_token_limit": 16384,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-2.0-flash-lite",
+          "gemini-2.0-flash-lite-001",
+          "gemini-2.0-flash-lite-preview",
+          "gemini-2.0-flash-lite-preview-02-05",
+          "gemini-2.5-flash-lite",
+          "gemini-2.5-flash-lite-preview-06-17",
+          "thorin"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.5 Flash Lite",
+      "id": "gemini-3.5-flash-lite",
+      "input_token_limit": 1048576,
+      "name": "Gemini 3.5 Flash Lite",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-1.5-pro",
+          "gemini-2.0-pro-exp-02-05",
+          "gemini-2.5-pro",
+          "gemini-2.5-pro-exp-03-25",
+          "gemini-2.5-pro-preview-03-25",
+          "gemini-2.5-pro-preview-05-06",
+          "gemini-2.5-pro-preview-06-05",
+          "gemini-3-pro-preview",
+          "gemini-exp-1206"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.1 Pro Preview",
+      "id": "gemini-3.1-pro-preview",
+      "input_token_limit": 1048576,
+      "name": "Gemini 3.1 Pro Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-3.5-flash"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.6 Flash",
+      "id": "gemini-3.6-flash",
+      "input_token_limit": 1048576,
+      "name": "Gemini 3.6 Flash",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "live_route": true,
+        "speech_translation": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.5 Live Translate Preview",
+      "id": "gemini-3.5-live-translate-preview",
+      "input_token_limit": 16384,
+      "name": "Gemini 3.5 Live Translate Preview",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "bidiGenerateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-3.1-flash-lite-preview"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.1 Flash Lite",
+      "id": "gemini-3.1-flash-lite",
+      "input_token_limit": 1048576,
+      "name": "Gemini 3.1 Flash Lite",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-2.0-flash",
+          "gemini-2.0-flash-001"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3 Flash Preview",
+      "id": "gemini-3-flash-preview",
+      "input_token_limit": 1048576,
+      "name": "Gemini 3 Flash Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "google_search": true,
+        "image_route": true,
+        "image_search": true,
+        "output_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "image_aspect_ratios": [
+          "16:9",
+          "1:1",
+          "1:4",
+          "1:8",
+          "21:9",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:1",
+          "4:3",
+          "4:5",
+          "5:4",
+          "8:1",
+          "9:16"
+        ],
+        "image_output_resolutions": [
+          "1K",
+          "2K",
+          "4K"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini Nano Banana 2.1.",
+      "id": "gemini-nano-banana-2.1",
+      "input_token_limit": 65536,
+      "name": "Nano Banana 2.1",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "image_route": true,
+        "output_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-2.0-flash-exp",
+          "gemini-2.0-flash-exp-image-generation",
+          "gemini-2.0-flash-preview-image-generation",
+          "nano-banana"
+        ],
+        "image_aspect_ratios": [
+          "16:9",
+          "1:1",
+          "1:4",
+          "1:8",
+          "21:9",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:1",
+          "4:3",
+          "4:5",
+          "5:4",
+          "8:1",
+          "9:16"
+        ],
+        "image_output_resolutions": [
+          "1K"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.1 Flash Lite Image.",
+      "id": "gemini-3.1-flash-lite-image",
+      "input_token_limit": 65536,
+      "name": "Nano Banana 2 Lite",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "google_search": true,
+        "image_route": true,
+        "image_search": true,
+        "output_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-3.1-flash-image-preview"
+        ],
+        "image_aspect_ratios": [
+          "16:9",
+          "1:1",
+          "1:4",
+          "1:8",
+          "21:9",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:1",
+          "4:3",
+          "4:5",
+          "5:4",
+          "8:1",
+          "9:16"
+        ],
+        "image_output_resolutions": [
+          "1K",
+          "2K",
+          "4K",
+          "512"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.1 Flash Image.",
+      "id": "gemini-3.1-flash-image",
+      "input_token_limit": 65536,
+      "name": "Nano Banana 2",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "google_search": true,
+        "image_route": true,
+        "output_resolution": true,
+        "thinking": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-3-pro-image-preview",
+          "nano-banana-pro"
+        ],
+        "image_aspect_ratios": [
+          "16:9",
+          "1:1",
+          "21:9",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:3",
+          "4:5",
+          "5:4",
+          "9:16"
+        ],
+        "image_output_resolutions": [
+          "1K",
+          "2K",
+          "4K"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3 Pro Image",
+      "id": "gemini-3-pro-image",
+      "input_token_limit": 131072,
+      "name": "Nano Banana Pro",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "chat_model": true,
+        "transcription_custom_vocabulary": true,
+        "transcription_language_codes": true,
+        "transcription_output": true,
+        "transcription_smart": true,
+        "transcription_speaker_labels": true,
+        "transcription_word_timestamps": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.5 Transcribe",
+      "id": "gemini-3.5-transcribe",
+      "input_token_limit": 98304,
+      "name": "Gemini 3.5 Transcribe",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "image_route": true
+      },
+      "capability_options": {
+        "aliases": [
+          "gemini-2.5-flash-image-preview",
+          "gemini-2.5-flash-preview-image"
+        ],
+        "image_aspect_ratios": [
+          "16:9",
+          "1:1",
+          "21:9",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:3",
+          "4:5",
+          "5:4",
+          "9:16"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 2.5 Flash Preview Image",
+      "id": "gemini-2.5-flash-image",
+      "input_token_limit": 32768,
+      "name": "Nano Banana",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Latest release of Gemini Pro",
+      "id": "gemini-pro-latest",
+      "input_token_limit": 1048576,
+      "name": "Gemini Pro Latest",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Latest release of Gemini Flash",
+      "id": "gemini-flash-latest",
+      "input_token_limit": 1048576,
+      "name": "Gemini Flash Latest",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_maps": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Latest release of Gemini Flash-Lite",
+      "id": "gemini-flash-lite-latest",
+      "input_token_limit": 1048576,
+      "name": "Gemini Flash-Lite Latest",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "featured-robotics",
+          "gemini-robotics-er-1.6-preview"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini Robotics-ER 2 Preview",
+      "id": "gemini-robotics-er-2-preview",
+      "input_token_limit": 131072,
+      "name": "Gemini Robotics-ER 2 Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "createCachedContent",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "live_route": true,
+        "media_resolution": true
+      },
+      "capability_options": {
+        "aliases": [
+          "talker-only"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.8 Live",
+      "id": "gemini-3.8-live",
+      "input_token_limit": 131072,
+      "name": "Gemini 3.8 Live",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "bidiGenerateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "live_route": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "thinker-talker"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.8 Live Extended Thinking",
+      "id": "gemini-3.8-live-extended-thinking",
+      "input_token_limit": 131072,
+      "name": "Gemini 3.8 Live Extended Thinking",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "bidiGenerateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "live_route": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.1 Flash Live Preview",
+      "id": "gemini-3.1-flash-live-preview",
+      "input_token_limit": 131072,
+      "name": "Gemini 3.1 Flash Live Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "bidiGenerateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "live_route": true,
+        "transcription_custom_vocabulary": true,
+        "transcription_language_codes": true,
+        "transcription_output": true,
+        "transcription_smart": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.5 Transcribe Live",
+      "id": "gemini-3.5-transcribe-live",
+      "input_token_limit": 131072,
+      "name": "Gemini 3.5 Transcribe Live",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "bidiGenerateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "live_route": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini Robotics-ER 2 Streaming Preview",
+      "id": "gemini-robotics-er-2-streaming-preview",
+      "input_token_limit": 131072,
+      "name": "Gemini Robotics-ER 2 Streaming Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "bidiGenerateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "speech_metadata": true,
+        "speech_route": true
+      },
+      "capability_options": {
+        "voices": [
+          "Achernar",
+          "Achird",
+          "Algenib",
+          "Algieba",
+          "Alnilam",
+          "Aoede",
+          "Arlo",
+          "Autonoe",
+          "Bodi",
+          "Brio",
+          "Callirrhoe",
+          "Charon",
+          "Cleo",
+          "Cruz",
+          "Daro",
+          "Despina",
+          "Elio",
+          "Enceladus",
+          "Enya",
+          "Enzo",
+          "Erinome",
+          "Fenrir",
+          "Finn",
+          "Fola",
+          "Gacrux",
+          "Gero",
+          "Hali",
+          "Iapetus",
+          "Jett",
+          "Jori",
+          "Kira",
+          "Knox",
+          "Koda",
+          "Kore",
+          "Laomedeia",
+          "Leda",
+          "Lora",
+          "Ludo",
+          "Lumi",
+          "Mako",
+          "Milo",
+          "Neno",
+          "Nika",
+          "Nyla",
+          "Olin",
+          "Orus",
+          "Puck",
+          "Pulcherrima",
+          "Rami",
+          "Rasalgethi",
+          "Riko",
+          "Rina",
+          "Sadachbia",
+          "Sadaltager",
+          "Sami",
+          "Schedar",
+          "Sola",
+          "Sulafat",
+          "Tari",
+          "Tavi",
+          "Tova",
+          "Umbriel",
+          "Varo",
+          "Veda",
+          "Vindemiatrix",
+          "Zali",
+          "Zeno",
+          "Zephyr",
+          "Zubenelgenubi",
+          "Zuri"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.8 Flash Lite TTS",
+      "id": "gemini-3.8-flash-lite-tts",
+      "input_token_limit": 8192,
+      "name": "Gemini 3.8 Flash Lite TTS",
+      "object": "model",
+      "output_token_limit": 16384,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "speech_route": true
+      },
+      "capability_options": {
+        "voices": [
+          "Achernar",
+          "Achird",
+          "Algenib",
+          "Algieba",
+          "Alnilam",
+          "Aoede",
+          "Autonoe",
+          "Callirrhoe",
+          "Charon",
+          "Despina",
+          "Enceladus",
+          "Erinome",
+          "Fenrir",
+          "Gacrux",
+          "Iapetus",
+          "Kore",
+          "Laomedeia",
+          "Leda",
+          "Orus",
+          "Puck",
+          "Pulcherrima",
+          "Rasalgethi",
+          "Sadachbia",
+          "Sadaltager",
+          "Schedar",
+          "Sulafat",
+          "Umbriel",
+          "Vindemiatrix",
+          "Zephyr",
+          "Zubenelgenubi"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 3.1 Flash TTS Preview",
+      "id": "gemini-3.1-flash-tts-preview",
+      "input_token_limit": 8192,
+      "name": "Gemini 3.1 Flash TTS Preview",
+      "object": "model",
+      "output_token_limit": 16384,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "music_route": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Music Generation model",
+      "id": "lyria-3.5",
+      "input_token_limit": 1048576,
+      "name": "Lyria 3.5",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "music_route": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Lyria 3 Pro Preview",
+      "id": "lyria-3-pro-preview",
+      "input_token_limit": 1048576,
+      "name": "Lyria 3 Pro Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "music_route": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Lyria 3 30s model Preview",
+      "id": "lyria-3-clip-preview",
+      "input_token_limit": 1048576,
+      "name": "Lyria 3 Clip Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "speech_route": true
+      },
+      "capability_options": {
+        "voices": [
+          "Achernar",
+          "Achird",
+          "Algenib",
+          "Algieba",
+          "Alnilam",
+          "Aoede",
+          "Autonoe",
+          "Callirrhoe",
+          "Charon",
+          "Despina",
+          "Enceladus",
+          "Erinome",
+          "Fenrir",
+          "Gacrux",
+          "Iapetus",
+          "Kore",
+          "Laomedeia",
+          "Leda",
+          "Orus",
+          "Puck",
+          "Pulcherrima",
+          "Rasalgethi",
+          "Sadachbia",
+          "Sadaltager",
+          "Schedar",
+          "Sulafat",
+          "Umbriel",
+          "Vindemiatrix",
+          "Zephyr",
+          "Zubenelgenubi"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 2.5 Pro Preview TTS",
+      "id": "gemini-2.5-pro-preview-tts",
+      "input_token_limit": 8192,
+      "name": "Gemini 2.5 Pro Preview TTS",
+      "object": "model",
+      "output_token_limit": 16384,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "batchGenerateContent",
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "speech_route": true
+      },
+      "capability_options": {
+        "voices": [
+          "Achernar",
+          "Achird",
+          "Algenib",
+          "Algieba",
+          "Alnilam",
+          "Aoede",
+          "Autonoe",
+          "Callirrhoe",
+          "Charon",
+          "Despina",
+          "Enceladus",
+          "Erinome",
+          "Fenrir",
+          "Gacrux",
+          "Iapetus",
+          "Kore",
+          "Laomedeia",
+          "Leda",
+          "Orus",
+          "Puck",
+          "Pulcherrima",
+          "Rasalgethi",
+          "Sadachbia",
+          "Sadaltager",
+          "Schedar",
+          "Sulafat",
+          "Umbriel",
+          "Vindemiatrix",
+          "Zephyr",
+          "Zubenelgenubi"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini 2.5 Flash Preview TTS",
+      "id": "gemini-2.5-flash-preview-tts",
+      "input_token_limit": 8192,
+      "name": "Gemini 2.5 Flash Preview TTS",
+      "object": "model",
+      "output_token_limit": 16384,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "interactions_api": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "aliases": [
+          "omni-featured"
+        ],
+        "image_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_output_resolutions": [
+          "1080p",
+          "360p",
+          "4k",
+          "720p"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini Omni 1.1 Flash ",
+      "id": "gemini-omni-1.1-flash",
+      "input_token_limit": 131072,
+      "name": "Gemini Omni 1.1 Flash",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "aspect_ratio": true,
+        "chat_model": true,
+        "interactions_api": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "capability_options": {
+        "image_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_output_resolutions": [
+          "720p"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemini Omni Flash Preview",
+      "id": "gemini-omni-flash-preview",
+      "input_token_limit": 131072,
+      "name": "Gemini Omni Flash Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "video_route": true
+      },
+      "capability_options": {
+        "aliases": [
+          "veo-2.0-generate-001"
+        ],
+        "video_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_durations_seconds": [
+          "4",
+          "6",
+          "8"
+        ],
+        "video_output_resolutions": [
+          "1080p",
+          "4k",
+          "720p"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Veo 3.1 fast",
+      "id": "veo-3.1-fast-generate-preview",
+      "input_token_limit": 480,
+      "name": "Veo 3.1 fast",
+      "object": "model",
+      "output_token_limit": 8192,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "predictLongRunning"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "video_route": true
+      },
+      "capability_options": {
+        "video_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_durations_seconds": [
+          "4",
+          "6",
+          "8"
+        ],
+        "video_output_resolutions": [
+          "1080p",
+          "720p"
+        ]
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Veo 3.1 lite",
+      "id": "veo-3.1-lite-generate-preview",
+      "input_token_limit": 480,
+      "name": "Veo 3.1 lite",
+      "object": "model",
+      "output_token_limit": 8192,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "predictLongRunning"
+      ]
+    },
+    {
+      "capabilities": {
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemma 4 26B A4B IT",
+      "id": "gemma-4-26b-a4b-it",
+      "input_token_limit": 262144,
+      "name": "Gemma 4 26B A4B IT",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "capabilities": {
+        "chat_model": true,
+        "code_execution": true,
+        "function_declarations": true,
+        "google_search": true,
+        "media_resolution": true,
+        "thinking": true,
+        "thinking_level": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Gemma 4 31B IT",
+      "id": "gemma-4-31b-it",
+      "input_token_limit": 262144,
+      "name": "Gemma 4 31B IT",
+      "object": "model",
+      "output_token_limit": 32768,
+      "owned_by": "google",
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "google_search": true,
+        "interaction_route": true,
+        "interactions_api": true,
+        "thinking": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Preview release (April 21th, 2026) of Deep Research",
+      "id": "deep-research-preview-04-2026",
+      "input_token_limit": 131072,
+      "name": "Deep Research Preview (Apr-21-2026)",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        3
+      ],
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "google_search": true,
+        "interaction_route": true,
+        "interactions_api": true,
+        "thinking": true
+      },
+      "channels": [
+        "playground"
+      ],
+      "created": 0,
+      "description": "Preview release (April 21st, 2026) of Deep Research Max",
+      "id": "deep-research-max-preview-04-2026",
+      "input_token_limit": 131072,
+      "name": "Deep Research Max Preview (Apr-21-2026)",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1
+      ],
+      "capabilities": {
+        "browse": true,
+        "chat_model": true,
+        "code_execution": true,
+        "google_search": true,
+        "interactions_api": true
+      },
+      "capability_options": {
+        "aliases": [
+          "antigravity-preview-05-2026",
+          "featured-agent"
+        ]
+      },
+      "created": 0,
+      "description": "Preview release of Antigravity Agent (09-2026)",
+      "id": "antigravity-preview-09-2026",
+      "input_token_limit": 1048576,
+      "name": "Antigravity Agent Preview",
+      "object": "model",
+      "output_token_limit": 65536,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "countTokens",
+        "generateContent"
+      ]
+    },
+    {
+      "access_modes": [
+        1,
+        4
+      ],
+      "capabilities": {
+        "video_route": true
+      },
+      "capability_options": {
+        "video_aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "video_durations_seconds": [
+          "4",
+          "6",
+          "8"
+        ],
+        "video_output_resolutions": [
+          "1080p",
+          "4k",
+          "720p"
+        ]
+      },
+      "created": 0,
+      "description": "Veo 3.1",
+      "id": "veo-3.1-generate-preview",
+      "input_token_limit": 480,
+      "name": "Veo 3.1",
+      "object": "model",
+      "output_token_limit": 8192,
+      "owned_by": "google",
+      "paid": true,
+      "supported_generation_methods": [
+        "predictLongRunning"
+      ]
+    }
+  ],
+  "object": "list"
+}

@@ -1,7 +1,7 @@
 {
   "name": "magpie-gemini-web",
-  "version": "0.4.1",
-  "description": "Gemini Web provider for Magpie, backed by gemini-web2api-go",
+  "version": "0.5.0",
+  "description": "Gemini Web and Google AI Studio provider for Magpie, backed by gemini-web2api-go and AIStudio2API",
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",
@@ -23,6 +23,8 @@
     "scripts/backend.mjs",
     "scripts/backend-argon.mjs",
     "scripts/backend-release.mjs",
+    "scripts/studio-smoke.mjs",
+    "scripts/studio.mjs",
     "patches/",
     "native-task/lib/",
     "native-task/bridge/",
@@ -58,7 +60,14 @@
     "backend:status": "node scripts/backend.mjs status",
     "backend:build:argon": "node scripts/backend-argon.mjs build",
     "backend:install:argon": "node scripts/backend-argon.mjs install",
-    "backend:start:argon": "node scripts/backend-argon.mjs start"
+    "backend:start:argon": "node scripts/backend-argon.mjs start",
+    "studio:install": "node scripts/studio.mjs install",
+    "studio:start": "node scripts/studio.mjs start",
+    "studio:status": "node scripts/studio.mjs status",
+    "studio:stop": "node scripts/studio.mjs stop",
+    "studio:login": "node scripts/studio.mjs login",
+    "studio:relogin": "node scripts/studio.mjs relogin",
+    "studio:smoke": "node scripts/studio-smoke.mjs"
   },
   "magpie": {
     "maxConcurrency": 1
