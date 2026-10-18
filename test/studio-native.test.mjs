@@ -472,7 +472,16 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
         await new Promise(r => setTimeout(r, 50));
       }
       await assert.rejects(ensureStudio({ dataDir }), /online updater/);
-      assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
+      let resetAfterExit = false;
+      const fetchFn = async (...args) => {
+        if (!resetAfterExit && (child.exitCode !== null || child.signalCode !== null)) {
+          resetAfterExit = true;
+          throw Object.assign(new Error('pooled connection reset after exit'), { code: 'ECONNRESET' });
+        }
+        return fetch(...args);
+      };
+      assert.deepEqual(await stopStudio({ dataDir, fetchFn }), { stopped: true });
+      assert.equal(resetAfterExit, true);
       await exited;
       assert.equal(fs.existsSync(pidFile), false);
     } finally {
