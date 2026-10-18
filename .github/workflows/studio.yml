@@ -43,7 +43,13 @@ jobs:
       - name: Plugin tests with the verified local archive
         run: |
           export AI_STUDIO_TEST_ARCHIVE="$(node --input-type=module -e 'import r from "./lib/studio-release.json" with {type:"json"}; console.log(process.cwd()+"/studio-build/release/"+r.binaries[process.platform+"-"+process.arch].asset)')"
-          npm test
+          # The macOS-only Task route and older Web fixtures assume POSIX.
+          # Exercise the complete Studio suite on Windows, plus the real binary above.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            node --test test/studio-native.test.mjs test/studio.test.mjs
+          else
+            npm test
+          fi
           npm pack --dry-run
       - uses: actions/upload-artifact@v4
         with:

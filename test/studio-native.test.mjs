@@ -161,7 +161,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.throws(() => ensureStudioConfig(dataDir), /Invalid port number/);
   });
 
-  it('3. private file modes for directories and generated config', () => {
+  it('3. private POSIX file modes for directories and generated config', { skip: process.platform === 'win32' }, () => {
     const dataDir = path.join(tmpRoot, 'modes-test');
     ensureStudioConfig(dataDir);
 
@@ -707,8 +707,10 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     // Verify imported
     const destFile = path.join(dataDir, 'auth', 'user@example.com', 'storage-state.json');
     assert.ok(fs.existsSync(destFile));
-    assert.equal(fs.statSync(destFile).mode & 0o777, 0o600);
-    assert.equal(fs.statSync(path.join(dataDir, 'auth', 'user@example.com')).mode & 0o777, 0o700);
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(destFile).mode & 0o777, 0o600);
+      assert.equal(fs.statSync(path.join(dataDir, 'auth', 'user@example.com')).mode & 0o777, 0o700);
+    }
 
     // Source bytes preserved
     assert.deepEqual(fs.readFileSync(srcStateFile), originalBytes);
@@ -876,9 +878,14 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(dummyDir, { recursive: true, mode: 0o700 });
     const dummyBin = path.join(dummyDir, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
 
-    // Create a dummy node script and spawn it
-    fs.writeFileSync(dummyBin, '#!/bin/sh\nexec node -e "setInterval(()=>{},1000)"\n', { mode: 0o755 });
-    const child = spawn(dummyBin, [], { stdio: 'ignore' });
+    // Use a real executable on every platform; a shell script is not a Windows PE.
+    fs.copyFileSync(process.execPath, dummyBin, fs.constants.COPYFILE_FICLONE);
+    const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
+    const child = spawn(dummyBin, ['-e', 'process.send("ready"); setInterval(()=>{},1000)'], {
+      env: { ...process.env, DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    });
+    const exited = new Promise(resolve => child.on('exit', resolve));
     const pid = child.pid;
 
     const expectedDir = path.join(tmpRoot, 'expected-path-test');
@@ -887,10 +894,17 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(expectedBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
     try {
+      await new Promise((resolve, reject) => {
+        child.once('message', resolve);
+        child.once('error', reject);
+        child.once('exit', () => reject(new Error('identity stand-in exited early')));
+      });
+      assert.equal(verifyProcessIdentity(pid, dummyBin), true, 'the actual executable must match');
       const match = verifyProcessIdentity(pid, expectedBin);
       assert.equal(match, false, 'verifyProcessIdentity must return false when paths differ');
     } finally {
       try { process.kill(pid, 'SIGKILL'); } catch {}
+      await exited;
     }
   });
 
