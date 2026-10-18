@@ -4,6 +4,7 @@ node_modules/
 .runtime/
 .env
 backend-build/
+studio-build/
 backend-source/
 .DS_Store
 .env.*

@@ -17,7 +17,7 @@
 | **思考档位** | `minimal` / `low` / `medium` / `high` 四档（`minimal` 最快最省） | `low`（普通）/ `high`（`-thinking` 扩展思考）两档 |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API (`v0.2.12`) | gemini-web2api-go (`4.22.0-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API (`v0.2.13`) | gemini-web2api-go (`4.22.0-magpie.1` 优化版) |
 
 ---
 
@@ -78,7 +78,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | 共用（可用 `studio.allowTools` 单独覆盖） | 允许工具调用。设为 `false` 时带工具的请求返回 400 |
 | `allowImages` | `false` | 共用（可用 `studio.allowImages` 单独覆盖） | 允许图片输入 |
-| `requestTimeoutMs` / `modelTimeoutMs` | `240000` / `10000` | 共用（`studio.*` 可覆盖） | 单次等待后端 / 拉取模型列表的超时（毫秒），持续流式输出时不会被打断 |
+| `requestTimeoutMs` / `modelTimeoutMs` | Web：`240000` / `10000`；Studio：`1800000` / `10000` | 共用（`studio.*` 可覆盖） | 单次等待后端 / 拉取模型列表的超时（毫秒）；收到流数据后重新计时，显式配置优先 |
 | `stripCitations` | `true` | 仅 `gemini-web` | 剥离回复与工具参数中的 `[cite: 1]`、`[cite_start]` 标记（AI Studio 不支持剥离） |
 | `baseURL` | `http://127.0.0.1:8083/v1` | 仅 `gemini-web` | Gemini Web 默认后端地址 |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | 仅 `gemini-web` | 向客户端声明的上下文 / 输出上限 |
@@ -128,6 +128,16 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - **Gemini Web 数据目录**：`~/.local/share/magpie-gemini-web`（可通过 `GEMINI_WEB_DATA_DIR` 修改），日志位于 `backend.log`。支持 macOS、Linux、Windows（x64 / arm64）。
 - **AI Studio 数据目录**：`~/.local/share/magpie-ai-studio`（可通过 `AI_STUDIO_DATA_DIR` 修改），日志位于 `backend.log`（超 10 MB 下次启动自动轮转）。默认使用 2048 端口，被占用时自动顺延并记录在 `config.json`。支持 macOS、Linux（x64 / arm64）与 Windows x64。
 - 插件将请求并发限制为 1，但仍无法完全排除 Google 账号风控风险，请自行评估使用。
+
+**AI Studio 升级与模型范围：**
+- 插件固定使用经过 SHA-256 校验的 `v0.2.13-magpie.1`（基于上游 `v0.2.13`），通过升级插件更新后端。同基线或更旧的官方托管后端在下次管理启动时自动升级，保留账号、端口与登录凭据。
+- **托管后端已在 macOS、Linux、Windows 统一禁用在线更新**：管理页提示“请通过 Magpie 插件升级”，更新接口返回 HTTP 403，检查更新也不会访问 GitHub。用户自行连接的外部服务不受影响。补丁和可复现构建流程见 [docs/studio-release.md](docs/studio-release.md)。
+- Unix 的 `package/` 仍尽力设置为 `0555`，作为额外的文件保护；权限设置失败不阻断服务，在线更新的禁用也不依赖该权限。若要手动删除数据目录来重置，请先停止服务，再运行 `chmod -R u+w "<数据目录>/package"` 恢复可写权限，然后删除；将 `<数据目录>` 替换为实际路径。
+- 若自行更新到更新版或定制版，插件会提示版本冲突，并提供带正确 `--data-dir` 的 `stop`、`install`、`start` 命令。停止时会找回更新后的监听进程 PID，并核对可执行文件路径；无法核实身份就不会发送终止信号。HTTP 端口关闭但进程尚未退出时，插件不会重装或启动第二个进程。
+- 已停止但文件被替换的后端会从校验通过的固定版本安装包恢复；校验失败不会启动替换文件。安装会保留账号和运行数据文件，但**不保证旧版本能读取新版迁移过的数据**。手动降级前先停止服务并备份整个数据目录（包括 `auth/`、`runtime/requests.db` 等）；已知发生数据迁移时应升级插件以匹配新版后端。
+- AI Studio 后端基础请求期限为 30 分钟；插件默认单次响应等待／流空闲超时也是 30 分钟（仍可用 `studio.requestTimeoutMs` 调整）。这允许非流式长回复在服务端完整收集；后端卡死时也可能等满 30 分钟，且单 worker 会拖住后续请求。可主动取消请求或设置更短的等待时间，但较短期限可能中断正常长回复。上游自动续写的期限按其规则计算。
+- 已核对本机 Magpie `v0.1.1285`（`d783df46`）源码：插件请求走 `Provider.Do → plugin.Fetch → loader.fetch`，绕过普通 HTTP transport 的 10 分钟响应头限制；此插件生成路径没有发现更短的固定总超时。网关 5 分钟 `IdleTimeout` 仅针对请求之间的空闲连接。客户端或反向代理仍可设置更短期限；这不是一次实等 30 分钟的端到端验证。
+- 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
 - 插件默认使用本仓库发布的 [4.22.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.22.0-magpie.1)（基于上游 v4.22.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。

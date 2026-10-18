@@ -124,6 +124,7 @@ async function main() {
   switch (command) {
     case 'install': {
       const status = await studioStatus({ dataDir });
+      if (status.status === 'version_conflict') throw new Error(status.reason);
       if (status.status === 'running' || status.status === 'outdated' || status.status === 'unresponsive') {
         throw new Error('Cannot install or update AI Studio while service is running. Stop the service first.');
       }
@@ -143,6 +144,7 @@ async function main() {
     }
     case 'start': {
       const status = await studioStatus({ dataDir });
+      if (status.status === 'version_conflict') throw new Error(status.reason);
       if (status.status === 'running') {
         if (flags.proxy !== undefined) {
           throw new Error('Cannot update proxy while service is running. Stop the service first.');
@@ -180,13 +182,15 @@ async function main() {
             console.log(`  - ${a.label || a.id} (${a.state || 'active'})`);
           }
         }
+      } else if (status.status === 'version_conflict') {
+        console.log(status.reason);
       } else if (status.status === 'outdated') {
         console.log(`Running version: ${status.version} from an earlier install (this plugin uses ${status.expected})`);
-        console.log(`To replace it, run: ${studioCommand('start')}`);
-        console.log(`To stop it, run: ${studioCommand('stop')}`);
+        console.log(`To replace it, run: ${studioCommand('start', { dataDir })}`);
+        console.log(`To stop it, run: ${studioCommand('stop', { dataDir })}`);
       } else if (status.status === 'unresponsive') {
         console.log(`Port ${status.port} answers but not properly (${status.reason})`);
-        console.log(`If the service is stuck, run: ${studioCommand('stop')}`);
+        console.log(`If the service is stuck, run: ${studioCommand('stop', { dataDir })}`);
       } else if (status.status === 'foreign') {
         console.log(`Warning: Foreign listener on port ${status.port} (${status.reason})`);
       } else {
@@ -228,7 +232,7 @@ async function main() {
         const names = expired.map(a => a.label || a.id).join(', ');
         throw new Error(wanted
           ? `${wanted} doesn't need to sign in again; these do: ${names}`
-          : `Several accounts need to sign in again; name one: ${studioCommand('relogin <account>')} (${names})`);
+          : `Several accounts need to sign in again; name one: ${studioCommand('relogin <account>', { dataDir })} (${names})`);
       }
       console.log(`Opening isolated browser window to sign ${chosen.label || chosen.id} in again...`);
       const res = await studioAdmin(local, 'POST', `/api/accounts/${encodeURIComponent(chosen.id)}/login`, {}, { timeoutMs: LOGIN_TIMEOUT_MS });

@@ -1,6 +1,6 @@
 {
   "name": "magpie-gemini-web",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Gemini Web and Google AI Studio provider for Magpie, backed by gemini-web2api-go and AIStudio2API",
   "type": "module",
   "main": "./index.mjs",
@@ -25,6 +25,9 @@
     "scripts/backend-release.mjs",
     "scripts/studio-smoke.mjs",
     "scripts/studio.mjs",
+    "scripts/studio-release.mjs",
+    "scripts/studio-archive.go",
+    "scripts/studio-managed-smoke.mjs",
     "patches/",
     "native-task/lib/",
     "native-task/bridge/",
@@ -36,8 +39,10 @@
     "README.md",
     "README.en.md",
     "docs/backend-release.md",
+    "docs/studio-release.md",
     "LICENSE",
-    "LICENSE-UPSTREAM"
+    "LICENSE-UPSTREAM",
+    "LICENSE-AISTUDIO"
   ],
   "keywords": [
     "magpie-plugin",
@@ -61,6 +66,8 @@
     "backend:build:argon": "node scripts/backend-argon.mjs build",
     "backend:install:argon": "node scripts/backend-argon.mjs install",
     "backend:start:argon": "node scripts/backend-argon.mjs start",
+    "studio:release:build": "node scripts/studio-release.mjs --verify",
+    "studio:managed:smoke": "node scripts/studio-managed-smoke.mjs",
     "studio:install": "node scripts/studio.mjs install",
     "studio:start": "node scripts/studio.mjs start",
     "studio:status": "node scripts/studio.mjs status",

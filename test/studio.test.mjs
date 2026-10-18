@@ -308,6 +308,31 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  it('Studio defaults to a 30-minute wait and still respects explicit timeouts', () => {
+    assert.equal(studioSettings().requestTimeoutMs, 1800000);
+    assert.equal(studioSettings({ requestTimeoutMs: 120000 }).requestTimeoutMs, 120000);
+    assert.equal(studioSettings({ requestTimeoutMs: 120000, studio: { requestTimeoutMs: 600000 } }).requestTimeoutMs, 600000);
+  });
+
+  it('v0.2.13 Build assistant models are excluded without hiding ordinary chat models', async () => {
+    const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/studio-catalog-v0.2.12.json', import.meta.url), 'utf8'));
+    const base = catalog.data.find(m => m.id === 'gemini-4-argon');
+    // Matches upstream assistantModelEntry: only chat/thinking capabilities survive.
+    const assistant = { ...base, id: 'gemini-4-argon-build', channels: ['assistant'],
+      capabilities: { assistant_route: true, chat_model: true, thinking: true, thinking_level: true } };
+    serverResponses['/v1/models'] = { status: 200, body: JSON.stringify({ data: [base, assistant,
+      { ...assistant, id: 'gemini-assistant-alias' },
+      { ...base, id: 'gemini-legacy-build', capabilities: { chat_model: true } }
+    ] }) };
+    try {
+      const models = await listStudioModels({ baseURL: serverURL, key: 'test-key' }, studioSettings());
+      assert.deepEqual(Object.keys(models), ['gemini-4-argon']);
+      assert.equal(models['gemini-4-argon'].capabilities.toolcall, true);
+    } finally {
+      delete serverResponses['/v1/models'];
+    }
+  });
+
   it('4. explicit ceilings override only Studio output limit', async () => {
     const c = { baseURL: serverURL, key: 'test-key' };
     const opts = studioSettings({ studio: { outputLimit: 8192 } });
@@ -411,6 +436,29 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     delete serverResponses['/v1/chat/completions'];
   });
 
+  it('stream interruption errors pass through without a successful finish or retry', async () => {
+    const stream = 'data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n' +
+      'data: {"error":{"message":"upstream stream interrupted","type":"server_error"}}\n\n';
+    let requests = 0;
+    serverResponses['/v1/chat/completions'] = (_req, res) => {
+      requests++;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(stream);
+    };
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const loader = await plugin.auth.loader(async () => ({ type: 'api', key: 'test-key', metadata: { mode: 'studio', baseURL: serverURL } }));
+      const res = await loader.fetch(`${serverURL}/chat/completions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gemini-4-argon', stream: true, messages: [{ role: 'user', content: 'test' }] })
+      });
+      assert.equal(await res.text(), stream);
+      assert.equal(requests, 1);
+    } finally {
+      delete serverResponses['/v1/chat/completions'];
+    }
+  });
+
   it('7. medium reasoning does not fetch thinking twins or rewrite model ID', async () => {
     let receivedModel = null;
     serverResponses['/v1/chat/completions'] = (req, res, bodyStr) => {
@@ -505,6 +553,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         fs.writeFileSync(configPath, JSON.stringify({ ...config, apiKey: key }) + '\n', { mode: 0o600 });
       },
       remove() {
+        const pkg = path.join(tempStudioDataDir, 'package');
+        if (fs.existsSync(pkg)) fs.chmodSync(pkg, 0o755);
         for (const name of ['config.json', 'install-manifest.json', '.env', 'package', 'auth']) {
           fs.rmSync(path.join(tempStudioDataDir, name), { recursive: true, force: true });
         }
@@ -573,6 +623,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
       // The binary disappears (as mid-reinstall) while the service still answers: the request
       // goes through instead of reporting an expired sign-in
+      fs.chmodSync(path.join(tempStudioDataDir, 'package'), 0o755);
       fs.rmSync(path.join(tempStudioDataDir, 'package'), { recursive: true, force: true });
       const res = await loader.fetch(`${serverURL}/chat/completions`, {
         method: 'POST',

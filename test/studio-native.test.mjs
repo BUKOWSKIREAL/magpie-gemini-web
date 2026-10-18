@@ -25,8 +25,9 @@ import {
   STUDIO_VERSION,
   checkStudioHealth,
   pickStudioPort,
-  studioCommand
-} from '../lib/studio-native.mjs';
+  studioCommand,
+  studioProcessPids,
+  studioListenerPids} from '../lib/studio-native.mjs';
 
 const offlineFetch = async () => { throw Object.assign(new Error('offline fixture'), {code:'ECONNREFUSED'}); };
 
@@ -105,6 +106,11 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
   after(() => {
     if (tmpRoot) {
+      // Production packages are intentionally not writable on Unix.
+      for (const entry of fs.readdirSync(tmpRoot)) {
+        const pkg = path.join(tmpRoot, entry, 'package');
+        if (fs.existsSync(pkg)) fs.chmodSync(pkg, 0o755);
+      }
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
@@ -121,7 +127,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(envContent.includes('PER_ACCOUNT_CONCURRENCY=1'));
     assert.ok(envContent.includes('WARM_WORKER_LIMIT=1'));
     assert.ok(envContent.includes('MAX_ACTIVE_WORKERS=1'));
-    assert.ok(envContent.includes('REQUEST_TIMEOUT=5m'));
+    assert.ok(envContent.includes('REQUEST_TIMEOUT=30m'));
     assert.ok(envContent.includes('INIT_TIMEOUT=2m'));
     assert.ok(envContent.includes(`LISTEN_ADDR=127.0.0.1:${config.port}`));
     assert.ok(envContent.includes(`PROXY_API_KEY=${config.apiKey}`));
@@ -204,7 +210,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
           if (cookie === 'aistudio_admin=cookie_session_2') {
             cookieCount++;
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ status: 'ok', version: 'v0.2.12', running: true, ready: true, accounts: { total: 1, ready: 1 } }));
+            res.end(JSON.stringify({ status: 'ok', version: STUDIO_VERSION, running: true, ready: true, accounts: { total: 1, ready: 1 } }));
             return;
           }
           res.writeHead(401);
@@ -307,42 +313,55 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     }
   });
 
-  it('7. stopStudio refuses to signal unrelated child process recorded in backend.pid', async () => {
-    const dataDir = path.join(tmpRoot, 'unrelated-child-test');
-    ensureStudioConfig(dataDir);
-    const pkgDir = path.join(dataDir, 'package');
-    fs.mkdirSync(pkgDir, { recursive: true, mode: 0o700 });
-    const bin = path.join(pkgDir, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
-    fs.writeFileSync(bin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-
-    // Spawn an unrelated child process (e.g. node loop)
-    const unrelatedChild = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
-      stdio: 'ignore'
-    });
+  for (const denied of [false, true]) it(`7. reused PID is cleared on stop and startup without signaling its owner${denied ? ' (EPERM)' : ''}`, async t => {
+    const { dataDir } = installedStandIn(`reused-pid-${denied}`);
+    const pidFile = path.join(dataDir, 'backend.pid');
+    const unrelatedChild = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    const exited = new Promise(resolve => unrelatedChild.once('exit', resolve));
     const unrelatedPid = unrelatedChild.pid;
-
+    const kill = process.kill.bind(process);
+    const probe = t.mock.method(process, 'kill', (pid, signal) => {
+      if (pid === unrelatedPid) {
+        assert.equal(signal, 0, 'must never signal an unrelated process');
+        if (denied) throw Object.assign(new Error('permission denied'), { code: 'EPERM' });
+      }
+      return kill(pid, signal);
+    });
     try {
-      // Record unrelated child's PID into backend.pid
-      fs.writeFileSync(path.join(dataDir, 'backend.pid'), `${unrelatedPid}\n`, { mode: 0o600 });
+      fs.writeFileSync(pidFile, `${unrelatedPid}\n`);
+      assert.deepEqual(await stopStudio({ dataDir, fetchFn: offlineFetch }), { stopped: true });
+      assert.equal(fs.existsSync(pidFile), false);
+      assert.equal(kill(unrelatedPid, 0), true, 'unrelated process survives stop');
 
-      // stopStudio MUST refuse to signal unrelated child
-      await assert.rejects(async () => {
-        await stopStudio({ dataDir, fetchFn: offlineFetch });
-      }, /refusal to signal unverified process/);
+      // Startup must also recover directly, without requiring a preceding stop.
+      fs.writeFileSync(pidFile, `${unrelatedPid}\n`);
+      let spawned = 0;
+      const up = adminFetch(() => runningStatus({ total: 1, ready: 1, busy: 0 }));
+      const local = await ensureStudio({
+        dataDir,
+        fetchFn: (...args) => spawned ? up(...args) : offlineFetch(...args),
+        spawnFn: () => {
+          assert.equal(fs.existsSync(pidFile), false, 'stale record is removed before launch');
+          spawned++;
+          return { unref() {} };
+        }
+      });
+      assert.equal(local.dataDir, dataDir);
+      assert.equal(spawned, 1);
+      assert.equal(kill(unrelatedPid, 0), true, 'unrelated process survives startup');
 
-      // Assert unrelated child is STILL alive!
-      let stillAlive = false;
-      try {
-        process.kill(unrelatedPid, 0);
-        stillAlive = true;
-      } catch {}
-      assert.ok(stillAlive, 'Unrelated child process MUST survive stopStudio');
+      fs.writeFileSync(pidFile, `${unrelatedPid}\n`);
+      await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /offline fixture/);
+      assert.equal(fs.existsSync(pidFile), false, 'install also discards the reused PID before attempting download');
+      assert.equal(kill(unrelatedPid, 0), true, 'unrelated process survives install');
     } finally {
-      try { process.kill(unrelatedPid, 'SIGKILL'); } catch {}
+      probe.mock.restore();
+      unrelatedChild.kill('SIGKILL');
+      await exited;
     }
   });
 
-  it('8. mutated binary is refused on launch', async () => {
+  it('8. changed binary is never launched when verified recovery is unavailable', async () => {
     const dataDir = path.join(tmpRoot, 'mutated-binary-test');
     ensureStudioConfig(dataDir);
     const pkgDir = path.join(dataDir, 'package');
@@ -352,7 +371,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
     const pin = PINNED_ARCHIVES[`${process.platform}-${process.arch}`];
     const manifest = {
-      version: '0.2.12',
+      version: STUDIO_VERSION.slice(1),
       platform: process.platform,
       arch: process.arch,
       archiveSha256: pin.sha256,
@@ -363,9 +382,161 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     // Mutate 1 byte of the binary
     fs.appendFileSync(bin, '# mutated\n');
 
+    let spawned = false;
     await assert.rejects(async () => {
-      await ensureStudio({ dataDir, startTimeoutMs: 1000, fetchFn: offlineFetch });
-    }, /mutated binary refused on launch/);
+      await ensureStudio({ dataDir, startTimeoutMs: 1000, fetchFn: offlineFetch,
+        spawnFn: () => { spawned = true; throw new Error('must not execute changed binary'); } });
+    }, /offline fixture/);
+    assert.equal(spawned, false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'install-manifest.json'))).binarySha256, manifest.binarySha256);
+  });
+
+  it('the official upstream base needs the managed build, while the exact managed version is current', async () => {
+    const { dataDir } = installedStandIn('managed-version-upgrade');
+    const local = localStudio({ dataDir });
+    for (const version of ['v0.2.12', 'v0.2.13']) {
+      const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
+      assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
+    }
+    const fetchFn = adminFetch(() => runningStatus({ total: 0 }));
+    assert.equal((await checkStudioHealth(local, fetchFn)).state, 'up');
+  });
+
+  it('newer or custom admin-updated versions report recovery without stopping or installing', async () => {
+    const dataDir = path.join(tmpRoot, 'admin-update-conflict');
+    ensureStudioConfig(dataDir);
+    fs.mkdirSync(path.join(dataDir, 'package'));
+    fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
+    let mutations = 0;
+    for (const version of ['v0.2.14', 'v1.0.0', 'v0.2.13-custom', 'unknown']) {
+      const fetchFn = async (url, init) => {
+        if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
+        return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
+      };
+      const status = await studioStatus({ dataDir, fetchFn });
+      assert.equal(status.status, 'version_conflict');
+      assert.match(status.reason, /online updater/);
+      assert.match(status.reason, /studio\.mjs.*install/);
+      for (const action of ['stop', 'install', 'start']) {
+        assert.ok(status.reason.includes(studioCommand(action, { dataDir })));
+      }
+      assert.match(status.reason, /may not read data migrated/);
+      await assert.rejects(ensureStudio({ dataDir, fetchFn, spawnFn: () => { mutations++; } }), /Update magpie-gemini-web/);
+      await assert.rejects(installStudio({ dataDir, fetchFn }), /Update magpie-gemini-web/);
+    }
+    assert.equal(mutations, 0);
+  });
+
+  it('a restart with HTTP closed never reinstalls or spawns; a new PID can be stopped', async () => {
+    const dataDir = path.join(tmpRoot, 'restart gap with spaces');
+    ensureStudioConfig(dataDir, '', { port: await freePort() });
+    const pkg = path.join(dataDir, 'package');
+    fs.mkdirSync(pkg);
+    const bin = path.join(pkg, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
+    fs.copyFileSync(process.execPath, bin, fs.constants.COPYFILE_FICLONE);
+    writeValidManifest(dataDir, bin);
+    const manifest = path.join(dataDir, 'install-manifest.json');
+    const old = JSON.parse(fs.readFileSync(manifest));
+    old.binarySha256 = '0'.repeat(64); // updated executable no longer matches the old manifest
+    fs.writeFileSync(manifest, JSON.stringify(old));
+    const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
+    const child = spawn(bin, ['-e', `process.on('message', () => { ${STAND_IN_SERVICE} }); process.send('ready');`], {
+      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.14', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+    });
+    const exited = new Promise(resolve => child.on('exit', resolve));
+    try {
+      await new Promise((resolve, reject) => { child.once('message', resolve); child.once('error', reject); child.once('exit', () => reject(new Error('stand-in exited early'))); });
+      const pidFile = path.join(dataDir, 'backend.pid');
+      fs.writeFileSync(pidFile, `${child.pid}\n`);
+      const hash = computeFileHash(bin);
+      const manifestBytes = fs.readFileSync(manifest, 'utf8');
+      let spawned = false;
+      const opts = { dataDir, fetchFn: offlineFetch, spawnFn: () => { spawned = true; } };
+      await assert.rejects(ensureStudio(opts), /still be running or restarting/);
+      await assert.rejects(installStudio(opts), /still be running or restarting/);
+      assert.equal(fs.readFileSync(pidFile, 'utf8'), `${child.pid}\n`);
+      // Recover the real process even when its recorded PID is dead or reused.
+      for (const stale of [9999999, process.pid]) {
+        fs.writeFileSync(pidFile, `${stale}\n`);
+        await assert.rejects(ensureStudio(opts), /still be running or restarting/);
+        await assert.rejects(installStudio(opts), /still be running or restarting/);
+      }
+      assert.equal(spawned, false);
+      assert.equal(computeFileHash(bin), hash);
+      assert.equal(fs.readFileSync(manifest, 'utf8'), manifestBytes);
+      child.send('serve');
+      const deadline = Date.now() + 10000;
+      while ((await studioStatus({ dataDir })).status !== 'version_conflict') {
+        assert.ok(Date.now() < deadline, 'replacement did not begin listening');
+        await new Promise(r => setTimeout(r, 50));
+      }
+      await assert.rejects(ensureStudio({ dataDir }), /online updater/);
+      assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
+      await exited;
+      assert.equal(fs.existsSync(pidFile), false);
+    } finally {
+      child.kill('SIGKILL');
+      await exited;
+    }
+  });
+
+  it('a child that exits during startup does not leave backend.pid behind', { skip: process.platform === 'win32' }, async () => {
+    const { dataDir } = installedStandIn('exited-child');
+    await assert.rejects(ensureStudio({ dataDir, fetchFn: offlineFetch, startTimeoutMs: 2000 }), /exited during startup/);
+    assert.equal(fs.existsSync(path.join(dataDir, 'backend.pid')), false);
+  });
+
+  it('Windows process discovery uses the full binary path and listener ownership', () => {
+    const calls = [];
+    const run = (...args) => { calls.push(args); return '123\r\n123\r\n456\r\n'; };
+    assert.deepEqual(studioProcessPids('/custom dir/package/aistudio2api.exe', 'win32', run), [123, 456]);
+    assert.equal(calls[0][2].env.TARGET_BINARY, path.resolve('/custom dir/package/aistudio2api.exe'));
+    assert.match(calls[0][1].at(-1), /Get-CimInstance Win32_Process -Filter "Name='aistudio2api\.exe'"/);
+    assert.match(calls[0][1].at(-1), /ExecutablePath -eq \$env:TARGET_BINARY/);
+    assert.equal(calls[0][2].timeout, 20000);
+    assert.deepEqual(studioListenerPids(2048, 'win32', run), [123, 456]);
+    assert.equal(calls[1][2].env.TARGET_PORT, '2048');
+    assert.equal(calls[1][2].timeout, 20000);
+    assert.match(calls[1][1].at(-1), /Get-NetTCPConnection.*OwningProcess/);
+    assert.throws(() => studioListenerPids('2048;bad', 'win32', run), /Invalid listener port/);
+  });
+
+  it('Windows process inspection failures explain recovery with the correct data directory', () => {
+    const dataDir = path.join(tmpRoot, 'powershell failure');
+    const bin = path.join(dataDir, 'package', 'aistudio2api.exe');
+    for (const code of ['ETIMEDOUT', 'ENOENT', 'EACCES']) {
+      const cause = Object.assign(new Error('PowerShell unavailable'), { code });
+      assert.throws(() => studioProcessPids(bin, 'win32', () => { throw cause; }), err => {
+        assert.match(err.message, /Cannot check for remaining AIStudio2API processes/);
+        assert.ok(err.message.includes(studioCommand('stop', { dataDir })));
+        assert.equal(err.cause, cause);
+        return true;
+      });
+    }
+  });
+
+  it('package permission hardening failures do not block a healthy service', { skip: process.platform === 'win32' }, async t => {
+    const { dataDir } = installedStandIn('best-effort-protection');
+    const pkg = path.join(dataDir, 'package');
+    const chmod = fs.chmodSync;
+    let attempts = 0;
+    const patch = t.mock.method(fs, 'chmodSync', (file, mode) => {
+      if (file === pkg) {
+        attempts++;
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      }
+      return chmod(file, mode);
+    });
+    try {
+      const fetchFn = adminFetch(() => runningStatus({ total: 1, ready: 1, busy: 0 }));
+      const local = await ensureStudio({ dataDir, fetchFn });
+      assert.equal(local.dataDir, dataDir);
+      assert.equal(attempts, 1);
+      chmod(pkg, 0o555);
+      await ensureStudio({ dataDir, fetchFn });
+      assert.equal(attempts, 1, 'an already protected package does not need chmod again');
+    } finally { patch.mock.restore(); }
   });
 
   it('9. startup lock dead owner recovery', async () => {
@@ -383,7 +554,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
     const pin = PINNED_ARCHIVES[`${process.platform}-${process.arch}`];
     fs.writeFileSync(path.join(dataDir, 'install-manifest.json'), JSON.stringify({
-      version: '0.2.12',
+      version: STUDIO_VERSION.slice(1),
       platform: process.platform,
       arch: process.arch,
       archiveSha256: pin.sha256,
@@ -409,7 +580,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
           err.code = 'ECONNREFUSED';
           throw err;
         }
-        return Response.json({ version: 'v0.2.12', running: true, ready: true, accounts: { total: 0 } });
+        return Response.json({ version: STUDIO_VERSION, running: true, ready: true, accounts: { total: 0 } });
       }
       return Response.json({});
     };
@@ -430,7 +601,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
     const pin = PINNED_ARCHIVES[`${process.platform}-${process.arch}`];
     const manifest = {
-      version: '0.2.12',
+      version: STUDIO_VERSION.slice(1),
       platform: process.platform,
       arch: process.arch,
       archiveSha256: pin.sha256,
@@ -456,7 +627,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
           err.code = 'ECONNREFUSED';
           throw err;
         }
-        return Response.json({ version: 'v0.2.12', running: true, ready: true, accounts: { total: 0 } });
+        return Response.json({ version: STUDIO_VERSION, running: true, ready: true, accounts: { total: 0 } });
       }
       return Response.json({});
     };
@@ -574,7 +745,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       }
       if (req.url === '/api/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ version: 'v0.2.12', running: true, ready: false, accounts: { total: 0 } }));
+        res.end(JSON.stringify({ version: STUDIO_VERSION, running: true, ready: false, accounts: { total: 0 } }));
         return;
       }
       if (req.url === '/v1/models') {
@@ -622,7 +793,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
     const pin = PINNED_ARCHIVES[`${process.platform}-${process.arch}`];
     fs.writeFileSync(path.join(dataDir, 'install-manifest.json'), JSON.stringify({
-      version: '0.2.12',
+      version: STUDIO_VERSION.slice(1),
       platform: process.platform,
       arch: process.arch,
       archiveSha256: pin.sha256,
@@ -643,9 +814,9 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       if (url.includes('/api/status')) {
         polls++;
         if (polls < 3) {
-          return Response.json({ version: 'v0.2.12', running: false, ready: false, state: 'LAUNCHING', accounts: { total: 1, ready: 0 } });
+          return Response.json({ version: STUDIO_VERSION, running: false, ready: false, state: 'LAUNCHING', accounts: { total: 1, ready: 0 } });
         }
-        return Response.json({ version: 'v0.2.12', running: true, ready: true, state: 'RUNNING', accounts: { total: 1, ready: 1 } });
+        return Response.json({ version: STUDIO_VERSION, running: true, ready: true, state: 'RUNNING', accounts: { total: 1, ready: 1 } });
       }
       if (url.includes('/models')) {
         return Response.json({ object: 'list', data: [] });
@@ -660,7 +831,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     // Always not ready with low generationTimeoutMs rejects
     const mockFetchNeverReady = async (url) => {
       if (url.includes('/api/auth/login')) return new Response(JSON.stringify({ authenticated: true }), { headers: { 'Set-Cookie': 'aistudio_admin=t; Path=/' } });
-      if (url.includes('/api/status')) return Response.json({ version: 'v0.2.12', running: false, ready: false, state: 'LAUNCHING', accounts: { total: 1, ready: 0 } });
+      if (url.includes('/api/status')) return Response.json({ version: STUDIO_VERSION, running: false, ready: false, state: 'LAUNCHING', accounts: { total: 1, ready: 0 } });
       return Response.json({});
     };
     await assert.rejects(async () => {
@@ -671,7 +842,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const mockFetchStart500 = async (url) => {
       if (url.includes('/api/auth/login')) return new Response(JSON.stringify({ authenticated: true }), { headers: { 'Set-Cookie': 'aistudio_admin=t; Path=/' } });
       if (url.includes('/api/control/start')) return new Response(JSON.stringify({ error: 'fail' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-      if (url.includes('/api/status')) return Response.json({ version: 'v0.2.12', running: false, ready: false, state: 'STOPPED', accounts: { total: 1, ready: 0 } });
+      if (url.includes('/api/status')) return Response.json({ version: STUDIO_VERSION, running: false, ready: false, state: 'STOPPED', accounts: { total: 1, ready: 0 } });
       return Response.json({});
     };
     await assert.rejects(async () => {
@@ -683,7 +854,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const mockFetchManagementOnly = async (url) => {
       if (url.includes('/api/auth/login')) return new Response(JSON.stringify({ authenticated: true }), { headers: { 'Set-Cookie': 'aistudio_admin=t; Path=/' } });
       if (url.includes('/api/control/start')) { startCalledManagementOnly = true; return Response.json({}); }
-      if (url.includes('/api/status')) return Response.json({ version: 'v0.2.12', running: false, ready: false, state: 'STOPPED', accounts: { total: 1, ready: 0 } });
+      if (url.includes('/api/status')) return Response.json({ version: STUDIO_VERSION, running: false, ready: false, state: 'STOPPED', accounts: { total: 1, ready: 0 } });
       return Response.json({});
     };
     const localMgmt = await ensureStudio({ dataDir, fetchFn: mockFetchManagementOnly, managementOnly: true });
@@ -958,7 +1129,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
     const noPid = await stopStudio({ dataDir, fetchFn: up });
     assert.equal(noPid.stopped, false);
-    assert.match(noPid.reported, /still answers on port/);
+    assert.match(noPid.reported, /Cannot identify a verified AIStudio2API process/);
 
     fs.writeFileSync(pidFile, '9999999\n', { mode: 0o600 });
     const stalePid = await stopStudio({ dataDir, fetchFn: up });
@@ -1080,7 +1251,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       if (!spawned) throw Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
       return adminFetch(() => runningStatus({ total: 0, ready: 0, busy: 0, cooldown: 0, auth_required: 0 }))(url);
     };
-    const spawnFn = () => { spawned++; return { pid: 1, on: () => {}, unref: () => {} }; };
+    const spawnFn = () => { spawned++; return { pid: 9999999, on: () => {}, unref: () => {} }; };
     await ensureStudio({ dataDir, fetchFn, spawnFn });
     assert.equal(fs.statSync(`${log}.1`).size, 11 * 1024 * 1024, 'the large log replaces the one set aside before');
     assert.equal(fs.statSync(log).size, 0);
@@ -1101,12 +1272,12 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     installedStandIn('relogin-hint-test');
     ensureStudioConfig(dataDir);
     const signedOut = adminFetch(() => launchingStatus('STOPPED', { total: 1, ready: 0, busy: 0, cooldown: 0, auth_required: 1 }));
-    await assert.rejects(ensureStudio({ dataDir, fetchFn: signedOut }), err => err.message.includes('用 Google 账号登录（推荐）') && err.message.includes(command));
+    await assert.rejects(ensureStudio({ dataDir, fetchFn: signedOut }), err => err.message.includes('用 Google 账号登录（推荐）') && err.message.includes(studioCommand('relogin', { dataDir })));
   });
 
   // The release archive this machine installed, if any, to install again from without a download.
   const pin = PINNED_ARCHIVES[`${process.platform}-${process.arch}`];
-  const realArchive = pin && path.join(studioDataDir(), pin.asset);
+  const realArchive = pin && (process.env.AI_STUDIO_TEST_ARCHIVE || path.join(studioDataDir(), pin.asset));
   const haveRealArchive = Boolean(realArchive && fs.existsSync(realArchive) && computeFileHash(realArchive) === pin.sha256);
 
   it('30. an install takes the archive an earlier one kept only when it checks out', async () => {
@@ -1117,7 +1288,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /offline fixture/);
   });
 
-  it('30b. a kept archive installs offline, and older versions\' archives are removed', { skip: process.platform === 'win32' || !haveRealArchive }, async () => {
+  it('30b. a kept archive installs offline, and older versions\' archives are removed', { skip: process.platform === 'win32' || !haveRealArchive }, async t => {
     const dataDir = path.join(tmpRoot, 'kept-archive-ok-test');
     ensureStudioConfig(dataDir, '');
     fs.copyFileSync(realArchive, path.join(dataDir, pin.asset));
@@ -1130,5 +1301,53 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(fs.existsSync(path.join(dataDir, pin.asset)));
     assert.equal(fs.existsSync(path.join(dataDir, older)), false);
     assert.ok(fs.existsSync(path.join(dataDir, 'notes.tar.gz')));
+
+    // Simulate a stopped admin-updated executable. Recovery must reinstall from the
+    // verified archive, preserving accounts/config and refusing to execute changed bytes.
+    const bin = path.join(dataDir, 'package', 'aistudio2api');
+    const verifiedHash = computeFileHash(bin);
+    const configBefore = fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8');
+    fs.mkdirSync(path.join(dataDir, 'auth'), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'auth', 'sentinel'), 'account data');
+    fs.appendFileSync(bin, '\nchanged by updater');
+    let spawned = false;
+    const fetchFn = async (url, init) => {
+      if (!spawned) return offlineFetch();
+      return adminFetch(() => runningStatus({ total: 0 }))(url, init);
+    };
+    await ensureStudio({ dataDir, fetchFn, spawnFn: file => {
+      assert.equal(computeFileHash(file), verifiedHash);
+      spawned = true;
+      return { on() {}, unref() {} };
+    } });
+    assert.equal(spawned, true);
+    assert.equal(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'), configBefore);
+    assert.equal(fs.readFileSync(path.join(dataDir, 'auth', 'sentinel'), 'utf8'), 'account data');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'install-manifest.json'))).binarySha256, verifiedHash);
+    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
+    assert.throws(() => fs.writeFileSync(path.join(dataDir, 'package', '.aistudio2api.new'), 'update'), /EACCES|EPERM/);
+    // An explicit install can replace a protected package and remove its backup.
+    await installStudio({ dataDir, fetchFn: offlineFetch });
+    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
+    assert.equal(fs.readdirSync(dataDir).some(n => n.startsWith('.package.backup.')), false);
+
+    // Failure after swapping must restore the previous protected directory and manifest.
+    const previousManifest = fs.readFileSync(path.join(dataDir, 'install-manifest.json'), 'utf8');
+    const chmod = fs.chmodSync;
+    let injected = false;
+    const patch = t.mock.method(fs, 'chmodSync', (file, mode) => {
+      if (!injected && file === path.join(dataDir, 'install-manifest.json')) {
+        injected = true;
+        throw new Error('simulated manifest permission failure');
+      }
+      return chmod(file, mode);
+    });
+    try {
+      await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /simulated manifest permission failure/);
+    } finally { patch.mock.restore(); }
+    assert.equal(computeFileHash(bin), verifiedHash);
+    assert.equal(fs.readFileSync(path.join(dataDir, 'install-manifest.json'), 'utf8'), previousManifest);
+    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
+    assert.equal(fs.readdirSync(dataDir).some(n => n.startsWith('.package.backup.')), false);
   });
 });

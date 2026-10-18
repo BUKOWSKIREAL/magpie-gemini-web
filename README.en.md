@@ -17,7 +17,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Thinking levels** | `minimal` / `low` / `medium` / `high` (`minimal` is fastest & cheapest) | `low` (base) / `high` (`-thinking` extended thinking) |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.2.12`) | gemini-web2api-go (`4.22.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (`v0.2.13`) | gemini-web2api-go (`4.22.0-magpie.1` optimized build) |
 
 ---
 
@@ -78,7 +78,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | Shared (override via `studio.allowTools`) | Allow tool calls. When `false`, requests with tools return 400 |
 | `allowImages` | `false` | Shared (override via `studio.allowImages`) | Allow image input |
-| `requestTimeoutMs` / `modelTimeoutMs` | `240000` / `10000` | Shared (override via `studio.*`) | Timeout (ms) per backend wait or model list fetch; active streaming replies are never cut off |
+| `requestTimeoutMs` / `modelTimeoutMs` | Web: `240000` / `10000`; Studio: `1800000` / `10000` | Shared (override via `studio.*`) | Timeout (ms) per backend wait or model list fetch; resets on stream data, explicit settings take precedence |
 | `stripCitations` | `true` | `gemini-web` only | Strip `[cite: 1]` and `[cite_start]` markers from replies and tool arguments (not supported on AI Studio) |
 | `baseURL` | `http://127.0.0.1:8083/v1` | `gemini-web` only | Default Gemini Web backend URL |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | `gemini-web` only | Context and output limits reported to clients |
@@ -128,6 +128,16 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - **Gemini Web data directory:** `~/.local/share/magpie-gemini-web` (override with `GEMINI_WEB_DATA_DIR`), logs at `backend.log`. Supports macOS, Linux, and Windows (x64 / arm64).
 - **AI Studio data directory:** `~/.local/share/magpie-ai-studio` (override with `AI_STUDIO_DATA_DIR`), logs at `backend.log` (rotated on next start after exceeding 10 MB). Uses port 2048 by default (or picks a free port and saves it in `config.json`). Supports macOS, Linux (x64 / arm64), and Windows x64.
 - Concurrency is capped at 1, but Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
+
+**AI Studio upgrades and model selection:**
+- The plugin pins SHA-256-verified `v0.2.13-magpie.1`, based on upstream `v0.2.13`. Upgrade the plugin to update the backend. Official managed releases at or below that upstream version are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
+- **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page directs users to upgrade through the Magpie plugin; the update endpoint returns HTTP 403 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for the patch and reproducible build process.
+- Managed Unix installs still attempt to set `package/` to `0555` as additional file protection. Permission failures do not block service, and disabling online updates does not depend on permissions. To reset by manually deleting the data directory, stop the service first, then run `chmod -R u+w "<data-dir>/package"` before deleting it; replace `<data-dir>` with the actual path.
+- If a newer or custom version is installed, the plugin reports a conflict with `stop`, `install`, and `start` commands carrying the correct `--data-dir`. Stop can recover a changed listener PID and verifies its executable path before signaling it. If HTTP is down but the process is still alive, the plugin refuses to reinstall or launch a second process.
+- When stopped, a replaced executable is restored from the verified pinned archive; failed verification never launches the replacement. Existing account and runtime data files are kept, but **an older backend may not read data migrated by a newer version**. Before manually downgrading, stop the service and back up the entire data directory, including `auth/` and `runtime/requests.db`. If data migration is known to have occurred, update the plugin to match the newer backend.
+- The backend's base request deadline and the plugin's default response/stream-idle timeout are 30 minutes (override via `studio.requestTimeoutMs`). This allows long non-streaming replies to finish collecting on the server. A stalled backend can also take 30 minutes to time out, and its single worker can hold up later requests. Cancel a request or choose a shorter timeout when needed; shorter limits can interrupt valid long replies. Upstream controls deadline scaling for automatic continuation.
+- Source review of the locally installed Magpie `v0.1.1285` (`d783df46`) found no shorter fixed total timeout on this plugin's generation path: `Provider.Do → plugin.Fetch → loader.fetch` bypasses the ordinary HTTP transport's 10-minute response-header timeout. The gateway's 5-minute `IdleTimeout` applies between requests. Clients or reverse proxies can impose shorter limits; this was not a 30-minute end-to-end waiting test.
+- Models with `-build` or `assistant_route` are filtered out: they inject the Build coding assistant's own system prompt and are not offered as ordinary Agent models. Refresh with `magpie provider models ai-studio` after upgrading.
 
 **Gemini Web optimized backend upgrades & rollback:**
 - One-click setup uses [4.22.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.22.0-magpie.1) by default (built from pinned upstream v4.22.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon model verification).
