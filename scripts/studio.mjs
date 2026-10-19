@@ -11,11 +11,11 @@ import {
   studioAccounts,
   stopStudio,
   studioStatus,
-  validateConfig,
-  validateProxy,
-  generateEnv,
+  studioProxy,
+  saveStudioProxy,
   studioCommand
 } from '../lib/studio-native.mjs';
+import { proxyLine } from '../lib/studio.mjs';
 
 const LOGIN_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -63,22 +63,10 @@ function parseArgs(args) {
   return flags;
 }
 
-async function updateProxyConfig(dataDir, proxy) {
-  const configPath = path.join(dataDir, 'config.json');
-  if (!fs.existsSync(configPath)) return;
-  const config = validateConfig(JSON.parse(fs.readFileSync(configPath, 'utf8')));
-  config.proxy = validateProxy(proxy);
-  const tmp = `${configPath}.tmp.${Date.now()}.${crypto.randomBytes(4).toString('hex')}`;
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, configPath);
-  fs.chmodSync(configPath, 0o600);
-
-  const envPath = path.join(dataDir, '.env');
-  const envContent = generateEnv(dataDir, config, { proxy: config.proxy });
-  const tmpEnv = `${envPath}.tmp.${Date.now()}.${crypto.randomBytes(4).toString('hex')}`;
-  fs.writeFileSync(tmpEnv, envContent, { mode: 0o600 });
-  fs.renameSync(tmpEnv, envPath);
-  fs.chmodSync(envPath, 0o600);
+// saveProxy saves the proxy given with --proxy as the service's own, as its admin page does,
+// once the data directory is set up.
+function saveProxy(dataDir, proxy) {
+  if (proxy !== undefined && fs.existsSync(path.join(dataDir, 'config.json'))) saveStudioProxy(dataDir, proxy);
 }
 
 function validateStorageState(filePath) {
@@ -128,15 +116,13 @@ async function main() {
       if (status.status === 'running' || status.status === 'outdated' || status.status === 'unresponsive') {
         throw new Error('Cannot install or update AI Studio while service is running. Stop the service first.');
       }
-      if (flags.proxy !== undefined) {
-        await updateProxyConfig(dataDir, flags.proxy);
-      }
       console.log(`Installing AIStudio2API into ${dataDir}...`);
       const local = await installStudio({
         dataDir,
         archivePath: flags.archive,
         proxy: flags.proxy
       });
+      saveProxy(dataDir, flags.proxy);
       console.log(`AIStudio2API installed successfully.`);
       console.log(`Listen origin: ${local.origin}`);
       console.log(`Data directory: ${local.dataDir}`);
@@ -155,14 +141,12 @@ async function main() {
         console.log(`Management URL: ${local.origin}`);
         return;
       }
-      if (flags.proxy !== undefined) {
-        await updateProxyConfig(dataDir, flags.proxy);
-      }
       if (status.status === 'outdated') {
         console.log(`Replacing AIStudio2API ${status.version} from an earlier install with ${status.expected}...`);
       }
       console.log(`Starting AIStudio2API service in ${dataDir}...`);
-      const local = await ensureStudio({ dataDir, proxy: flags.proxy });
+      // --proxy is saved as the service's own, as its admin page saves one, not set over it
+      const local = await ensureStudio({ dataDir, savedProxy: flags.proxy });
       console.log(`AIStudio2API service is running.`);
       console.log(`API Base URL: ${local.baseURL}`);
       console.log(`Management URL: ${local.origin}`);
@@ -175,6 +159,13 @@ async function main() {
         console.log(`State: ${status.state || 'RUNNING'}`);
         console.log(`Listen port: ${status.port}`);
         console.log(`Accounts: ready=${status.accounts?.ready ?? 0}, total=${status.accounts?.total ?? 0}`);
+        const local = localStudio({ dataDir });
+        console.log(`Management URL: ${local.origin} (user ${local.adminUsername}, password: adminPassword in ${path.join(dataDir, 'config.json')})`);
+        try {
+          console.log(`Proxy: ${proxyLine(await studioProxy(local, { standalone: true }), local)}`);
+        } catch (err) {
+          console.log(`Proxy: could not be read (${err.message})`);
+        }
         const accounts = await studioAccounts({ dataDir });
         if (accounts.length > 0) {
           console.log(`Enabled accounts:`);

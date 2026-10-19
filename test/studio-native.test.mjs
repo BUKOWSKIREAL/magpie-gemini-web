@@ -16,7 +16,11 @@ import {
   stopStudio,
   studioStatus,
   ensureStudioConfig,
-  generateEnv,
+  serviceEnv,
+  readStudioEnv,
+  saveStudioProxy,
+  studioProxy,
+  redactProxy,
   validateConfig,
   validateProxy,
   verifyProcessIdentity,
@@ -133,12 +137,121 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(envContent.includes(`PROXY_API_KEY=${config.apiKey}`));
     assert.ok(envContent.includes(`ADMIN_PASSWORD=${config.adminPassword}`));
 
-    // Test explicit proxy override in generateEnv with nullish precedence
-    const envWithProxy = generateEnv(dataDir, config, { proxy: 'http://127.0.0.1:1082' });
-    assert.ok(envWithProxy.includes('PROXY=http://127.0.0.1:1082'));
+    // The service is started with this plugin's settings only; PROXY when the plugin sets one
+    const env = serviceEnv(dataDir, config, { proxy: 'http://127.0.0.1:1082' });
+    assert.equal(env.PROXY, 'http://127.0.0.1:1082');
+    assert.equal(env.LISTEN_ADDR, `127.0.0.1:${config.port}`);
+    assert.equal(env.REQUEST_TIMEOUT, undefined, 'a setting the admin page owns is not passed over .env');
+  });
 
-    const envWithEmptyProxy = generateEnv(dataDir, config, { proxy: '' });
-    assert.ok(envWithEmptyProxy.includes('PROXY=\n') || envWithEmptyProxy.endsWith('PROXY='));
+  it('1b. .env keeps what the admin page saved, and only this plugin\'s settings are written over', () => {
+    const dataDir = path.join(tmpRoot, 'env-owner-test');
+    const config = ensureStudioConfig(dataDir);
+    const envPath = path.join(dataDir, '.env');
+    assert.equal(readStudioEnv(dataDir).PROXY, '', 'a new setup saves no proxy');
+
+    // As the admin page saves it: every key, its own values, one quoted
+    const saved = readStudioEnv(dataDir);
+    Object.assign(saved, {
+      PROXY: 'socks5://127.0.0.1:7890',
+      REQUEST_TIMEOUT: '45m',
+      MODEL_MAPPING: 'a=b',
+      LISTEN_ADDR: '127.0.0.1:1',
+      ADMIN_PASSWORD: 'changed'
+    });
+    fs.writeFileSync(envPath, Object.entries(saved).map(([k, v]) => `${k}=${v}`).join('\n') + '\nROUTING_STRATEGY="round robin"\n');
+
+    ensureStudioConfig(dataDir, 'http://127.0.0.1:9393');
+    const after = readStudioEnv(dataDir);
+    assert.equal(after.PROXY, 'socks5://127.0.0.1:7890', 'the saved proxy is kept over one given');
+    assert.equal(after.REQUEST_TIMEOUT, '45m');
+    assert.equal(after.MODEL_MAPPING, 'a=b');
+    assert.equal(after.ROUTING_STRATEGY, 'round robin');
+    assert.equal(after.LISTEN_ADDR, `127.0.0.1:${config.port}`, 'this plugin\'s settings are its own');
+    assert.equal(after.ADMIN_PASSWORD, config.adminPassword);
+
+    saveStudioProxy(dataDir, 'http://127.0.0.1:1082');
+    assert.equal(readStudioEnv(dataDir).PROXY, 'http://127.0.0.1:1082');
+    assert.equal(readStudioEnv(dataDir).REQUEST_TIMEOUT, '45m');
+  });
+
+  it('1c. a missing PROXY is the one given, else the one an older config.json kept', () => {
+    const dataDir = path.join(tmpRoot, 'env-legacy-proxy-test');
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ version: 1, port: 2048, apiKey: 'k', adminUsername: 'u', adminPassword: 'p', proxy: 'http://127.0.0.1:1082' }));
+    ensureStudioConfig(dataDir);
+    assert.equal(readStudioEnv(dataDir).PROXY, 'http://127.0.0.1:1082');
+    assert.equal(readStudioEnv(dataDir).PER_ACCOUNT_CONCURRENCY, '1', 'missing settings get their defaults');
+
+    const fresh = path.join(tmpRoot, 'env-seed-proxy-test');
+    ensureStudioConfig(fresh, 'socks5://127.0.0.1:7890');
+    assert.equal(readStudioEnv(fresh).PROXY, 'socks5://127.0.0.1:7890');
+    assert.equal('proxy' in JSON.parse(fs.readFileSync(path.join(fresh, 'config.json'), 'utf8')), false, 'config.json keeps no proxy');
+  });
+
+  it('1d. studioProxy tells the proxy the service goes out through, where from, and what applies one set', async () => {
+    const dataDir = path.join(tmpRoot, 'proxy-status-test');
+    installedStandIn('proxy-status-test');
+    ensureStudioConfig(dataDir);
+    saveStudioProxy(dataDir, 'socks5://127.0.0.1:7890');
+    const local = localStudio({ dataDir });
+    const withConfig = cfg => async url => {
+      if (url.includes('/api/auth/login')) {
+        return new Response('{}', { headers: { 'Set-Cookie': 'aistudio_admin=t; Path=/', 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/api/config')) return Response.json(cfg);
+      throw new Error(`unexpected ${url}`);
+    };
+    const savedEnv = process.env.AI_STUDIO_PROXY;
+    try {
+      delete process.env.AI_STUDIO_PROXY;
+      // Started by an older plugin with PROXY="" in its environment, which hides the saved one: the
+      // service falls back to the system's proxy. A restart applies the saved one.
+      let p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393' }) });
+      assert.deepEqual(p, { active: 'http://127.0.0.1:9393', source: 'startup', saved: 'socks5://127.0.0.1:7890', overridden: null, wanted: 'socks5://127.0.0.1:7890', wantedSource: 'saved', pending: 'restart' });
+      // The CLI can't promise that: with no record of whose PROXY the service was started with,
+      // starting it from Magpie again may set it again
+      p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393' }) });
+      assert.deepEqual([p.overridden, p.pending], ['unknown', 'restart']);
+
+      // Saved in the admin page, not yet in the generation service
+      p = await studioProxy(local, { fetchFn: withConfig({ proxy: 'socks5://127.0.0.1:7890', active_proxy: 'http://127.0.0.1:9393' }) });
+      assert.equal(p.pending, 'generation');
+
+      p = await studioProxy(local, { fetchFn: withConfig({ proxy: 'socks5://127.0.0.1:7890', active_proxy: 'socks5://127.0.0.1:7890' }) });
+      assert.deepEqual([p.active, p.source, p.pending, p.overridden], ['socks5://127.0.0.1:7890', 'saved', null, null]);
+
+      // studio.proxy is set over the saved one, and says the saved one doesn't apply
+      p = await studioProxy(local, { proxy: 'http://u:secret@127.0.0.1:1082', fetchFn: withConfig({ proxy: 'http://u:secret@127.0.0.1:1082', active_proxy: 'http://u:secret@127.0.0.1:1082' }) });
+      assert.deepEqual([p.active, p.source, p.pending, p.overridden], ['http://u:***@127.0.0.1:1082', 'option', null, 'option']);
+
+      // The CLI reads whose it was from the record of the service's start: no restart applies the
+      // saved one while studio.proxy is set
+      fs.writeFileSync(path.join(dataDir, 'backend.pid'), '4242\n');
+      fs.writeFileSync(path.join(dataDir, 'backend.launch.json'), JSON.stringify({ pid: 4242, proxy: 'option' }));
+      p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: 'http://127.0.0.1:1082', active_proxy: 'http://127.0.0.1:1082' }) });
+      assert.deepEqual([p.source, p.pending, p.overridden], ['option', null, 'option']);
+      // A record of another process tells nothing
+      fs.writeFileSync(path.join(dataDir, 'backend.pid'), '4243\n');
+      p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: 'http://127.0.0.1:1082', active_proxy: 'http://127.0.0.1:1082' }) });
+      assert.deepEqual([p.overridden, p.pending], ['unknown', 'restart']);
+      fs.rmSync(path.join(dataDir, 'backend.pid'));
+
+      // Nothing saved: the system's proxy, or none
+      saveStudioProxy(dataDir, '');
+      p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
+      assert.deepEqual([p.source, p.pending], ['system', null]);
+      p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: '' }) });
+      assert.deepEqual([p.active, p.source], ['', 'direct']);
+      // Cleared in the admin page while the generation service still goes out through the old one,
+      // which a fallback to the system's proxy can't be told from
+      p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: 'socks5://127.0.0.1:7890', service_restart_required: true }) });
+      assert.deepEqual([p.source, p.pending], ['unknown', 'generation']);
+    } finally {
+      if (savedEnv === undefined) delete process.env.AI_STUDIO_PROXY;
+      else process.env.AI_STUDIO_PROXY = savedEnv;
+    }
+    assert.equal(redactProxy('http://a:b@h:1, socks5://h:2'), 'http://a:***@h:1,socks5://h:2');
   });
 
   it('2. ensureStudioConfig throws on malformed config and preserves bytes without replacement', () => {
@@ -1162,7 +1275,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.deepEqual(await stopStudio({ dataDir, fetchFn: offlineFetch }), { stopped: true });
   });
 
-  it('25. a download goes through the proxy saved in config.json', { skip: process.platform === 'win32' }, async () => {
+  it('25. a download goes through the proxy saved in .env', { skip: process.platform === 'win32' }, async () => {
     const dataDir = path.join(tmpRoot, 'saved-proxy-test');
     ensureStudioConfig(dataDir, 'http://127.0.0.1:1082');
 
@@ -1186,6 +1299,13 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       // An explicit empty proxy turns it off
       await assert.rejects(installStudio({ dataDir, proxy: '' }), /via curl/);
       assert.ok(!curlArgs().includes('--proxy'));
+
+      // A proxy an older config.json kept counts only while .env saves none, not one cleared
+      const configPath = path.join(dataDir, 'config.json');
+      fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), proxy: 'http://127.0.0.1:9393' }));
+      saveStudioProxy(dataDir, '');
+      await assert.rejects(installStudio({ dataDir }), /via curl/);
+      assert.ok(!curlArgs().includes('--proxy'), 'a proxy cleared in the admin page stays cleared');
     } finally {
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k];

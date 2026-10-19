@@ -7,7 +7,7 @@ import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
 import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward } from '../lib/backend.mjs';
-import { generateEnv, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION } from '../lib/studio-native.mjs';
+import { serviceEnv, saveStudioProxy, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION } from '../lib/studio-native.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
   let mockServer;
@@ -180,8 +180,16 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(studioSettings({ studio: { proxy: '' } }).proxy, '', 'Explicit empty proxy must be empty string');
 
     const sampleConfig = { port: 2048, apiKey: 'k', adminUsername: 'u', adminPassword: 'p', proxy: 'http://127.0.0.1:9999' };
-    const envGenerated = generateEnv(tempStudioDataDir, sampleConfig);
-    assert.ok(envGenerated.includes('PROXY=http://127.0.0.1:9999'), 'Config proxy must remain in generateEnv when options.proxy is undefined');
+    const savedEnv = process.env.AI_STUDIO_PROXY;
+    try {
+      delete process.env.AI_STUDIO_PROXY;
+      assert.equal('PROXY' in serviceEnv(tempStudioDataDir, sampleConfig), false, 'Without studio.proxy the service takes the PROXY saved in .env');
+      assert.equal('PROXY' in serviceEnv(tempStudioDataDir, sampleConfig, { proxy: '' }), false, 'An empty studio.proxy names none');
+      assert.equal(serviceEnv(tempStudioDataDir, sampleConfig, { proxy: 'http://127.0.0.1:1082' }).PROXY, 'http://127.0.0.1:1082');
+    } finally {
+      if (savedEnv === undefined) delete process.env.AI_STUDIO_PROXY;
+      else process.env.AI_STUDIO_PROXY = savedEnv;
+    }
 
     const rootOptions = {
       baseURL: 'http://127.0.0.1:8083/v1',
@@ -649,12 +657,16 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.match(oneClick.label, /（推荐）/);
 
       serverResponses['/api/accounts'] = { status: 500, headers: jsonHeaders, body: JSON.stringify({ error: { message: 'login window closed' } }) };
+      // Before an account is signed in, only the sign-in can show the proxy the login window goes through
+      serverResponses['/api/config'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) };
       const failing = await oneClick.authorize();
       assert.match(failing.instructions, /Camoufox/);
       assert.match(failing.instructions, /每个账号一张卡片/);
+      assert.match(failing.instructions, /\n本地服务的代理出口：http:\/\/127\.0\.0\.1:9393（自动检测：HTTPS_PROXY 环境变量或系统代理）$/);
       const failed = await failing.callback();
       assert.equal(failed.type, 'failed');
-      assert.match(failed.error, /login window closed/);
+      assert.match(failed.error, /login window closed[^]*本地服务的代理出口：http:\/\/127\.0\.0\.1:9393/);
+      delete serverResponses['/api/config'];
 
       // Saved while generation is still launching: the sign-in doesn't wait for it
       let launching = true;
@@ -800,7 +812,12 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         ] })
       };
       const a = await plugin.auth.usage(async () => authFor('a@example.com'));
-      assert.deepEqual(a, { user: 'a@example.com', windows: [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '冷却中：quota exhausted' }], signIn: 'kept' });
+      const [cooldown, admin] = a.windows;
+      assert.deepEqual({ ...a, windows: [cooldown] }, { user: 'a@example.com', windows: [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '冷却中：quota exhausted' }], signIn: 'kept' });
+      // Below the account's own windows, where the service's admin page is (its proxy can't be read here)
+      assert.equal(a.windows.length, 2);
+      assert.equal(admin.name, '管理页');
+      assert.ok(admin.display.startsWith(`${serverURL.replace(/\/v1$/, '')}（用户名 magpie，密码是 `) && admin.display.includes('config.json'));
 
       const b = await plugin.auth.usage(async () => authFor('b@example.com'));
       assert.match(b.error, /这个 Google 账号需要重新登录.*用 Google 账号登录（推荐）.*再选这个账号/);
@@ -831,13 +848,22 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(card.error, undefined, 'a pool that serves is no error');
       assert.equal(card.signIn, 'kept');
       assert.equal(card.user, 'a@example.com +1（1 个需要重新登录）', 'the disabled account is left out');
-      assert.deepEqual(card.windows, [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '1/1 个账号冷却中：quota exhausted' }]);
+      const pool = card.windows.filter(w => w.name !== '管理页');
+      assert.deepEqual(pool, [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '1/1 个账号冷却中：quota exhausted' }]);
+
+      // The proxy the service goes out through, and why the one saved in the admin page isn't it yet
+      serverResponses['/api/config'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ proxy: '', active_proxy: 'http://127.0.0.1:9393' }) };
+      saveStudioProxy(tempStudioDataDir, 'socks5://127.0.0.1:7890');
+      const proxied = await plugin.auth.usage(async () => managedAuth);
+      const proxyWindow = proxied.windows.find(w => w.name === '代理出口');
+      assert.match(proxyWindow.display, /^http:\/\/127\.0\.0\.1:9393（服务启动时的设置）；管理页设置的是 socks5:\/\/127\.0\.0\.1:7890，重启本地服务（.* stop.*，下一次请求会自动启动）后生效$/);
+      delete serverResponses['/api/config'];
 
       // Cooldowns that can't be read leave the rest of the card
       serverResponses['/api/cooldowns'] = { status: 500, headers: jsonHeaders, body: '{}' };
       const partial = await plugin.auth.usage(async () => managedAuth);
       assert.equal(partial.error, undefined);
-      assert.deepEqual(partial.windows, []);
+      assert.deepEqual(partial.windows.map(w => w.name), ['管理页']);
 
       // No account can serve until one signs in again: say how to fix it
       serverResponses['/api/accounts'] = accountsResponse([POOL[1]]);
