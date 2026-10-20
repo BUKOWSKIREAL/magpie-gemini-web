@@ -20,6 +20,7 @@
   "files": [
     "index.mjs",
     "lib/",
+    "ui/",
     "scripts/backend.mjs",
     "scripts/backend-argon.mjs",
     "scripts/backend-release.mjs",
@@ -77,6 +78,12 @@
     "studio:smoke": "node scripts/studio-smoke.mjs"
   },
   "magpie": {
-    "maxConcurrency": 1
+    "maxConcurrency": 1,
+    "page": {
+      "title": "AI Studio 管理",
+      "file": "ui/index.html"
+    },
+    "panels": [{ "slot": "settings", "title": "AI Studio 本地服务", "file": "ui/index.html" }],
+    "actions": [{ "id": "studio-settings", "menu": "provider", "title": "AI Studio 本地服务设置" }]
   }
 }

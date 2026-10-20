@@ -59,6 +59,14 @@
 
 ## 配置与进阶
 
+### 本地服务控制台（实验性功能）
+
+从侧栏「AI Studio 管理」或设置面板点击「打开服务控制台」，在默认浏览器查看实时状态、启动/停止/重启后端、打开原管理页，或保存并应用代理。首次打开会启用 `studio.localConsole`，并重新加载一次插件宿主；后续控制操作直接通过本机控制台执行，不再刷新插件配置。
+
+启用后，代理只保存到后端 `.env`。已有 `studio.proxy` / `AI_STUDIO_PROXY` 仅在首次启用时迁移一次，原文件备份为 `.env.before-console`；之后不再覆盖后端设置。请删除旧的 `studio.proxy` 选项，并通过控制台或原管理页修改。留空表示自动检测系统代理，不表示强制直连。控制台区分已保存配置、当前运行代理与待应用状态；保存不会重启，「保存并应用」确认旧进程退出后才启动新进程。停止后会持久暂停自动启动，只有明确点击启动才恢复。
+
+Windows 下，控制台绑定 Magpie 桌面应用进程（支持 `gui` 与 `tray`），打开应用时自动启动已配置的后端，退出应用后关闭托管后端和控制台；刷新插件宿主或关闭浏览器页面不触发退出。手动停止或操作失败产生的暂停在退出、重新打开后继续保留，只有明确启动才解除。托盘模式需真正退出 Magpie，关闭窗口不等于退出。绑定状态会显示在页面底部。非 Windows 或非 GUI 宿主不自动绑定。此功能只管理本插件安装的本机实例，不控制自行连接的远程服务。应用退出联动不能与手工独立运行同一实例同时使用；需独立常驻时使用「连接已有 AIStudio2API」。
+
 <details>
 <summary><b>⚙️ 插件选项与代理配置</b>（开启图片输入、设置代理、连接自建后端）</summary>
 
@@ -82,15 +90,16 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `stripCitations` | `true` | 仅 `gemini-web` | 剥离回复与工具参数中的 `[cite: 1]`、`[cite_start]` 标记（AI Studio 不支持剥离） |
 | `baseURL` | `http://127.0.0.1:8083/v1` | 仅 `gemini-web` | Gemini Web 默认后端地址 |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | 仅 `gemini-web` | 向客户端声明的上下文 / 输出上限 |
-| `studio.proxy` | 无 | 仅 `ai-studio` | 访问 Google 的代理（`http` / `https` / `socks5`），也可用环境变量 `AI_STUDIO_PROXY`；设置后优先于管理页里保存的代理，留空等于不设置 |
+| `studio.proxy` | 无 | 仅 `ai-studio` | 未启用控制台时覆盖后端代理；启用后只做首次迁移，之后以控制台或管理页保存的 `.env` 为准 |
+| `studio.localConsole` | `false` | 仅本机 `ai-studio` | 从控制台入口自动启用，统一代理保存位置、明确启停与暂停状态 |
 | `studio.baseURL` | `http://127.0.0.1:2048/v1` | 仅 `ai-studio` | 连接已有 AIStudio2API 时的默认地址 |
 | `studio.contextLimit` / `studio.outputLimit` | 模型目录默认值 | 仅 `ai-studio` | 向客户端声明的上限（仅支持在目录值基础上调低） |
 
 **配置代理访问 Google：**
 - **AI Studio**：推荐在本地管理页设置。打开额度卡片「管理页」一行里的地址（默认 `http://127.0.0.1:2048`），用户名 `magpie`，密码是数据目录 `config.json` 里的 `adminPassword`；保存代理后在管理页重启服务即可生效，之后插件重启后端也不会覆盖它。
-  - 也可以用上表的 `studio.proxy` 或环境变量 `AI_STUDIO_PROXY`，它们优先于管理页里保存的代理。改了要重启本地服务才生效（`npm run studio:stop`，下一次请求会自动启动）。
+  - 未启用控制台时，也可以用上表的 `studio.proxy` 或环境变量 `AI_STUDIO_PROXY`，它们优先于管理页里保存的代理。改了要重启本地服务才生效（`npm run studio:stop`，下一次请求会自动启动）。启用控制台后请直接使用「保存并应用」。
   - 都没设置时，后端自动使用 `HTTPS_PROXY` 环境变量或系统代理（Windows 的「代理」设置）。
-  - **Magpie 里给 `ai-studio` 设置的供应商代理不会传给本地后端**，请用上面两种方式之一设置。
+  - Magpie 的供应商代理不会自动同步到已经运行的后端。宿主可能在创建子进程时注入代理环境；启用控制台后会隔离这些隐式覆盖，后端以 `.env` 为准。
   - 额度卡片的「代理出口」一行会显示后端当前实际使用的代理、它来自哪里，以及新设置是否还要重启才生效；登录 Google 时的说明、登录失败的提示和 `npm run studio:status` 也会显示。
   - 监听地址、API Key、管理员账号等由插件管理，在管理页修改不会生效。
 - **Gemini Web**：后端不读取 `HTTP_PROXY`，请打开本地管理面板 `http://127.0.0.1:8083/admin` 在代理池中添加（登录口令为数据目录 `secrets.json` 中的 `adminToken`）。
