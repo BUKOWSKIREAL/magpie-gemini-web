@@ -242,13 +242,16 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       saveStudioProxy(dataDir, '');
       p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
       assert.deepEqual([p.source, p.pending], ['system', null]);
-      // Unless an older plugin started it, whose launch record doesn't say proxyEnv: then it is the
-      // proxy Magpie's plugin host gave it
+      // Unless an older plugin started it, whose launch record doesn't say proxyEnv: then it may be
+      // one from its environment (Magpie's, a shell's) or the system's, and only that is said
       fs.writeFileSync(path.join(dataDir, 'backend.pid'), '4242\n');
       fs.writeFileSync(path.join(dataDir, 'backend.launch.json'), JSON.stringify({ pid: 4242, proxy: null }));
       p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
-      assert.deepEqual([p.source, p.pending], ['inherited', null]);
-      assert.match(proxyLine(p, local), /^http:\/\/127\.0\.0\.1:9393（旧版插件启动服务时带入的 Magpie 代理），Magpie 退出后它可能失效。重启本地服务（.+ stop .+）后按管理页设置生效$/);
+      assert.deepEqual([p.source, p.pending], ['legacy', null]);
+      const line = proxyLine(p, local);
+      assert.match(line, /^http:\/\/127\.0\.0\.1:9393（旧版插件启动的服务自动检测到的，可能来自启动时的环境变量或系统代理设置）。/);
+      assert.match(line, /重启本地服务（.+ stop .+）后就不再使用它，改按管理页设置；如果来自系统代理设置，重启后仍会使用$/);
+      assert.doesNotMatch(line, /Magpie 代理/, 'nothing kept says the proxy is Magpie\'s');
       fs.writeFileSync(path.join(dataDir, 'backend.launch.json'), JSON.stringify({ pid: 4242, proxy: null, proxyEnv: 'none' }));
       p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
       assert.equal(p.source, 'system');

@@ -90,7 +90,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - **AI Studio**：推荐在本地管理页设置。打开额度卡片「管理页」一行里的地址（默认 `http://127.0.0.1:2048`），用户名 `magpie`，密码是数据目录 `config.json` 里的 `adminPassword`；保存代理后在管理页重启服务即可生效，之后插件重启后端也不会覆盖它。
   - 也可以用上表的 `studio.proxy` 或环境变量 `AI_STUDIO_PROXY`，它们优先于管理页里保存的代理。改了要重启本地服务才生效（`npm run studio:stop`，下一次请求会自动启动）。
   - 都没设置时，后端直连；Windows 上会使用系统代理（Windows 的「代理」设置）。
-  - **后端不使用 Magpie 的代理（包括给 `ai-studio` 设置的供应商代理），也不读取 `HTTPS_PROXY` 等环境变量**：它在 Magpie 退出后仍会运行，借用 Magpie 的代理到时可能已经失效。请用上面两种方式之一设置。0.5.3 及更早版本启动的后端可能还在用 Magpie 的代理，「代理出口」一行会标出来，重启本地服务即可。
+  - **后端不使用 Magpie 的代理（包括给 `ai-studio` 设置的供应商代理），也不读取 `HTTPS_PROXY` 等环境变量**：它在 Magpie 退出后仍会运行，借用 Magpie 的代理到时可能已经失效。请用上面两种方式之一设置。加入这项修复之前的插件版本启动的后端，可能还在用启动时环境变量里的代理（比如 Magpie 的）；「代理出口」一行会标出来，并说明重启后会怎样。
   - 额度卡片的「代理出口」一行会显示后端当前实际使用的代理、它来自哪里，以及新设置是否还要重启才生效；登录 Google 时的说明、登录失败的提示和 `npm run studio:status` 也会显示。
   - 监听地址、API Key、管理员账号等由插件管理，在管理页修改不会生效。
 - **Gemini Web**：后端不读取 `HTTP_PROXY`，请打开本地管理面板 `http://127.0.0.1:8083/admin` 在代理池中添加（登录口令为数据目录 `secrets.json` 中的 `adminToken`）。
