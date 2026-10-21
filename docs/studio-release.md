@@ -46,4 +46,4 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 发布时先审查构建记录和各平台 CI 结果，再将安装包及许可证上传到本仓库 `studio-v0.2.14-magpie.1` release。该 release 可公开下载后，才能发布引用它的插件版本，否则新安装会遇到 404。构建脚本及 CI 不自动发布 release，也不发布 npm 包。
 
-本地试用无需发布：先停止当前托管后端，再执行 `node scripts/studio.mjs install --archive /absolute/path/to/archive` 和 `node scripts/studio.mjs start`。可用 `--data-dir` 指定目录。修改前备份账号和配置；该版本与上游 v0.2.14 使用相同的数据格式；从它退回更旧的版本时，旧版本不一定能读取新版本写入的数据。
+本地试用无需发布：先停止当前托管后端，再执行 `node scripts/studio.mjs install --archive /absolute/path/to/archive` 和 `node scripts/studio.mjs start`。可用 `--data-dir` 指定目录。修改前备份账号和配置；该版本与上游 v0.2.14 使用相同的数据格式。v0.2.14 对数据的改动都是新增的（账号记录的可选字段、新的 `runtime/prompts.db`、`.env` 的新设置），用真实账号验证过：`v0.2.13-magpie.1` 的数据可以直接被它读取，用它运行过之后退回 `v0.2.13-magpie.1` 也能正常使用。
