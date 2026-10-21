@@ -74,6 +74,8 @@ magpie plugin options magpie-gemini-web '{"allowImages":true}'
 magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
 ```
 
+> **Windows PowerShell**: `magpie` runs the `magpie.cmd` wrapper, which loses the double quotes inside the JSON when it passes the arguments on. Call the program behind it directly instead, e.g. `& "<full path to the program>" plugin options magpie-gemini-web '{"allowImages":true}'`. It is in the same folder as `magpie.cmd` (which `where.exe magpie` finds), named something like `magpie-windows-amd64.exe`; Magpie's Settings > Command line shows it too.
+
 | Option | Default | Scope | Description |
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | Shared (override via `studio.allowTools`) | Allow tool calls. When `false`, requests with tools return 400 |
@@ -108,6 +110,11 @@ After upgrading the plugin, run `magpie provider models gemini-web` to refresh a
 <summary><b>🛠️ AI Studio CLI Commands</b> (service status, re-login, offline install)</summary>
 
 <br>
+
+**When the local service starts and stops:**
+- It starts in the background when the plugin loads (when Magpie opens, for example); after that, a request or a usage card refresh starts it again if it isn't running.
+- It is a process of its own: **quitting Magpie doesn't stop it**, and Magpie picks it up again the next time it opens.
+- To stop it, use `studio:stop` below (or the full command the card or an error gives). A stop lasts until the next request, which starts it again.
 
 When a plugin error asks you to run a command, it includes the full ready-to-copy path. From the plugin directory, you can also run:
 
