@@ -89,8 +89,8 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 **Using a proxy to reach Google:**
 - **AI Studio:** Preferably set it in the local admin page. Open the address on the usage card's "管理页" (admin page) line (default `http://127.0.0.1:2048`) and sign in as `magpie` with `adminPassword` from `config.json` in the data directory. Save the proxy, then restart the service from the admin page. The plugin keeps the saved value when it restarts the backend.
   - Alternatively, `studio.proxy` or `AI_STUDIO_PROXY` take precedence over the saved proxy. A change applies after the local service restarts (`npm run studio:stop`; the next request starts it again).
-  - With neither set, the backend falls back to the `HTTPS_PROXY` environment variable or the system proxy (Windows proxy settings).
-  - **The provider proxy set for `ai-studio` in Magpie is not passed to the local backend**; use one of the options above.
+  - With none set, the backend goes out directly, or on Windows through the system proxy (Windows proxy settings).
+  - **The backend uses neither Magpie's proxies (including the provider proxy set for `ai-studio`) nor `HTTPS_PROXY` and similar variables**: it keeps running after Magpie quits, when a proxy borrowed from Magpie may be gone. Use one of the options above. A backend started by plugin 0.5.3 or earlier may still be using Magpie's proxy; the "代理出口" line says so, and a restart fixes it.
   - The usage card's "代理出口" (proxy) line, the Google sign-in instructions and failure messages, and `npm run studio:status` show the proxy the backend actually uses, where it comes from, and whether a new setting still needs a restart.
   - The listen address, API key and admin credentials are managed by the plugin; changing them in the admin page has no effect.
 - **Gemini Web:** The backend ignores `HTTP_PROXY`. Add your proxy to the proxy pool in the local admin panel at `http://127.0.0.1:8083/admin` (password is `adminToken` in `secrets.json` inside the data directory).
