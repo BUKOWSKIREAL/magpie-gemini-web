@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Studio 服务控制台</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="console.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">AI STUDIO / 本机控制台</div>
+      <h1>让服务状态一目了然。</h1>
+      <p>查看出口，管理服务，应用代理。仅控制 Magpie 托管的本机实例。</p>
+    </header>
+    <section aria-labelledby="state-heading">
+      <div class="section-head"><h2 id="state-heading">服务状态</h2><span id="connection" class="tag">正在连接</span></div>
+      <div class="stats">
+        <div><span class="label">后端进程</span><strong id="backend">读取中</strong></div>
+        <div><span class="label">生成服务</span><strong id="generation">读取中</strong></div>
+        <div><span class="label">账号</span><strong id="accounts">—</strong></div>
+      </div>
+      <p id="pause-state" class="hint"></p>
+      <div class="buttons"><button type="button" id="start" data-action="start" disabled>启动服务</button><button type="button" data-action="restart" class="secondary" disabled>重启服务</button><button type="button" data-action="stop" class="secondary" disabled>停止服务</button><button type="button" id="admin" data-action="admin" class="secondary" disabled>打开原管理页</button></div>
+      <p class="hint">停止会中断未完成的请求，并暂停自动拉起；再次点击“启动服务”才恢复。原管理页用于登录账号和高级设置。</p>
+    </section>
+    <section aria-labelledby="proxy-heading">
+      <div class="section-head"><h2 id="proxy-heading">代理</h2><span id="applied" class="tag">正在核对</span></div>
+      <dl><dt>当前实际出口</dt><dd id="active-proxy">读取中</dd><dt>配置来源</dt><dd id="proxy-source">读取中</dd><dt>已保存的配置</dt><dd id="saved-proxy">读取中</dd></dl>
+      <label for="proxy-url">代理地址</label>
+      <input id="proxy-url" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off" spellcheck="false" disabled>
+      <p id="proxy-hint" class="hint">支持 HTTP / HTTPS / SOCKS5。留空表示自动检测系统代理，不等于强制直连。</p>
+      <div class="buttons"><button type="button" id="apply" disabled>保存并应用</button><button type="button" id="save" class="secondary" disabled>仅保存</button></div>
+      <aside>唯一保存位置是后端 .env，与原管理页共用。仅保存不会重启；“保存并应用”会停止旧进程、保存配置并启动新进程。</aside>
+    </section>
+    <section class="activity" aria-labelledby="activity-heading">
+      <div class="section-head"><h2 id="activity-heading">操作结果</h2><button type="button" id="refresh" class="secondary">刷新状态</button></div>
+      <p id="message" role="status" aria-live="polite">正在读取本机服务状态。</p>
+      <p class="hint" id="application-state">状态每 3 秒刷新。关闭此页面不会停止后端。</p>
+    </section>
+  </main>
+</body>
+</html>

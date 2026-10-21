@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Studio 控制台入口</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="_magpie/bridge.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="entry">
+    <div class="eyebrow">AI STUDIO / 本地服务</div>
+    <h1>服务控制台</h1>
+    <p>在独立浏览器中查看真实状态，一键启动、停止服务，修改代理并应用。无需复制命令。</p>
+    <button id="open" type="button" disabled>打开服务控制台</button>
+    <p id="message" role="status" aria-live="polite">正在连接 Magpie。</p>
+    <aside>控制台与原管理页共用后端保存的代理，不再在这里维护第二套覆盖配置。停止服务后，Magpie 不会因刷新状态或发起请求而自动把它启动。</aside>
+    <p class="hint">此按钮只负责打开窗口；日常操作在控制台内完成，不会反复重新加载 Magpie 插件。打开窗口时，Magpie 会重新加载一次插件宿主。</p>
+  </main>
+</body>
+</html>
