@@ -74,7 +74,9 @@ magpie plugin options magpie-gemini-web '{"allowImages":true}'
 magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
 ```
 
-> **Windows PowerShell**: `magpie` runs the `magpie.cmd` wrapper, which loses the double quotes inside the JSON when it passes the arguments on. Call the program behind it directly instead, e.g. `& "<full path to the program>" plugin options magpie-gemini-web '{"allowImages":true}'`. It is in the same folder as `magpie.cmd` (which `where.exe magpie` finds), named something like `magpie-windows-amd64.exe`; Magpie's Settings > Command line shows it too.
+> **Windows PowerShell**: `magpie` runs the `magpie.cmd` wrapper, which loses the double quotes inside the JSON when it passes the arguments on. Call the program behind it directly instead: it is in the same folder as `magpie.cmd` (which `where.exe magpie` finds), named something like `magpie-windows-amd64.exe`, and Magpie's Settings > Command line shows it too. How to write it depends on the PowerShell version (`$PSVersionTable.PSVersion` shows it):
+> - PowerShell 7.3 or later, default settings: `& "<full path to the program>" plugin options magpie-gemini-web '{"allowImages":true}'`
+> - Windows PowerShell 5.1 (built into Windows): it doesn't escape the double quotes in an argument for you, so write them as `\"`: `& "<full path to the program>" plugin options magpie-gemini-web '{\"allowImages\":true}'`
 
 | Option | Default | Scope | Description |
 | :--- | :--- | :--- | :--- |

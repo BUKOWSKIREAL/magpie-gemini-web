@@ -74,7 +74,9 @@ magpie plugin options magpie-gemini-web '{"allowImages":true}'
 magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
 ```
 
-> **Windows PowerShell**：`magpie` 实际运行的是 `magpie.cmd` 包装器，它转发参数时会弄丢 JSON 里的双引号。请直接调用它背后的可执行文件，例如 `& "<可执行文件的完整路径>" plugin options magpie-gemini-web '{"allowImages":true}'`。这个文件和 `magpie.cmd` 在同一个文件夹（`where.exe magpie` 可以找到），文件名可能是 `magpie-windows-amd64.exe` 之类；Magpie 的「设置 → 命令行」里也会显示。
+> **Windows PowerShell**：`magpie` 实际运行的是 `magpie.cmd` 包装器，它转发参数时会弄丢 JSON 里的双引号。请直接调用它背后的可执行文件：这个文件和 `magpie.cmd` 在同一个文件夹（`where.exe magpie` 可以找到），文件名可能是 `magpie-windows-amd64.exe` 之类，Magpie 的「设置 → 命令行」里也会显示。写法取决于 PowerShell 版本（用 `$PSVersionTable.PSVersion` 查看）：
+> - PowerShell 7.3 及以上，默认设置：`& "<可执行文件的完整路径>" plugin options magpie-gemini-web '{"allowImages":true}'`
+> - Windows PowerShell 5.1（系统自带）：它不会替你转义参数里的双引号，要写成 `\"`：`& "<可执行文件的完整路径>" plugin options magpie-gemini-web '{\"allowImages\":true}'`
 
 | 选项 | 默认值 | 适用范围 | 说明 |
 | :--- | :--- | :--- | :--- |
