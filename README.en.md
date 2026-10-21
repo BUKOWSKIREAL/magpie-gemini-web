@@ -17,7 +17,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Thinking levels** | `minimal` / `low` / `medium` / `high` (`minimal` is fastest & cheapest) | `low` (base) / `high` (`-thinking` extended thinking) |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.2.13`) | gemini-web2api-go (`4.22.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (`v0.2.14`) | gemini-web2api-go (`4.22.0-magpie.1` optimized build) |
 
 ---
 
@@ -29,7 +29,7 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 1. Sign in to **Google AI Studio** in Magpie and choose **「用 Google 账号登录（推荐）」** (Sign in with a Google account).
 2. Sign in to your Google account in the separate login window that opens (your regular browser is unaffected), then close the window.
-   > On first run, the login browser Camoufox (~300 MB) is downloaded first, so the window may take a few minutes to appear. Complete sign-in within 15 minutes.
+   > On first run (and the first sign-in after a backend upgrade), the login browser Camoufox (~300 MB) is downloaded first, so the window may take a few minutes to appear. Complete sign-in within 15 minutes.
 3. **Managing accounts:** Choose "Sign in with a Google account" again at any time to **add a new account**, create a card for an existing local account, or **re-authenticate** an expired account.
 
 ### Option 2: Gemini Web (`gemini-web`)
@@ -135,8 +135,8 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Concurrency is capped at 1, but Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- The plugin pins SHA-256-verified `v0.2.13-magpie.1`, based on upstream `v0.2.13`. Upgrade the plugin to update the backend. Official managed releases at or below that upstream version are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
-- **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page directs users to upgrade through the Magpie plugin; the update endpoint returns HTTP 403 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for the patch and reproducible build process.
+- The plugin pins SHA-256-verified `v0.2.14-magpie.1`, based on upstream `v0.2.14`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
+- **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page says updates are managed by magpie-gemini-web; the update endpoint returns HTTP 409 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for how the managed build is made and reproduced.
 - Managed Unix installs still attempt to set `package/` to `0555` as additional file protection. Permission failures do not block service, and disabling online updates does not depend on permissions. To reset by manually deleting the data directory, stop the service first, then run `chmod -R u+w "<data-dir>/package"` before deleting it; replace `<data-dir>` with the actual path.
 - If a newer or custom version is installed, the plugin reports a conflict with `stop`, `install`, and `start` commands carrying the correct `--data-dir`. Stop can recover a changed listener PID and verifies its executable path before signaling it. If HTTP is down but the process is still alive, the plugin refuses to reinstall or launch a second process.
 - When stopped, a replaced executable is restored from the verified pinned archive; failed verification never launches the replacement. Existing account and runtime data files are kept, but **an older backend may not read data migrated by a newer version**. Before manually downgrading, stop the service and back up the entire data directory, including `auth/` and `runtime/requests.db`. If data migration is known to have occurred, update the plugin to match the newer backend.

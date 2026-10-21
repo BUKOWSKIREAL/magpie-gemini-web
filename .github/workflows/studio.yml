@@ -6,7 +6,6 @@ on:
     paths:
       - 'lib/studio*.mjs'
       - 'lib/studio-release.json'
-      - 'patches/studio-managed.patch'
       - 'scripts/studio*'
       - 'test/studio*.mjs'
       - '.github/workflows/studio.yml'
