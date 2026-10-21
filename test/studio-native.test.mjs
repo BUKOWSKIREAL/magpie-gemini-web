@@ -504,10 +504,11 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'install-manifest.json'))).binarySha256, manifest.binarySha256);
   });
 
-  it('the official upstream base needs the managed build, while the exact managed version is current', async () => {
+  it('the official upstream base and older managed builds need this managed build, while the exact managed version is current', async () => {
     const { dataDir } = installedStandIn('managed-version-upgrade');
     const local = localStudio({ dataDir });
-    for (const version of ['v0.2.12', 'v0.2.13']) {
+    // An earlier plugin's managed build is replaced like an official one, not reported as custom
+    for (const version of ['v0.2.12', 'v0.2.13', 'v0.2.14', 'v0.2.13-magpie.1', 'v0.2.13-magpie.9', 'v0.1.99-magpie.3']) {
       const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
       assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
     }
@@ -521,7 +522,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    for (const version of ['v0.2.14', 'v1.0.0', 'v0.2.13-custom', 'unknown']) {
+    for (const version of ['v0.2.15', 'v1.0.0', 'v0.2.14-magpie.2', 'v0.2.15-magpie.1', 'v0.2.13-custom', 'unknown']) {
       const fetchFn = async (url, init) => {
         if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
@@ -554,7 +555,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(manifest, JSON.stringify(old));
     const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
     const child = spawn(bin, ['-e', `process.on('message', () => { ${STAND_IN_SERVICE} }); process.send('ready');`], {
-      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.14', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
+      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.15', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc']
     });
     const exited = new Promise(resolve => child.on('exit', resolve));

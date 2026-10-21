@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Clean upstream commit + reviewed patch -> managed archives, never a developer's dirty tree.
+// Clean upstream commit -> managed archives, never a developer's dirty tree. Upstream's own
+// distributor settings make the build managed: it reports this version, and its online updater
+// neither checks GitHub nor installs, saying the plugin manages updates.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,9 +36,9 @@ const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).d
 const go = (argv, extra = {}) => execFileSync('go', argv, { cwd: source, env: { ...env, ...extra }, stdio: 'inherit' });
 const npm = argv => execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', argv,
   { cwd: path.join(source, 'web'), stdio: 'inherit', shell: process.platform === 'win32' });
-const patch = path.join(root, 'patches/studio-managed.patch');
+const MANAGED_BY = 'magpie-gemini-web';
 const flags = ['-mod=readonly', '-trimpath', '-buildvcs=false',
-  `-ldflags=-s -w -X github.com/Mag1cFall/AIStudio2API/internal/app.managedVersion=v${release.version}`];
+  `-ldflags=-s -w -X github.com/Mag1cFall/AIStudio2API/internal/app.version=v${release.version} -X github.com/Mag1cFall/AIStudio2API/internal/app.managedBy=${MANAGED_BY}`];
 
 try {
   let upstream = args.find(arg => arg.startsWith('--source='))?.slice(9);
@@ -50,8 +52,6 @@ try {
   }
   execFileSync('git', ['-C', upstream, 'archive', '--format=tar', `--output=${path.join(scratch, 'upstream.tar')}`, release.upstream.commit]);
   execFileSync('tar', ['-xf', 'upstream.tar', '-C', 'source'], { cwd: scratch });
-  execFileSync('git', ['apply', '--check', patch], { cwd: source, stdio: 'inherit' });
-  execFileSync('git', ['apply', patch], { cwd: source, stdio: 'inherit' });
   npm(['ci', '--no-audit', '--no-fund']);
   npm(['run', 'lint']);
   npm(['run', 'build']);
@@ -74,7 +74,7 @@ try {
   fs.copyFileSync(path.join(source, 'LICENSE'), path.join(output, 'LICENSE-AISTUDIO'));
   fs.writeFileSync(path.join(output, target ? `build-${target}.json` : 'build.json'), JSON.stringify({
     version: release.version, upstream: release.upstream, goVersion: release.goVersion,
-    nodeVersion: process.version, patchSha256: hash(patch), flags, binaries
+    nodeVersion: process.version, managedBy: MANAGED_BY, flags, binaries
   }, null, 2) + '\n');
   fs.writeFileSync(path.join(output, target ? `SHA256SUMS-${target}.txt` : 'SHA256SUMS.txt'),
     Object.values(binaries).map(pin => `${pin.sha256}  ${pin.asset}\n`).join(''));
