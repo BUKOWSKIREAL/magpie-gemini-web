@@ -32,6 +32,7 @@ import {
   studioCommand,
   studioProcessPids,
   studioListenerPids} from '../lib/studio-native.mjs';
+import { proxyLine } from '../lib/studio.mjs';
 
 const offlineFetch = async () => { throw Object.assign(new Error('offline fixture'), {code:'ECONNREFUSED'}); };
 
@@ -241,6 +242,17 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       saveStudioProxy(dataDir, '');
       p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
       assert.deepEqual([p.source, p.pending], ['system', null]);
+      // Unless an older plugin started it, whose launch record doesn't say proxyEnv: then it is the
+      // proxy Magpie's plugin host gave it
+      fs.writeFileSync(path.join(dataDir, 'backend.pid'), '4242\n');
+      fs.writeFileSync(path.join(dataDir, 'backend.launch.json'), JSON.stringify({ pid: 4242, proxy: null }));
+      p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
+      assert.deepEqual([p.source, p.pending], ['inherited', null]);
+      assert.match(proxyLine(p, local), /^http:\/\/127\.0\.0\.1:9393（旧版插件启动服务时带入的 Magpie 代理），Magpie 退出后它可能失效。重启本地服务（.+ stop .+）后按管理页设置生效$/);
+      fs.writeFileSync(path.join(dataDir, 'backend.launch.json'), JSON.stringify({ pid: 4242, proxy: null, proxyEnv: 'none' }));
+      p = await studioProxy(local, { standalone: true, fetchFn: withConfig({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) });
+      assert.equal(p.source, 'system');
+      fs.rmSync(path.join(dataDir, 'backend.pid'));
       p = await studioProxy(local, { fetchFn: withConfig({ proxy: '', active_proxy: '' }) });
       assert.deepEqual([p.active, p.source], ['', 'direct']);
       // Cleared in the admin page while the generation service still goes out through the old one,
@@ -1493,5 +1505,35 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal(fs.readFileSync(path.join(dataDir, 'install-manifest.json'), 'utf8'), previousManifest);
     assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
     assert.equal(fs.readdirSync(dataDir).some(n => n.startsWith('.package.backup.')), false);
+  });
+
+  it('31. the service is started with no proxy of its starter\'s, and empty ones the plugin host keeps', async t => {
+    const { dataDir } = installedStandIn('proxy-env-test');
+    // What Magpie's plugin host or a shell may have
+    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', AI_STUDIO_PROXY: undefined })) {
+      const saved = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+      t.after(() => { if (saved === undefined) delete process.env[k]; else process.env[k] = saved; });
+    }
+    let env;
+    const fetchFn = async url => {
+      if (!env) throw Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
+      return adminFetch(() => runningStatus({ total: 0 }))(url);
+    };
+    const spawnFn = (_file, _args, options) => { env = options.env; return { pid: 9999999, on: () => {}, unref: () => {} }; };
+
+    await ensureStudio({ dataDir, fetchFn, spawnFn });
+    const proxies = Object.entries(env).filter(([k]) => /^(?:https?|all)_proxy$/i.test(k));
+    assert.deepEqual(Object.fromEntries(proxies), { HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '' });
+    assert.equal('PROXY' in env, false, 'the saved proxy is left to .env');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'backend.launch.json'), 'utf8')).proxyEnv, 'none');
+
+    // studio.proxy is still given as PROXY
+    env = undefined;
+    fs.rmSync(path.join(dataDir, 'backend.pid'), { force: true });
+    await ensureStudio({ dataDir, fetchFn, spawnFn, proxy: 'http://127.0.0.1:7890' });
+    assert.equal(env.PROXY, 'http://127.0.0.1:7890');
+    assert.equal(env.HTTPS_PROXY, '');
   });
 });

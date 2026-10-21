@@ -662,7 +662,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const failing = await oneClick.authorize();
       assert.match(failing.instructions, /Camoufox/);
       assert.match(failing.instructions, /每个账号一张卡片/);
-      assert.match(failing.instructions, /\n本地服务的代理出口：http:\/\/127\.0\.0\.1:9393（自动检测：HTTPS_PROXY 环境变量或系统代理）$/);
+      assert.match(failing.instructions, /\n本地服务的代理出口：http:\/\/127\.0\.0\.1:9393（自动检测：系统代理设置）$/);
       const failed = await failing.callback();
       assert.equal(failed.type, 'failed');
       assert.match(failed.error, /login window closed[^]*本地服务的代理出口：http:\/\/127\.0\.0\.1:9393/);
