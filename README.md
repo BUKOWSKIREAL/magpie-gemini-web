@@ -74,6 +74,8 @@ magpie plugin options magpie-gemini-web '{"allowImages":true}'
 magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
 ```
 
+> **Windows PowerShell**：`magpie` 实际运行的是 `magpie.cmd` 包装器，它转发参数时会弄丢 JSON 里的双引号。请直接调用它背后的可执行文件，例如 `& "<可执行文件的完整路径>" plugin options magpie-gemini-web '{"allowImages":true}'`。这个文件和 `magpie.cmd` 在同一个文件夹（`where.exe magpie` 可以找到），文件名可能是 `magpie-windows-amd64.exe` 之类；Magpie 的「设置 → 命令行」里也会显示。
+
 | 选项 | 默认值 | 适用范围 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | 共用（可用 `studio.allowTools` 单独覆盖） | 允许工具调用。设为 `false` 时带工具的请求返回 400 |
@@ -108,6 +110,11 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 <summary><b>🛠️ AI Studio 命令行工具</b>（查看状态、重新登录、离线安装）</summary>
 
 <br>
+
+**本地服务什么时候启动、停止：**
+- 插件加载时（例如打开 Magpie）会在后台启动本地服务；之后发请求、刷新额度卡片时，服务没在运行也会自动启动。
+- 本地服务是独立进程，**退出 Magpie 不会停止它**，下次打开 Magpie 直接接着用。
+- 停止服务用下表的 `studio:stop`（或卡片、报错里给出的完整命令）。停止只是一次性的：下一次请求会再次启动它。
 
 当插件报错提示运行命令时，直接复制报错中的完整命令执行即可。在插件目录下也可使用：
 
