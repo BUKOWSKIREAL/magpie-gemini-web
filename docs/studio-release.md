@@ -1,6 +1,6 @@
 # AI Studio 托管后端构建
 
-插件使用 `0.2.14-magpie.1`，基于 AIStudio2API `v0.2.14` 的固定 commit。上游版本、commit、Go 工具链、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。MIT 许可见 `LICENSE-AISTUDIO`。
+插件使用 `0.2.14-magpie.1`，基于 AIStudio2API `v0.2.14` 的固定 commit。上游版本、commit、Go 工具链、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），插件靠它判断登录时要不要重新下载 Camoufox；更新上游 commit 时要一起改，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
 
 ## 在线更新策略
 

@@ -29,7 +29,7 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 1. Sign in to **Google AI Studio** in Magpie and choose **「用 Google 账号登录（推荐）」** (Sign in with a Google account).
 2. Sign in to your Google account in the separate login window that opens (your regular browser is unaffected), then close the window.
-   > On first run, the login browser Camoufox (~300 MB) is downloaded first, so the window may take a few minutes to appear. Complete sign-in within 15 minutes.
+   > On first run, the local service (~25 MB) and the login browser Camoufox (~300 MB) are downloaded first, so the window may take a few minutes to appear. While they download, Magpie opens a progress page in your browser. Magpie waits at most 10 minutes, downloads included, so finish signing in promptly; if GitHub is unreachable, set `studio.proxy` first (see plugin options and proxy settings below).
 3. **Managing accounts:** Choose "Sign in with a Google account" again at any time to **add a new account**, create a card for an existing local account, or **re-authenticate** an expired account.
 
 ### Option 2: Gemini Web (`gemini-web`)

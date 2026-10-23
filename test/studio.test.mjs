@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
-import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
+import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward } from '../lib/backend.mjs';
-import { serviceEnv, saveStudioProxy, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION } from '../lib/studio-native.mjs';
+import { serviceEnv, saveStudioProxy, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
   let mockServer;
@@ -648,6 +648,15 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
   });
 
   const jsonHeaders = { 'Content-Type': 'application/json' };
+  // fakeCamoufox puts where the service would have downloaded Camoufox an executable of its name
+  // (and the version the service pins in its application.ini)
+  const fakeCamoufox = () => {
+    const exe = { win32: 'camoufox.exe', linux: 'camoufox-bin', darwin: path.join('Camoufox.app', 'Contents', 'MacOS', 'camoufox') }[process.platform];
+    const file = path.join(tempStudioDataDir, 'runtime', 'camoufox', exe);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '');
+    fs.writeFileSync(path.join(path.dirname(file), 'application.ini'), `[App]\nVersion=${CAMOUFOX_VERSION}\n`);
+  };
 
   it('9c. one-click sign-in reports a failed login, and returns once the account is saved', async () => {
     const setup = standInSetup('managed-key');
@@ -659,14 +668,23 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       serverResponses['/api/accounts'] = { status: 500, headers: jsonHeaders, body: JSON.stringify({ error: { message: 'login window closed' } }) };
       // Before an account is signed in, only the sign-in can show the proxy the login window goes through
       serverResponses['/api/config'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) };
+      // Camoufox not downloaded yet: the sign-in opens a page that shows how that goes
       const failing = await oneClick.authorize();
-      assert.match(failing.instructions, /Camoufox/);
+      assert.match(failing.url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}$/);
+      assert.match(failing.instructions, /^下载和登录的进度显示在刚打开的浏览器页面里[^\n]*\n第一次登录要先下载登录用的浏览器 Camoufox/, 'a running service needs no setup line');
       assert.match(failing.instructions, /每个账号一张卡片/);
       assert.match(failing.instructions, /\n本地服务的代理出口：http:\/\/127\.0\.0\.1:9393（自动检测：系统代理设置）$/);
+      assert.match(await (await fetch(failing.url)).text(), /<title>Google AI Studio 登录进度<\/title>/);
       const failed = await failing.callback();
       assert.equal(failed.type, 'failed');
       assert.match(failed.error, /login window closed[^]*本地服务的代理出口：http:\/\/127\.0\.0\.1:9393/);
+      const shown = await (await fetch(`${failing.url}/status`)).json();
+      assert.deepEqual(shown.steps.map(s => s.state), ['done', 'failed', 'pending'], 'it failed while Camoufox was missing');
+      assert.equal(shown.error, failed.error);
       delete serverResponses['/api/config'];
+
+      // With Camoufox there, a running service has nothing to wait for: no page
+      fakeCamoufox();
 
       // Saved while generation is still launching: the sign-in doesn't wait for it
       let launching = true;
@@ -682,6 +700,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         body: JSON.stringify({ account: { id: 'user@example.com', label: 'user@example.com', enabled: true, state: 'ready' } })
       };
       const pending = await oneClick.authorize();
+      assert.equal(pending.url, '');
+      assert.match(pending.instructions, /^第一次登录要先下载登录用的浏览器 Camoufox/);
       const result = await Promise.race([pending.callback(), new Promise(r => setTimeout(() => r('waited'), 2000))]);
       assert.notEqual(result, 'waited', 'the sign-in must not wait for generation to launch');
       assert.equal(result.type, 'success');
@@ -695,6 +715,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     } finally {
       delete serverResponses['/api/accounts'];
       delete serverResponses['/api/status'];
+      delete serverResponses['/api/config'];
+      fs.rmSync(path.join(tempStudioDataDir, 'runtime'), { recursive: true, force: true });
       setup.remove();
     }
   });
@@ -716,6 +738,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     // Nothing set up: no question, and asking installs nothing (authorize sets it up)
     assert.equal(await google.ask({}), null);
     assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'nothing may be installed');
+
+    // Nor does the sign-in before its instructions show: the download waits in the callback
+    const first = await google.authorize({});
+    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*约 25 MB[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
+    assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'authorize may not install');
+    const shown = await (await fetch(`${first.url}/status`)).json();
+    assert.deepEqual(shown.steps.map(s => [s.state, s.detail ?? '']), [['active', '正在检查'], ['pending', ''], ['pending', '']]);
 
     const setup = standInSetup('managed-key');
     try {
@@ -743,6 +772,51 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       delete serverResponses['/api/accounts'];
       setup.remove();
     }
+  });
+
+  it('9f. the account question doesn\'t wait out a long start, which the new account\'s page shows', async () => {
+    const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+    const setup = standInSetup('managed-key');
+    const configPath = path.join(tempStudioDataDir, 'config.json');
+    const lockPath = path.join(tempStudioDataDir, '.setup.lock');
+    try {
+      // Nothing answers on its port, and another start (this process, alive) holds the setup lock
+      const closed = http.createServer();
+      await new Promise(r => closed.listen(0, '127.0.0.1', r));
+      const { port } = closed.address();
+      await new Promise(r => closed.close(r));
+      fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), port }) + '\n', { mode: 0o600 });
+      fs.writeFileSync(lockPath, `${process.pid}\n${Date.now()}\nanother\n`);
+
+      const asked = Date.now();
+      assert.equal(await accountQuestion({}, 200), null, 'no list of accounts: straight to a new one');
+      assert.ok(Date.now() - asked < 5000);
+
+      // whose sign-in shows the start still under way on its page
+      const signIn = await plugin.auth.methods[0].authorize({});
+      assert.match(signIn.instructions, /^本地 AI Studio 服务还没启动/);
+      const shown = await (await fetch(`${signIn.url}/status`)).json();
+      assert.deepEqual(shown.steps.map(s => s.state), ['active', 'pending', 'pending']);
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+      // The start that waited goes on (and fails: the stand-in exits at once) before the next test
+      await ensureStudio({ managementOnly: true }).catch(() => {});
+      for (const name of ['backend.log', 'backend.pid', 'backend.launch.json']) fs.rmSync(path.join(tempStudioDataDir, name), { force: true });
+      setup.remove();
+    }
+  });
+
+  it('9g. a progress page keeps how its sign-in ended, whatever ends after', async () => {
+    const late = await signInProgress(false);
+    const status = async () => (await fetch(`${late.url}/status`)).json();
+    late.end('Google 登录没有完成：超过了 Magpie 等登录的 10 分钟。');
+    // The setup it gave up on finishes, and so does the login after it
+    late.login();
+    late.end();
+    const shown = await status();
+    assert.equal(shown.done, false);
+    assert.match(shown.error, /10 分钟/);
+    assert.deepEqual(shown.steps.map(s => s.state), ['failed', 'pending', 'pending']);
   });
 
   it('9e. choosing an account that must sign in again opens the login window, and reports a login that failed', async () => {
