@@ -52,6 +52,13 @@ try {
   }
   execFileSync('git', ['-C', upstream, 'archive', '--format=tar', `--output=${path.join(scratch, 'upstream.tar')}`, release.upstream.commit]);
   execFileSync('tar', ['-xf', 'upstream.tar', '-C', 'source'], { cwd: scratch });
+  // The plugin tells whether a sign-in will download Camoufox by the version this upstream takes.
+  const camoufox = fs.readFileSync(path.join(source, 'internal/camoufoxnative/download.go'), 'utf8')
+    .match(/const camoufoxRelease = "([^"]+)"/)?.[1];
+  if (!camoufox) throw new Error('Could not find camoufoxRelease in upstream internal/camoufoxnative/download.go');
+  if (camoufox !== release.upstream.camoufox) {
+    throw new Error(`Upstream takes Camoufox ${camoufox}: set upstream.camoufox in lib/studio-release.json to it (now ${release.upstream.camoufox})`);
+  }
   npm(['ci', '--no-audit', '--no-fund']);
   npm(['run', 'lint']);
   npm(['run', 'build']);

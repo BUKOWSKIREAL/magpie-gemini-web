@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import {
   studioDataDir,
   localStudio,
@@ -31,8 +31,13 @@ import {
   pickStudioPort,
   studioCommand,
   studioProcessPids,
-  studioListenerPids} from '../lib/studio-native.mjs';
+  studioListenerPids,
+  setupStep,
+  downloadProgress,
+  camoufoxState,
+  CAMOUFOX_VERSION} from '../lib/studio-native.mjs';
 import { proxyLine } from '../lib/studio.mjs';
+import { openProgressPage } from '../lib/studio-page.mjs';
 
 const offlineFetch = async () => { throw Object.assign(new Error('offline fixture'), {code:'ECONNREFUSED'}); };
 
@@ -1222,12 +1227,16 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       if (url.includes('/api/status')) return Response.json(runningStatus({ total: 1, ready: 1, busy: 0, cooldown: 0, auth_required: 0 }));
       return Response.json({ object: 'list', data: [] });
     };
-    const spawnFn = () => { spawned++; return { pid: 9999999, on: () => {}, unref: () => {} }; };
+    let stepAtSpawn;
+    const spawnFn = () => { spawned++; stepAtSpawn = setupStep(dataDir); return { pid: 9999999, on: () => {}, unref: () => {} }; };
 
     const local = await ensureStudio({ dataDir, fetchFn, spawnFn, startTimeoutMs: 5000 });
     assert.ok(local);
     assert.equal(spawned, 1);
     assert.ok(loginsAfterSpawn > 3, 'the 503 answers were waited out');
+    // A sign-in's progress page saw it starting, and sees nothing once it is up
+    assert.deepEqual(stepAtSpawn, { step: 'start' });
+    assert.equal(setupStep(dataDir), null);
   });
 
   it('22. RUNNING takes requests with no account ready; accounts that all need to sign in fail fast', async () => {
@@ -1447,6 +1456,33 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /offline fixture/);
   });
 
+  it('30c. a sign-in\'s progress page answers while the archive unpacks', { skip: process.platform === 'win32' || !haveRealArchive }, async () => {
+    const dataDir = path.join(tmpRoot, 'unpack-progress-test');
+    ensureStudioConfig(dataDir, '');
+    fs.copyFileSync(realArchive, path.join(dataDir, pin.asset));
+    // A tar that says when it starts to unpack, and takes a second
+    const realTar = execFileSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
+    const slowBin = path.join(tmpRoot, 'slow-tar-bin');
+    const unpacking = path.join(tmpRoot, 'unpacking');
+    fs.mkdirSync(slowBin, { recursive: true });
+    fs.writeFileSync(path.join(slowBin, 'tar'), `#!/bin/sh\ncase "$1" in -xzf) touch "${unpacking}"; sleep 1;; esac\nexec "${realTar}" "$@"\n`, { mode: 0o755 });
+    const savedPath = process.env.PATH;
+    const page = await openProgressPage(() => setupStep(dataDir));
+    try {
+      process.env.PATH = `${slowBin}${path.delimiter}${savedPath}`;
+      let installed = false;
+      const install = installStudio({ dataDir, fetchFn: offlineFetch }).finally(() => { installed = true; });
+      while (!installed && !fs.existsSync(unpacking)) await new Promise(r => setTimeout(r, 20));
+      const status = await (await fetch(`${page.url}/status`)).json();
+      assert.equal(installed, false, 'the page answered while the archive unpacked');
+      assert.deepEqual(status, { step: 'install' });
+      assert.ok(await install);
+    } finally {
+      process.env.PATH = savedPath;
+      page.close();
+    }
+  });
+
   it('30b. a kept archive installs offline, and older versions\' archives are removed', { skip: process.platform === 'win32' || !haveRealArchive }, async t => {
     const dataDir = path.join(tmpRoot, 'kept-archive-ok-test');
     ensureStudioConfig(dataDir, '');
@@ -1538,5 +1574,83 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     await ensureStudio({ dataDir, fetchFn, spawnFn, proxy: 'http://127.0.0.1:7890' });
     assert.equal(env.PROXY, 'http://127.0.0.1:7890');
     assert.equal(env.HTTPS_PROXY, '');
+  });
+});
+
+describe('Sign-in progress sources', () => {
+  let dir;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-progress-')); });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('reads a curl download from the file so far and the last response\'s Content-Length', () => {
+    const file = path.join(dir, 'archive.zip');
+    const headers = path.join(dir, 'headers.txt');
+    assert.deepEqual(downloadProgress(file, headers), { step: 'download', received: 0, total: 0 });
+    fs.writeFileSync(file, Buffer.alloc(1000));
+    // GitHub's redirect comes first: until the archive's own headers come, its size isn't known
+    fs.writeFileSync(headers, 'HTTP/2 302\r\nlocation: https://objects.example/a\r\ncontent-length: 0\r\n\r\n');
+    assert.deepEqual(downloadProgress(file, headers), { step: 'download', received: 1000, total: 0 });
+    fs.appendFileSync(headers, 'HTTP/2 200\r\nContent-Type: application/octet-stream\r\nContent-Length: 24281003\r\n\r\n');
+    assert.deepEqual(downloadProgress(file, headers), { step: 'download', received: 1000, total: 24281003 });
+  });
+
+  it('says whether Camoufox is there, else how far the service has got downloading it', () => {
+    const data = path.join(dir, 'service');
+    const runtime = path.join(data, 'runtime');
+    assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: false, received: 0, total: 0, unpacking: false });
+
+    fs.mkdirSync(runtime, { recursive: true });
+    const part = path.join(runtime, 'camoufox-152.0.4-beta.29-lin.x86_64.zip.part');
+    fs.writeFileSync(part, Buffer.alloc(3 * 1048576 + 5));
+    assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: false, received: 3 * 1048576 + 5, total: 0, unpacking: false });
+    // The size comes from the service's log, the last download's
+    fs.writeFileSync(path.join(data, 'backend.log'), [
+      JSON.stringify({ level: 'INFO', msg: 'Camoufox 下载已开始', size_mib: 1, resume_mib: 0 }),
+      JSON.stringify({ level: 'INFO', msg: '正在下载 Camoufox', version: '152.0.4-beta.29' }),
+      JSON.stringify({ level: 'INFO', msg: 'Camoufox 下载已开始', size_mib: 300, resume_mib: 0 }),
+      'not json',
+      ''
+    ].join('\n'));
+    assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: false, received: 3 * 1048576 + 5, total: 300 * 1048576, unpacking: false });
+    // which it rounds down to a MiB: the bytes received past it are the size
+    fs.writeFileSync(part, Buffer.alloc(300 * 1048576 + 7));
+    assert.equal(camoufoxState(data, 'linux', {}).total, 300 * 1048576 + 7);
+
+    fs.mkdirSync(path.join(runtime, '.camoufox-stage-123'));
+    assert.equal(camoufoxState(data, 'linux', {}).unpacking, true);
+  });
+
+  it('takes Camoufox as ready only at the version the service pins, as the service does', () => {
+    const data = path.join(dir, 'versions');
+    const folder = path.join(data, 'runtime', 'camoufox');
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'camoufox-bin'), '');
+    const ini = path.join(folder, 'application.ini');
+    // No version to read, or an older one: the service downloads it again
+    assert.equal(camoufoxState(data, 'linux', {}).ready, false, 'no application.ini');
+    fs.writeFileSync(ini, '[App]\nName=Camoufox\n');
+    assert.equal(camoufoxState(data, 'linux', {}).ready, false, 'no Version in it');
+    fs.writeFileSync(ini, '[App]\nVersion=135.0.1-beta.24\n');
+    assert.equal(camoufoxState(data, 'linux', {}).ready, false, 'an older version');
+    fs.writeFileSync(ini, `[App]\r\nName=Camoufox\r\nVersion=${CAMOUFOX_VERSION}\r\n`);
+    assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: true });
+    assert.equal(camoufoxState(data, 'win32', {}).ready, false, 'each platform has its own executable');
+
+    // macOS keeps it in the app's Resources
+    const app = path.join(dir, 'mac', 'runtime', 'camoufox', 'Camoufox.app', 'Contents');
+    fs.mkdirSync(path.join(app, 'MacOS'), { recursive: true });
+    fs.mkdirSync(path.join(app, 'Resources'), { recursive: true });
+    fs.writeFileSync(path.join(app, 'MacOS', 'camoufox'), '');
+    fs.writeFileSync(path.join(app, 'Resources', 'application.ini'), `Version=${CAMOUFOX_VERSION}\n`);
+    assert.deepEqual(camoufoxState(path.join(dir, 'mac'), 'darwin', {}), { ready: true });
+
+    // On Windows the service also takes the one in LOCALAPPDATA
+    const cache = path.join(dir, 'appdata', 'camoufox', 'camoufox', 'Cache');
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'camoufox.exe'), '');
+    fs.writeFileSync(path.join(cache, 'application.ini'), `Version=${CAMOUFOX_VERSION}\n`);
+    assert.deepEqual(camoufoxState(path.join(dir, 'none'), 'win32', { LOCALAPPDATA: path.join(dir, 'appdata') }), { ready: true });
+    // One CAMOUFOX_PATH names is the only one it takes, and it downloads none over it
+    assert.deepEqual(camoufoxState(path.join(dir, 'none'), 'linux', { CAMOUFOX_PATH: '/opt/camoufox/camoufox-bin' }), { ready: true });
   });
 });

@@ -6,7 +6,8 @@
   "upstream": {
     "version": "0.2.14",
     "repository": "https://github.com/Mag1cFall/AIStudio2API.git",
-    "commit": "370a313814099b508881807effa2a9d72f2d7e66"
+    "commit": "370a313814099b508881807effa2a9d72f2d7e66",
+    "camoufox": "152.0.4-beta.29"
   },
   "binaries": {
     "darwin-arm64": {
