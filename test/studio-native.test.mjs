@@ -28,6 +28,7 @@ import {
   PINNED_ARCHIVES,
   STUDIO_VERSION,
   checkStudioHealth,
+  isConnectRefused,
   pickStudioPort,
   studioCommand,
   studioProcessPids,
@@ -926,6 +927,36 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       server.closeAllConnections?.();
       try { server.close(); } catch {}
     }
+  });
+
+  it('13b. Bun ConnectionRefused error is recognized as down (with or without cached admin cookie)', async () => {
+    const local = {
+      origin: 'http://127.0.0.1:19876',
+      baseURL: 'http://127.0.0.1:19876/v1',
+      adminUsername: 'magpie',
+      adminPassword: 'pw'
+    };
+    const bunRefusedError = () =>
+      Object.assign(new TypeError('Unable to connect. Is the computer able to access the url?'), {
+        code: 'ConnectionRefused'
+      });
+    const bunRefusedFetch = async () => {
+      throw bunRefusedError();
+    };
+
+    assert.equal(isConnectRefused(bunRefusedError()), true);
+
+    // 1. Before any admin session cookie is cached (fails in login step of studioAdmin)
+    const uncachedHealth = await checkStudioHealth(local, bunRefusedFetch);
+    assert.deepEqual(uncachedHealth, { state: 'down', reason: 'ECONNREFUSED' });
+
+    // 2. Cache admin session cookie via mock fetchFn, then fail with Bun ConnectionRefused
+    const healthyFetch = adminFetch(() => runningStatus({ total: 1, ready: 1, busy: 0 }));
+    const initialHealth = await checkStudioHealth(local, healthyFetch);
+    assert.equal(initialHealth.state, 'up');
+
+    const cachedClosedHealth = await checkStudioHealth(local, bunRefusedFetch);
+    assert.deepEqual(cachedClosedHealth, { state: 'down', reason: 'ECONNREFUSED' });
   });
 
   it('14. readiness helper polls and handles state transitions properly', async () => {
