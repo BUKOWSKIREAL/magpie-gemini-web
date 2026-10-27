@@ -86,19 +86,21 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       methods: [{
         type: 'oauth',
         label: '一键配置本地 Gemini Web（推荐）',
-        // Installs and starts the pinned backend, then takes the Gemini cookie the user pastes.
+        // Installs and starts the pinned backend while the user copies the Gemini cookie.
         // The result carries the backend's own API key, so Magpie saves an API-key sign-in,
         // one for each Google account (see signInFor).
         async authorize() {
-          const local = await ensureBackend();
+          const ready = ensureBackend();
+          ready.catch(() => {});
           return {
             url: GEMINI_URL,
             method: 'code',
             instructions: COOKIE_STEPS,
             async callback(code) {
-              let cookie, added;
+              let local, cookie, added;
               try {
                 cookie = parseCookieInput(code);
+                local = await ready;
                 added = await importCookie(local, cookie);
               } catch (err) {
                 return { type: 'failed', error: err.message };

@@ -409,4 +409,26 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.match(result.error, /缺少 SID/);
     assert.equal(nextId, before);
   });
+
+  it('shows the cookie steps while a first download runs, and fails in the callback if it does', { timeout: 5000 }, async () => {
+    // Magpie gives authorize one minute, less than a first download can take.
+    const fresh = makeDataDir({ binary: null });
+    process.env.GEMINI_WEB_DATA_DIR = fresh;
+    let finish;
+    const download = new Promise(resolve => { finish = resolve; });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = () => download;
+    try {
+      const pending = await (await oauthMethod()).authorize();
+      assert.equal(pending.method, 'code');
+      finish(new Response('', { status: 503 }));
+      const result = await pending.callback(SIGNED_IN);
+      assert.equal(result.type, 'failed');
+      assert.match(result.error, /HTTP 503/);
+    } finally {
+      globalThis.fetch = realFetch;
+      process.env.GEMINI_WEB_DATA_DIR = dataDir;
+      fs.rmSync(fresh, { recursive: true, force: true });
+    }
+  });
 });

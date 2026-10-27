@@ -1,9 +1,12 @@
 #!/usr/bin/env node
+import http from 'node:http';
 import { installBackend, startBackend, statusBackend } from '../lib/native.mjs';
 
 const command = process.argv[2];
 
 async function main() {
+  // A download goes through HTTPS_PROXY and the like, as it does under Bun.
+  if (command === 'install' || command === 'install-upstream') http.setGlobalProxyFromEnv?.();
   switch (command) {
     case 'install':
       await installBackend();

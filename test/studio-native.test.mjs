@@ -20,6 +20,7 @@ import {
   readStudioEnv,
   saveStudioProxy,
   studioProxy,
+  nodeFetch,
   redactProxy,
   validateConfig,
   validateProxy,
@@ -1039,7 +1040,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
   });
 
   it('15. verifyProcessIdentity rejects child named like binary with different path', async () => {
-    const dummyDir = path.join(tmpRoot, 'other-path-test');
+    const dummyDir = path.join(tmpRoot, 'other-path-测试');
     fs.mkdirSync(dummyDir, { recursive: true, mode: 0o700 });
     const dummyBin = path.join(dummyDir, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
 
@@ -1390,6 +1391,26 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     };
     await studioAdmin(local, 'GET', '/api/status', null, { fetchFn });
     assert.equal(sentCookie, 'aistudio_admin=second');
+  });
+
+  it('26b. a sign-in from the command line goes through nodeFetch as through fetch', async () => {
+    const server = http.createServer((req, res) => {
+      if (req.url === '/api/auth/login') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': ['theme=dark; Path=/', 'aistudio_admin=second; Path=/'] });
+        return res.end('{}');
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ account: { id: req.headers.cookie } }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const local = { origin, baseURL: `${origin}/v1`, adminUsername: 'magpie', adminPassword: crypto.randomBytes(8).toString('hex') };
+      const res = await studioAdmin(local, 'POST', '/api/accounts', {}, { fetchFn: nodeFetch });
+      assert.equal(res.account.id, 'aistudio_admin=second');
+    } finally {
+      server.close();
+    }
   });
 
   it('27. a new setup takes the default port only when nothing uses it, and keeps an existing one', async () => {
