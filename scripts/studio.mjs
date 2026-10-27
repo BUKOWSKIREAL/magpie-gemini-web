@@ -13,7 +13,8 @@ import {
   studioStatus,
   studioProxy,
   saveStudioProxy,
-  studioCommand
+  studioCommand,
+  nodeFetch
 } from '../lib/studio-native.mjs';
 import { proxyLine } from '../lib/studio.mjs';
 
@@ -36,7 +37,7 @@ Commands:
 
 Options:
   --data-dir <path>                            Custom data directory
-  --proxy <url>                                HTTP, HTTPS, or SOCKS5 proxy URL
+  --proxy <url>                                HTTP, HTTPS, or SOCKS5 proxy URL ("" clears the saved one)
   --archive <path>                             Local release archive file (.tar.gz or .zip)
 `);
 }
@@ -49,7 +50,8 @@ function parseArgs(args) {
       flags.help = true;
     } else if (arg === '--data-dir' || arg === '--proxy' || arg === '--archive') {
       const next = args[i + 1];
-      if (!next || next.startsWith('--')) {
+      // An empty --proxy clears the proxy saved for the service.
+      if (next === undefined || next.startsWith('--') || (!next && arg !== '--proxy')) {
         throw new Error(`Missing required value for option: ${arg}`);
       }
       const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
@@ -107,7 +109,7 @@ async function main() {
   }
 
   const command = flags._[0];
-  const dataDir = flags.dataDir || studioDataDir();
+  const dataDir = flags.dataDir ? path.resolve(flags.dataDir) : studioDataDir();
 
   switch (command) {
     case 'install': {
@@ -202,7 +204,7 @@ async function main() {
       console.log(`Preparing login...`);
       const local = await ensureStudio({ dataDir, managementOnly: true });
       console.log(`Opening isolated browser window for Google AI Studio login...`);
-      const res = await studioAdmin(local, 'POST', '/api/accounts', {}, { timeoutMs: LOGIN_TIMEOUT_MS });
+      const res = await studioAdmin(local, 'POST', '/api/accounts', {}, { timeoutMs: LOGIN_TIMEOUT_MS, fetchFn: nodeFetch });
       const account = res?.account || res;
       console.log(`Login completed successfully.`);
       console.log(`Account: ${account.label || account.id || 'new'}`);
@@ -226,7 +228,7 @@ async function main() {
           : `Several accounts need to sign in again; name one: ${studioCommand('relogin <account>', { dataDir })} (${names})`);
       }
       console.log(`Opening isolated browser window to sign ${chosen.label || chosen.id} in again...`);
-      const res = await studioAdmin(local, 'POST', `/api/accounts/${encodeURIComponent(chosen.id)}/login`, {}, { timeoutMs: LOGIN_TIMEOUT_MS });
+      const res = await studioAdmin(local, 'POST', `/api/accounts/${encodeURIComponent(chosen.id)}/login`, {}, { timeoutMs: LOGIN_TIMEOUT_MS, fetchFn: nodeFetch });
       const account = res?.account || chosen;
       console.log(`Signed in again: ${account.label || account.id} (${account.state || 'unknown'})`);
       break;
