@@ -12,28 +12,28 @@
   "binaries": {
     "darwin-arm64": {
       "asset": "aistudio2api-v0.2.16-magpie.1-darwin-arm64.tar.gz",
-      "sha256": "73df7c2dcc154897652fcbae1a2c7aa176f87cde63b1965f0e06cdb7a7d4b8d5",
-      "binarySha256": "eb0e8d818f08ca742b4d0a460efe6fe2dd0eaf64591cc60f3becccac12258987"
+      "sha256": "3dd83c7c7fef6bbf96dc7d8eb6dd7257955af6c274c0fc67ad2ecb24a7df9992",
+      "binarySha256": "6f07122038587514bebe9f15ba0b00f7d9916d4db130028669380729b2e97c97"
     },
     "darwin-x64": {
       "asset": "aistudio2api-v0.2.16-magpie.1-darwin-amd64.tar.gz",
-      "sha256": "ba39787bdf239b589e5bfbf55b8bb205c05dc91d33f585fa714c573f85399771",
-      "binarySha256": "f68ff698f8640c463d9023accc5c27d504dc2e235fa2c75dbc5db0359ee4bd5b"
+      "sha256": "4152cbb37d83680c903d1bb3e72e7eaebd80e5e0df617c20e3ba7fbffd160868",
+      "binarySha256": "a0ad46091dd4ec20f0d82ffa3f14673ac3b5c70dc4a8a0e4cc8aac658525d050"
     },
     "linux-x64": {
       "asset": "aistudio2api-v0.2.16-magpie.1-linux-amd64.tar.gz",
-      "sha256": "eb80bc5b1a1596a65056412bec7c1a7c26348327ab9e7bb0b5bf4fade93289e5",
-      "binarySha256": "f861a53bb4253b9bfecf80fd5c9ecf194966a9950331aeb20cbafcb9c7b3a951"
+      "sha256": "7f97398ea29c2413d3c3e12aca9525213bc80b97c6667a68429ccd3e8dc27ba1",
+      "binarySha256": "deef4cc68cafff147ad24fcaed2d42389d2dbd54d081696c3d6ea95b7d0ea8fa"
     },
     "linux-arm64": {
       "asset": "aistudio2api-v0.2.16-magpie.1-linux-arm64.tar.gz",
-      "sha256": "512591e29e2139e60acaea155f8d1d7dd39653bcba9e2af6c347fb9c696da3d6",
-      "binarySha256": "e281503268c2331f5e16f71f963593de1f1d2be67d08fefbfca38a15f410689a"
+      "sha256": "2fccc892f00e17b8171ab2ed5d22b4a413b6e7d8230bb911bc5e846c5dc8f717",
+      "binarySha256": "567c61bec4f7cf199eabd05ecb3420f409039064fe02a2e38ed22e8b35db3da9"
     },
     "win32-x64": {
       "asset": "aistudio2api-v0.2.16-magpie.1-windows-amd64.zip",
-      "sha256": "9ba47c9ba7b73ea5b9636036e2ab32a7099a36dd60d844c49c0a0ea5ff14def2",
-      "binarySha256": "9edd58bb2c7140aa472d17e021e584fab80a97978eecac352c5549b5d7cb702a"
+      "sha256": "e7d115aacd957ffda80cf2ecadc38af8404d780bc45af01b6b945accc50d8bc7",
+      "binarySha256": "bf96178445dbb653b6876b3abe1768b880465974531d6fb12892857fbc666818"
     }
   }
 }

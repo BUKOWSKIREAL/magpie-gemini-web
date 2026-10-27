@@ -30,7 +30,7 @@ node scripts/studio-release.mjs --write-pins
 node scripts/studio-release.mjs --source=/path/to/AIStudio2API --verify
 ```
 
-输出在 `studio-build/release/`，不进入 npm 包。包含 macOS x64/arm64、Linux x64/arm64、Windows x64 安装包，以及构建记录、SHA256SUMS 和上游许可证。每个安装包携带许可证和托管升级说明。Go 的标准 tar/zip/gzip 写入器固定文件顺序、权限与时间；编译使用 `-trimpath -buildvcs=false`。
+输出在 `studio-build/release/`，不进入 npm 包。包含 macOS x64/arm64、Linux x64/arm64、Windows x64 安装包，以及构建记录、SHA256SUMS 和上游许可证。每个安装包携带许可证和托管升级说明。Go 的标准 tar/zip/gzip 写入器固定文件顺序、权限与时间；编译使用 `-trimpath -buildvcs=false`。上游前端构建用 Node 的 zlib 预压缩网页资源（`.gz`），其输出随 CPU 和系统不同，而这些资源嵌入二进制；构建脚本在前端构建后用 `scripts/studio-regzip.go` 以 Go 的 gzip 重新压缩，使各平台构建结果一致。
 
 ## 验证与发布
 
