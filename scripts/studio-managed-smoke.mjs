@@ -3,19 +3,23 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { installStudio, ensureStudio, stopStudio, studioAdmin, studioStatus, computeFileHash, STUDIO_VERSION } from '../lib/studio-native.mjs';
-import release from '../lib/studio-release.json' with { type: 'json' };
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
+const args = process.argv.slice(2);
+const packageRoot = args.find(arg => arg.startsWith('--package-root='))?.slice('--package-root='.length) || root;
+const download = args.includes('--download');
+const { installStudio, ensureStudio, stopStudio, studioAdmin, studioStatus, computeFileHash, STUDIO_VERSION } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-native.mjs')));
+const release = JSON.parse(fs.readFileSync(path.join(packageRoot, 'lib/studio-release.json'), 'utf8'));
 const key = `${process.platform}-${process.arch}`;
 const pin = release.binaries[key];
 assert.ok(pin, `Unsupported platform ${key}`);
-const archivePath = path.join(root, 'studio-build/release', pin.asset);
+const archivePath = download ? undefined : path.join(root, 'studio-build/release', pin.asset);
+const source = download ? 'GitHub release' : 'local release artifact';
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-managed-smoke-'));
 let local;
 try {
-  local = await installStudio({ dataDir, archivePath });
+  local = await installStudio({ dataDir, ...(archivePath ? { archivePath } : {}) });
   const bin = path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
   assert.equal(computeFileHash(bin), pin.binarySha256);
   await ensureStudio({ dataDir, managementOnly: true });
@@ -53,7 +57,7 @@ try {
   assert.match(panel, /version\.managed/);
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
   assert.equal((await studioStatus({ dataDir })).status, 'stopped');
-  console.log(`PASS ${key}: ${STUDIO_VERSION}, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
+  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
 } finally {
   let stopped = !local;
   if (local) stopped = (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;

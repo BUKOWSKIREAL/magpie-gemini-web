@@ -14,10 +14,10 @@ The plugin provides two independent providers that can be used individually or t
 | :--- | :--- | :--- |
 | **Best for** | **Coding agents (recommended)** | General chat, web-only models & web quota |
 | **Tool calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
-| **Thinking levels** | `minimal` / `low` / `medium` / `high` (`minimal` is fastest & cheapest) | `low` (base) / `high` (`-thinking` extended thinking) |
+| **Thinking levels** | `minimal` / `low` / `medium` / `high` (`minimal` is fastest & cheapest) | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.2.14`) | gemini-web2api-go (`4.22.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (`v0.2.16`) | gemini-web2api-go (`4.26.0-magpie.1` optimized build) |
 
 ---
 
@@ -34,13 +34,15 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 ### Option 2: Gemini Web (`gemini-web`)
 
-1. Sign in to **Gemini Web** in Magpie and choose **「一键配置本地 Gemini Web（推荐）」** (One-click local setup).
+1. Sign in to **Gemini Web** in Magpie and choose **「一键配置本地 Gemini Web（推荐）」** (One-click local setup). If you need a proxy to reach Google, enter its URL (e.g. `http://127.0.0.1:7890`) when prompted at the start of sign-in, or leave it blank for direct connection / existing proxy pool.
 2. Copy your cookie using a **private / incognito window** (Firefox recommended):
    1. Open <https://gemini.google.com/app> in the private window and sign in to your Google account.
    2. Press `F12` (`⌥⌘I` on macOS), switch to the **Network** tab, and reload the page.
    3. Click any `gemini.google.com` request → **Headers** → **Request Headers**, copy the `cookie` value, and paste it into Magpie.
    4. **Close the private window directly—do not sign out** (signing out invalidates the cookie).
 3. The plugin verifies the account and completes sign-in. Repeat the steps above to add more accounts.
+
+> **Backend upgrade required during sign-in?** An older background process may still be running. Exit Magpie, stop the matching `gemini-web2api-go` process (Windows: Task Manager → Details → `gemini-web2api-go.exe`), then run the full installation command shown in the error. It preserves accounts and configuration and selects the plugin's managed backend. Set `GEMINI_WEB_PROXY` first if the download needs a proxy. Reopen Magpie and sign in after installation.
 
 > **Why is a private window required?** The backend periodically refreshes this session to keep it alive. If it shares a session with your daily browser, Google will revoke the session and sign your browser out of all Google services. A private window (or a dedicated secondary Google account) gives the backend an isolated session.
 
@@ -84,6 +86,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `allowImages` | `false` | Shared (override via `studio.allowImages`) | Allow image input |
 | `requestTimeoutMs` / `modelTimeoutMs` | Web: `240000` / `10000`; Studio: `1800000` / `10000` | Shared (override via `studio.*`) | Timeout (ms) per backend wait or model list fetch; resets on stream data, explicit settings take precedence |
 | `stripCitations` | `true` | `gemini-web` only | Strip `[cite: 1]` and `[cite_start]` markers from replies and tool arguments (not supported on AI Studio) |
+| `proxy` | none | `gemini-web` only | Proxy for the managed Gemini Web backend to reach Google (`http` / `https` / `socks5` / `socks5h`), or set `GEMINI_WEB_PROXY` env var / enter during sign-in |
 | `baseURL` | `http://127.0.0.1:8083/v1` | `gemini-web` only | Default Gemini Web backend URL |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | `gemini-web` only | Context and output limits reported to clients |
 | `studio.proxy` | none | `ai-studio` only | Proxy for reaching Google (`http` / `https` / `socks5`), or set `AI_STUDIO_PROXY` env var; when set, it takes precedence over the proxy saved in the admin page. An empty value counts as unset |
@@ -97,7 +100,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
   - **The backend uses neither Magpie's proxies (including the provider proxy set for `ai-studio`) nor `HTTPS_PROXY` and similar variables**: it keeps running after Magpie quits, when a proxy borrowed from Magpie may be gone. Use one of the options above. A backend started by a plugin version from before this fix may still be using a proxy from the environment it was started in (Magpie's, for example); the "代理出口" line marks it and says what a restart changes.
   - The usage card's "代理出口" (proxy) line, the Google sign-in instructions and failure messages, and `npm run studio:status` show the proxy the backend actually uses, where it comes from, and whether a new setting still needs a restart.
   - The listen address, API key and admin credentials are managed by the plugin; changing them in the admin page has no effect.
-- **Gemini Web:** The backend ignores `HTTP_PROXY`. Add your proxy to the proxy pool in the local admin panel at `http://127.0.0.1:8083/admin` (password is `adminToken` in `secrets.json` inside the data directory).
+- **Gemini Web:** The backend ignores system proxies and `HTTP_PROXY`. Enter your proxy URL when prompted at the start of "One-click local setup", set the `proxy` plugin option or `GEMINI_WEB_PROXY` environment variable, or add it to the proxy pool in the local admin panel at `http://127.0.0.1:8083/admin` (password is `adminToken` in `secrets.json` inside the data directory).
   - *Note:* When using a proxy pool, send one request with a newly added account so the backend binds it to a proxy, then re-add it via "Add an existing Google account from the local backend" to load its email and usage (SOCKS proxies are not supported for usage reads).
 
 **Connecting a self-hosted backend:**
@@ -144,7 +147,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Concurrency is capped at 1, but Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- The plugin pins SHA-256-verified `v0.2.14-magpie.1`, based on upstream `v0.2.14`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
+- The plugin pins SHA-256-verified `v0.2.16-magpie.1`, based on upstream `v0.2.16`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
 - **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page says updates are managed by magpie-gemini-web; the update endpoint returns HTTP 409 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for how the managed build is made and reproduced.
 - Managed Unix installs still attempt to set `package/` to `0555` as additional file protection. Permission failures do not block service, and disabling online updates does not depend on permissions. To reset by manually deleting the data directory, stop the service first, then run `chmod -R u+w "<data-dir>/package"` before deleting it; replace `<data-dir>` with the actual path.
 - If a newer or custom version is installed, the plugin reports a conflict with `stop`, `install`, and `start` commands carrying the correct `--data-dir`. Stop can recover a changed listener PID and verifies its executable path before signaling it. If HTTP is down but the process is still alive, the plugin refuses to reinstall or launch a second process.
@@ -154,11 +157,11 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Models with `-build` or `assistant_route` are filtered out: they inject the Build coding assistant's own system prompt and are not offered as ordinary Agent models. Refresh with `magpie provider models ai-studio` after upgrading.
 
 **Gemini Web optimized backend upgrades & rollback:**
-- One-click setup uses [4.22.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.22.0-magpie.1) by default (built from pinned upstream v4.22.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon model verification).
+- One-click setup uses [4.26.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.26.0-magpie.1) by default (built from pinned upstream v4.26.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon model verification).
 - **Upgrading:** Running backends are not interrupted automatically. Stop the existing process (PID in `backend.pid` inside the data directory); the next Magpie launch or request will upgrade the binary while preserving config and cookies.
 - **Rollback to upstream / restore optimized build** (run in the plugin directory after stopping the backend):
   ```bash
-  npm run backend:install:upstream  # Roll back and pin to official v4.22.0
+  npm run backend:install:upstream  # Roll back and pin to official v4.26.0
   npm run backend:install           # Restore default optimized build
   ```
 - For reproducible builds and release procedures, see [docs/backend-release.md](docs/backend-release.md).

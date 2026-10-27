@@ -1,9 +1,61 @@
+diff --git a/internal/app/admin_cookies.go b/internal/app/admin_cookies.go
+index f17a675..c90f08a 100644
+--- a/internal/app/admin_cookies.go
++++ b/internal/app/admin_cookies.go
+@@ -85,9 +85,10 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
+ 		})
+ 	case http.MethodPost:
+ 		var p struct {
+-			Label  string `json:"label"`
+-			Cookie string `json:"cookie"`
+-			Note   string `json:"note"`
++			Label   string `json:"label"`
++			Cookie  string `json:"cookie"`
++			Note    string `json:"note"`
++			ProxyID *int64 `json:"proxy_id"`
+ 		}
+ 		body, _ := io.ReadAll(r.Body)
+ 		if err := json.Unmarshal(body, &p); err != nil {
+@@ -99,6 +100,9 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
+ 			writeJSON(w, 400, map[string]string{"error": err.Error()})
+ 			return
+ 		}
++		if p.ProxyID != nil && *p.ProxyID >= 0 {
++			bindAccountProxy(id, *p.ProxyID)
++		}
+ 		logf("[cookies] 新增账号 #%d label=%q", id, strings.TrimSpace(p.Label))
+ 		writeJSON(w, 200, map[string]interface{}{"id": id})
+ 	default:
+@@ -189,9 +193,10 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
+ 		writeJSON(w, 200, map[string]interface{}{"status": next})
+ 	case http.MethodPatch:
+ 		var p struct {
+-			Label  *string `json:"label"`
+-			Note   *string `json:"note"`
+-			Status *string `json:"status"`
++			Label   *string `json:"label"`
++			Note    *string `json:"note"`
++			Status  *string `json:"status"`
++			ProxyID *int64  `json:"proxy_id"`
+ 		}
+ 		body, _ := io.ReadAll(r.Body)
+ 		if err := json.Unmarshal(body, &p); err != nil {
+@@ -204,6 +209,9 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
+ 				return
+ 			}
+ 		}
++		if p.ProxyID != nil && *p.ProxyID >= 0 {
++			bindAccountProxy(id, *p.ProxyID)
++		}
+ 		if p.Label != nil || p.Note != nil {
+ 			// 只改传了的字段：没传的沿用当前值。
+ 			var curLabel, curNote string
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
-index 0000000..98944ac
+index 0000000..a2a5e77
 --- /dev/null
 +++ b/internal/app/argon.go
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,172 @@
 +package app
 +
 +import (
@@ -15,12 +67,24 @@ index 0000000..98944ac
 +	"time"
 +)
 +
++type argonIdentityError struct {
++	name string
++	id   string
++}
++
++func (e *argonIdentityError) Error() string {
++	return fmt.Sprintf("Argon model mismatch: upstream reported %q (%s)", e.name, e.id)
++}
++
 +// argonDisplayNames 是上游对 Argon 各思考档位自报的显示名：普通档 "4 Argon"，
-+// 扩展思考（think=2，上游叫 High）"4 Argon High"。按请求的档位只认对应名字，
-+// 档位被静默换掉也算身份不符。
++// 扩展思考（think=2，上游叫 High）"4 Argon High"，中档（think=4）自报 "4 Argon" 或 "4 Argon Medium"。
++// 按请求的档位只认对应名字，档位被静默换掉也算身份不符。
 +func argonDisplayNames(think int) []string {
 +	if think == thinkingExtended {
 +		return []string{"4 Argon High", "Gemini 4 Argon High"}
++	}
++	if think == thinkingMedium {
++		return []string{"4 Argon", "Gemini 4 Argon", "4 Argon Medium", "Gemini 4 Argon Medium"}
 +	}
 +	return []string{"4 Argon", "Gemini 4 Argon"}
 +}
@@ -37,6 +101,8 @@ index 0000000..98944ac
 +
 +// argonIdentityInLine 检查单行 wrb.fr 帧里的模型身份。
 +// 返回 found=true 表示这行带有 names 之一的 Argon 身份；err 非 nil 表示这行报的是别的模型或档位。
++// 注意：2026-10 起上游在响应帧的 hex 槽位可能固定回 cf41b0e0dd7d53e5（hexFlashLite 占位），
++// 只有紧随其后的显示名槽位反映真实模型，因此 hex 槽位接受 hexArgon4 或 hexFlashLite 占位，同时严格核对显示名。
 +func argonIdentityInLine(line string, names []string) (found bool, err error) {
 +	var rows [][]json.RawMessage
 +	if json.Unmarshal([]byte(line), &rows) != nil {
@@ -71,8 +137,8 @@ index 0000000..98944ac
 +			if !validHex || !ok {
 +				continue
 +			}
-+			if id != hexArgon4 || !slices.Contains(names, name) {
-+				return false, fmt.Errorf("Argon model mismatch: upstream reported %q (%s)", name, id)
++			if (id != hexArgon4 && id != hexFlashLite) || !slices.Contains(names, name) {
++				return false, &argonIdentityError{name: name, id: id}
 +			}
 +			found = true
 +		}
@@ -110,7 +176,7 @@ index 0000000..98944ac
 +// 所以放行时机就是首字时机，不再要等上游整段生成完。
 +//
 +// onLine 为 nil（非流式）时没有转发，照旧读完整段再校验。
-+func readModelCheckedBody(r io.Reader, onLine func(string), start time.Time, status int, modelHeader string) ([]byte, int64, error) {
++func readModelCheckedBody(r io.Reader, onLine func(string) error, start time.Time, status int, modelHeader string) ([]byte, int64, error) {
 +	var h []any
 +	isArgon := json.Unmarshal([]byte(modelHeader), &h) == nil && len(h) > 4 && h[4] == hexArgon4
 +	if !isArgon {
@@ -127,36 +193,33 @@ index 0000000..98944ac
 +
 +	var pending []string
 +	verified := false
-+	var identityErr error
-+	raw, ttfb, err := readBody(identityGuardReader{r, &identityErr}, func(line string) {
-+		if identityErr != nil {
-+			return
-+		}
++	raw, ttfb, err := readBody(r, func(line string) error {
 +		ok, lerr := argonIdentityInLine(line, names)
 +		if lerr != nil {
-+			identityErr = lerr
-+			return
++			return lerr
 +		}
 +		if !verified {
 +			if !ok {
 +				if line != "" {
 +					pending = append(pending, line)
 +				}
-+				return
++				return nil
 +			}
 +			verified = true
 +			for _, p := range pending {
-+				onLine(p)
++				if cerr := onLine(p); cerr != nil {
++					return cerr
++				}
 +			}
 +			pending = nil
 +		}
 +		if line != "" {
-+			onLine(line)
++			if cerr := onLine(line); cerr != nil {
++				return cerr
++			}
 +		}
++		return nil
 +	}, start)
-+	if identityErr != nil {
-+		return raw, ttfb, identityErr
-+	}
 +	if err != nil {
 +		return raw, ttfb, err
 +	}
@@ -164,19 +227,6 @@ index 0000000..98944ac
 +		return raw, ttfb, errArgonIdentityMissing
 +	}
 +	return raw, ttfb, nil
-+}
-+
-+// identityGuardReader 在身份校验失败后让下一次 Read 返回 EOF，不再读上游。
-+type identityGuardReader struct {
-+	r   io.Reader
-+	err *error
-+}
-+
-+func (g identityGuardReader) Read(p []byte) (int, error) {
-+	if *g.err != nil {
-+		return 0, io.EOF
-+	}
-+	return g.r.Read(p)
 +}
 diff --git a/internal/app/argon_probe_test.go b/internal/app/argon_probe_test.go
 new file mode 100644
@@ -239,10 +289,10 @@ index 0000000..dd9e687
 +}
 diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
 new file mode 100644
-index 0000000..3e62433
+index 0000000..2f0b8cd
 --- /dev/null
 +++ b/internal/app/argon_test.go
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,453 @@
 +package app
 +
 +import (
@@ -251,6 +301,8 @@ index 0000000..3e62433
 +	"errors"
 +	"fmt"
 +	"io"
++	"net/http"
++	"net/http/httptest"
 +	"strings"
 +	"testing"
 +	"time"
@@ -275,7 +327,7 @@ index 0000000..3e62433
 +}
 +
 +func TestArgonValidateIdentity(t *testing.T) {
-+	// 1. Correct hex and name passes
++	// 1. Correct hex and name passes (including upstream's hexFlashLite placeholder slot with Argon name)
 +	validFrame1 := makeSyntheticArgonFrame(hexArgon4, "4 Argon", "ARGON_OK")
 +	if err := validateArgonIdentity(validFrame1, argonDisplayNames(thinkingNormal)); err != nil {
 +		t.Fatalf("expected valid Argon frame to pass, got: %v", err)
@@ -286,10 +338,20 @@ index 0000000..3e62433
 +		t.Fatalf("expected valid Gemini 4 Argon frame to pass, got: %v", err)
 +	}
 +
++	validPlaceholderHex := makeSyntheticArgonFrame(hexFlashLite, "4 Argon", "ARGON_OK")
++	if err := validateArgonIdentity(validPlaceholderHex, argonDisplayNames(thinkingNormal)); err != nil {
++		t.Fatalf("expected valid Argon frame with placeholder hex to pass, got: %v", err)
++	}
++
 +	// 2. Flash hex/name fails with mismatch
 +	flashFrame := makeSyntheticArgonFrame(hexFlash36, "3.6 Flash", "FLASH")
 +	if err := validateArgonIdentity(flashFrame, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
 +		t.Fatalf("expected Argon model mismatch for Flash frame, got: %v", err)
++	}
++
++	downgradedLiteFrame := makeSyntheticArgonFrame(hexFlashLite, "3.5 Flash-Lite", "LITE")
++	if err := validateArgonIdentity(downgradedLiteFrame, argonDisplayNames(thinkingNormal)); err == nil || !strings.Contains(err.Error(), "Argon model mismatch") {
++		t.Fatalf("expected Argon model mismatch for 3.5 Flash-Lite frame, got: %v", err)
 +	}
 +
 +	// 3. Missing metadata fails
@@ -367,8 +429,9 @@ index 0000000..3e62433
 +	// 1. Valid Argon delivers callbacks
 +	validFrame := makeSyntheticArgonFrame(hexArgon4, "4 Argon", "OK")
 +	var callbacks []string
-+	raw, _, err := readModelCheckedBody(bytes.NewReader(validFrame), func(line string) {
++	raw, _, err := readModelCheckedBody(bytes.NewReader(validFrame), func(line string) error {
 +		callbacks = append(callbacks, line)
++		return nil
 +	}, time.Now(), 200, argonHeader)
 +
 +	if err != nil {
@@ -384,8 +447,9 @@ index 0000000..3e62433
 +	// 2. Mismatch/missing -> err and zero callbacks
 +	flashFrame := makeSyntheticArgonFrame(hexFlash36, "3.6 Flash", "OK")
 +	callbacks = nil
-+	_, _, err = readModelCheckedBody(bytes.NewReader(flashFrame), func(line string) {
++	_, _, err = readModelCheckedBody(bytes.NewReader(flashFrame), func(line string) error {
 +		callbacks = append(callbacks, line)
++		return nil
 +	}, time.Now(), 200, argonHeader)
 +
 +	if err == nil {
@@ -398,8 +462,9 @@ index 0000000..3e62433
 +	// 3. Non-200 Argon preserves status-body read with zero callbacks, no identity error
 +	errorBody := []byte(`{"error":"bad request"}` + "\n")
 +	callbacks = nil
-+	rawErr, _, err := readModelCheckedBody(bytes.NewReader(errorBody), func(line string) {
++	rawErr, _, err := readModelCheckedBody(bytes.NewReader(errorBody), func(line string) error {
 +		callbacks = append(callbacks, line)
++		return nil
 +	}, time.Now(), 400, argonHeader)
 +
 +	if err != nil {
@@ -423,8 +488,9 @@ index 0000000..3e62433
 +		callbacksCalled: &callbackCount,
 +	}
 +
-+	rawOrd, _, err := readModelCheckedBody(incReader, func(line string) {
++	rawOrd, _, err := readModelCheckedBody(incReader, func(line string) error {
 +		callbackCount++
++		return nil
 +	}, time.Now(), 200, flashHeader)
 +
 +	if err != nil {
@@ -440,8 +506,9 @@ index 0000000..3e62433
 +	// 5. Truncated reader errors, no Argon callbacks
 +	callbacks = nil
 +	trunc := &truncatedReader{}
-+	_, _, err = readModelCheckedBody(trunc, func(line string) {
++	_, _, err = readModelCheckedBody(trunc, func(line string) error {
 +		callbacks = append(callbacks, line)
++		return nil
 +	}, time.Now(), 200, argonHeader)
 +
 +	if !errors.Is(err, io.ErrUnexpectedEOF) {
@@ -477,11 +544,13 @@ index 0000000..3e62433
 +// 档位被静默换掉（要 High 回了普通档，或反过来）同样报身份不符。
 +func TestArgonIdentityByThinkTier(t *testing.T) {
 +	low := Models["gemini-4-argon"]
++	med := Models["gemini-4-argon-thinking-medium"]
 +	high := Models["gemini-4-argon-thinking"]
-+	if low.Thinking || !high.Thinking || high.HexID != hexArgon4 || high.Mode != 8 {
-+		t.Fatalf("unexpected Argon model table: low=%+v high=%+v", low, high)
++	if low.Thinking || !high.Thinking || high.HexID != hexArgon4 || high.Mode != 8 || med.ThinkWire != thinkingMedium {
++		t.Fatalf("unexpected Argon model table: low=%+v med=%+v high=%+v", low, med, high)
 +	}
 +	lowHeader := buildModelHeader(low.HexID, low.Mode, thinkingNormal, "uuid-x")
++	medHeader := buildModelHeader(med.HexID, med.Mode, thinkingMedium, "uuid-x")
 +	highHeader := buildModelHeader(high.HexID, high.Mode, thinkingExtended, "uuid-x")
 +
 +	cases := []struct {
@@ -489,15 +558,21 @@ index 0000000..3e62433
 +		ok           bool
 +	}{
 +		{lowHeader, "4 Argon", true},
++		{medHeader, "4 Argon", true},
++		{medHeader, "4 Argon Medium", true},
 +		{highHeader, "4 Argon High", true},
 +		{highHeader, "Gemini 4 Argon High", true},
 +		{lowHeader, "4 Argon High", false},
++		{medHeader, "4 Argon High", false},
 +		{highHeader, "4 Argon", false},
 +	}
 +	for _, c := range cases {
 +		frame := makeSyntheticArgonFrame(hexArgon4, c.name, "ok")
 +		var got []string
-+		_, _, err := readModelCheckedBody(bytes.NewReader(frame), func(l string) { got = append(got, l) }, time.Now(), 200, c.header)
++		_, _, err := readModelCheckedBody(bytes.NewReader(frame), func(l string) error {
++			got = append(got, l)
++			return nil
++		}, time.Now(), 200, c.header)
 +		if c.ok && (err != nil || len(got) == 0) {
 +			t.Errorf("%q with header %s: want pass, err=%v lines=%d", c.name, c.header, err, len(got))
 +		}
@@ -509,12 +584,174 @@ index 0000000..3e62433
 +		}
 +	}
 +}
++
++func TestArgonIdentityWithStrictModel(t *testing.T) {
++	setStrictModel(t, true)
++	low := Models["gemini-4-argon"]
++	med := Models["gemini-4-argon-thinking-medium"]
++	high := Models["gemini-4-argon-thinking"]
++
++	type tc struct {
++		mc             ModelConfig
++		name           string
++		wantPass       bool
++		wantDowngraded bool
++	}
++	cases := []tc{
++		{low, "4 Argon", true, false},
++		{low, "Gemini 4 Argon", true, false},
++		{med, "4 Argon", true, false},
++		{med, "Gemini 4 Argon", true, false},
++		{med, "4 Argon Medium", true, false},
++		{med, "Gemini 4 Argon Medium", true, false},
++		{high, "4 Argon High", true, false},
++		{high, "Gemini 4 Argon High", true, false},
++		// Tier mismatch within Argon: rejected by Argon identity check, NOT classified as model downgrade cooldown.
++		{low, "4 Argon High", false, false},
++		{low, "Gemini 4 Argon High", false, false},
++		{med, "4 Argon High", false, false},
++		{med, "Gemini 4 Argon High", false, false},
++		{high, "4 Argon", false, false},
++		{high, "Gemini 4 Argon", false, false},
++		// Silent downgrade to another model family: rejected and converted to ModelDowngradedError under strict_model.
++		{low, "3.5 Flash-Lite", false, true},
++		{low, "Gemini 3.5 Flash-Lite", false, true},
++		{med, "3.5 Flash-Lite", false, true},
++		{high, "3.6 Flash", false, true},
++	}
++
++	for _, c := range cases {
++		header := buildModelHeader(c.mc.HexID, c.mc.Mode, c.mc.thinkWire(), "uuid-x")
++		frame := makeSyntheticArgonFrame(hexFlashLite, c.name, "ok")
++
++		// Check both the streamGenerateOnce (newLineHandler) and streamGenerateConv (lineCB) pipelines.
++		for _, mode := range []string{"once", "conv"} {
++			strictCheck := strictLineCheck(c.mc, func() int64 { return 42 })
++			var cb func(string) error
++			if mode == "once" {
++				lh := newLineHandler(nil, nil, nil, strictCheck)
++				cb = lh.cb
++			} else {
++				cb = func(line string) error {
++					if strictCheck != nil {
++						if err := strictCheck(line); err != nil {
++							return err
++						}
++					}
++					return nil
++				}
++			}
++
++			_, _, err := readModelCheckedBody(bytes.NewReader(frame), cb, time.Now(), 200, header)
++			var aie *argonIdentityError
++			if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(c.mc, aie.name) {
++				err = &ModelDowngradedError{Requested: c.mc.Upstream, Reported: aie.name, AccountID: 42}
++			}
++
++			if c.wantPass {
++				if err != nil {
++					t.Errorf("[%s] %q (think=%d): expected pass under strict_model, got %v", mode, c.name, c.mc.thinkWire(), err)
++				}
++				continue
++			}
++			if err == nil {
++				t.Errorf("[%s] %q (think=%d): expected error under strict_model, got nil", mode, c.name, c.mc.thinkWire())
++				continue
++			}
++			var mde *ModelDowngradedError
++			isDowngraded := errors.As(err, &mde)
++			if isDowngraded != c.wantDowngraded {
++				t.Errorf("[%s] %q (think=%d): wantDowngraded=%v, got err=%T (%v)", mode, c.name, c.mc.thinkWire(), c.wantDowngraded, err, err)
++			}
++		}
++	}
++}
++
++func TestTokenizerLoaderTimeout(t *testing.T) {
++	t.Setenv("TIKTOKEN_CACHE_DIR", t.TempDir())
++	prevTimeout := tokenizerHTTPTimeout
++	tokenizerHTTPTimeout = 80 * time.Millisecond
++	defer func() { tokenizerHTTPTimeout = prevTimeout }()
++
++	unblock := make(chan struct{})
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		<-unblock
++	}))
++	defer func() {
++		close(unblock)
++		srv.Close()
++	}()
++
++	loader := &boundedBpeLoader{}
++	start := time.Now()
++	_, err := loader.LoadTiktokenBpe(srv.URL + "/cl100k_base.tiktoken")
++	elapsed := time.Since(start)
++	if err == nil {
++		t.Fatal("expected timeout error from hanging tokenizer download")
++	}
++	if elapsed > 1500*time.Millisecond {
++		t.Fatalf("tokenizer download took %v, expected bounded timeout", elapsed)
++	}
++}
++
++func TestAdminCookiesBindProxyBeforeCheck(t *testing.T) {
++	getDB()
++	_, _ = getDB().Exec(`DELETE FROM proxies`)
++	_, _ = getDB().Exec(`DELETE FROM accounts`)
++	t.Cleanup(func() {
++		_, _ = getDB().Exec(`DELETE FROM proxies`)
++		_, _ = getDB().Exec(`DELETE FROM accounts`)
++		loadProxies()
++	})
++
++	idA, err := proxyCreate("proxy-a", "http://127.0.0.1:18080", 1)
++	if err != nil {
++		t.Fatalf("proxyCreate A: %v", err)
++	}
++	idB, err := proxyCreate("proxy-b", "http://127.0.0.1:18081", 1)
++	if err != nil {
++		t.Fatalf("proxyCreate B: %v", err)
++	}
++
++	reqBody, _ := json.Marshal(map[string]any{
++		"label":    "Magpie",
++		"cookie":   "SID=s; HSID=h; SSID=ss; APISID=a; SAPISID=sap; __Secure-1PSID=p",
++		"note":     "Added by Magpie",
++		"proxy_id": idB,
++	})
++	req := httptest.NewRequest(http.MethodPost, "/admin/api/cookies", bytes.NewReader(reqBody))
++	rec := httptest.NewRecorder()
++	handleAdminCookies(rec, req)
++	if rec.Code != 200 {
++		t.Fatalf("POST /admin/api/cookies status=%d body=%s", rec.Code, rec.Body.String())
++	}
++	var added struct {
++		ID int64 `json:"id"`
++	}
++	if err := json.Unmarshal(rec.Body.Bytes(), &added); err != nil || added.ID <= 0 {
++		t.Fatalf("unexpected response: %s", rec.Body.String())
++	}
++
++	accts := accountList()
++	if len(accts) != 1 || accts[0].ProxyID != idB {
++		t.Fatalf("expected account bound to proxy B (%d), got %+v (proxy A=%d)", idB, accts, idA)
++	}
++
++	picked, ok, err := acquireSlot(accts[0].ProxyID)
++	if !ok || err != nil {
++		t.Fatalf("acquireSlot failed: ok=%v err=%v", ok, err)
++	}
++	slotRelease(picked.ID)
++	if picked.ID != idB {
++		t.Fatalf("first check slot picked proxy %d (%s), want proxy B %d", picked.ID, picked.Name, idB)
++	}
++}
 diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
 new file mode 100644
-index 0000000..4ee5a3e
+index 0000000..ae43ef4
 --- /dev/null
 +++ b/internal/app/argon_timing_probe_test.go
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,74 @@
 +package app
 +
 +import (
@@ -572,7 +809,7 @@ index 0000000..4ee5a3e
 + firstIdentity,firstText,firstReasoning,lastText:=int64(-1),int64(-1),int64(-1),int64(-1)
 + lineCount,textFrames:=0,0
 + lastContent:=""
-+ raw,firstLine,err:=readBody(resp.Body,func(line string){
++ raw,firstLine,err:=readBody(resp.Body,func(line string) error {
 +  lineCount++;ms:=time.Since(start).Milliseconds()
 +  if firstIdentity<0 && validateArgonIdentity([]byte(line), argonDisplayNames(thinkingNormal))==nil{firstIdentity=ms}
 +  if firstReasoning<0 && reasoningInLine(line)!=""{firstReasoning=ms}
@@ -581,6 +818,7 @@ index 0000000..4ee5a3e
 +   lastContent=strings.Join(texts,"\n");textFrames++;lastText=ms
 +   if firstText<0{firstText=ms}
 +  }
++  return nil
 + },start)
 + t.Logf("TIMING first_line_ms=%d first_identity_ms=%d first_text_ms=%d first_reasoning_ms=%d last_text_ms=%d complete_ms=%d lines=%d text_updates=%d",firstLine,firstIdentity,firstText,firstReasoning,lastText,time.Since(start).Milliseconds(),lineCount,textFrames)
 + if err!=nil {t.Fatalf("generation transport failed (%T)",err)}
@@ -590,10 +828,10 @@ index 0000000..4ee5a3e
 +}
 diff --git a/internal/app/cancel_test.go b/internal/app/cancel_test.go
 new file mode 100644
-index 0000000..e5f1b6f
+index 0000000..f36c700
 --- /dev/null
 +++ b/internal/app/cancel_test.go
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,106 @@
 +package app
 +
 +import (
@@ -628,10 +866,11 @@ index 0000000..e5f1b6f
 +	defer cancel()
 +	start := time.Now()
 +	_, _, _, _, err := doGeminiRequestStop(ctx, "http://upstream.invalid/StreamGenerate", "f.req=x",
-+		map[string]string{}, srv.URL, func(line string) {
++		map[string]string{}, srv.URL, func(line string) error {
 +			if line == "first frame" {
 +				cancel() // 客户端在收到首帧后走了
 +			}
++			return nil
 +		}, nil)
 +	if err == nil {
 +		t.Fatal("取消后应返回错误")
@@ -700,23 +939,13 @@ index 0000000..e5f1b6f
 +	t.Fatal("没有记录这次请求")
 +}
 diff --git a/internal/app/client.go b/internal/app/client.go
-index 1750391..e613956 100644
+index c63b3a9..de635f7 100644
 --- a/internal/app/client.go
 +++ b/internal/app/client.go
-@@ -154,17 +154,32 @@ func makeSAPISIDHash(sapisid string) string {
- 	return fmt.Sprintf("SAPISIDHASH %d_%s", ts, hex.EncodeToString(h[:]))
+@@ -200,6 +200,37 @@ func currentBrowserUA() string {
+ 	return ChromeUA
  }
  
--// ChromeUA 是给 stdlib 走代理时用的 Chrome 146 真实 UA 模板。
-+// ChromeUA 是 Chrome 146 的真实 UA 模板。
- const ChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
- 
--// applyChromeHeaders 给 stdlib 请求填上模拟 Chrome 146 的应用层 header。
--// utls 那层做 TLS/HTTP2 指纹我们做不到（走代理），但 header 一定要齐。
-+// chromeHeaders 是模拟 Chrome 146 的应用层 header，两条传输路径都要带齐：
-+// 走代理时 utls 那层的 TLS/HTTP2 指纹我们做不到（stdlib），但 header 一定要齐；
-+// 直连时 tls-client 只管指纹、不填 header，什么都不带的话 UA 是 Go-http-client/2.0，
-+// 跟 Chrome 的握手对不上，同一个账号也会因为走没走代理而呈现两种客户端。
 +var chromeHeaders = [][2]string{
 +	{"User-Agent", ChromeUA},
 +	{"Sec-CH-UA", `"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="24"`},
@@ -727,16 +956,44 @@ index 1750391..e613956 100644
 +	{"Sec-Fetch-Site", "same-origin"},
 +}
 +
-+// setChromeHeaders 把 chromeHeaders 填进 net/http 或 fhttp 的 Header（两者都有 Set）。
++// setChromeHeaders 把对应 impersonate 配置的应用层 header 填进 net/http 或 fhttp 的 Header。
 +// 调用方之后再写自己的 header，同名的以调用方为准。
-+func setChromeHeaders(h interface{ Set(key, value string) }) {
++func setChromeHeaders(h interface {
++	Set(key, value string)
++	Del(key string)
++}) {
++	if isFirefoxProfile() {
++		h.Set("User-Agent", FirefoxUA)
++		h.Del("Sec-CH-UA")
++		h.Del("Sec-CH-UA-Mobile")
++		h.Del("Sec-CH-UA-Platform")
++		h.Set("Sec-Fetch-Dest", "empty")
++		h.Set("Sec-Fetch-Mode", "cors")
++		h.Set("Sec-Fetch-Site", "same-origin")
++		return
++	}
 +	for _, kv := range chromeHeaders {
 +		h.Set(kv[0], kv[1])
 +	}
 +}
 +
-+// applyChromeHeaders 给 stdlib 请求填上 chromeHeaders。
+ // applyChromeHeaders 给 stdlib 请求填上应用层 header（根据 impersonate 配置自动适配 Chrome 或 Firefox）。
  func applyChromeHeaders(req *http.Request) {
+ 	applyBrowserHeaders(req)
+@@ -207,21 +238,5 @@ func applyChromeHeaders(req *http.Request) {
+ 
+ // applyBrowserHeaders 给 stdlib 请求填上对应 impersonate 配置的应用层 header。
+ func applyBrowserHeaders(req *http.Request) {
+-	if isFirefoxProfile() {
+-		req.Header.Set("User-Agent", FirefoxUA)
+-		req.Header.Del("Sec-CH-UA")
+-		req.Header.Del("Sec-CH-UA-Mobile")
+-		req.Header.Del("Sec-CH-UA-Platform")
+-		req.Header.Set("Sec-Fetch-Dest", "empty")
+-		req.Header.Set("Sec-Fetch-Mode", "cors")
+-		req.Header.Set("Sec-Fetch-Site", "same-origin")
+-		return
+-	}
 -	req.Header.Set("User-Agent", ChromeUA)
 -	req.Header.Set("Sec-CH-UA", `"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="24"`)
 -	req.Header.Set("Sec-CH-UA-Mobile", "?0")
@@ -826,7 +1083,7 @@ index bfc577b..cb60661 100644
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index aef12eb..8ba963f 100644
+index 74df391..401482e 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -837,16 +1094,16 @@ index aef12eb..8ba963f 100644
  	"crypto/sha256"
  	"encoding/hex"
  	"encoding/json"
-@@ -205,7 +206,7 @@ func getAnonSession(proxyURL string) (string, error) {
+@@ -206,7 +207,7 @@ func getAnonSession(proxyURL string) (string, error) {
  		if err != nil {
  			return nil, nil, nil, err
  		}
--		r.Header.Set("User-Agent", webUA)
+-		r.Header.Set("User-Agent", currentBrowserUA())
 +		setChromeHeaders(r.Header)
  		resp, err := getTLSClient().Do(r)
  		if err != nil {
  			return nil, nil, nil, err
-@@ -237,15 +238,14 @@ func getAnonSession(proxyURL string) (string, error) {
+@@ -238,15 +239,14 @@ func getAnonSession(proxyURL string) (string, error) {
  	return strings.Join(pairs, "; "), nil
  }
  
@@ -866,7 +1123,7 @@ index aef12eb..8ba963f 100644
  	p, slotOK, slotErr := acquireSlot(conv.proxyID)
  	if !slotOK {
  		return &StreamResult{}, slotErr
-@@ -365,13 +365,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -369,12 +369,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  	t0 := time.Now()
  	var lastErr error
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
@@ -880,6 +1137,16 @@ index aef12eb..8ba963f 100644
  				conv.cookie = merged
  			}
  		}
++		var aie *argonIdentityError
++		if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(mc, aie.name) {
++			err = &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: conv.accountID}
++		}
+ 		// 降级：同一个号重试还是降级，直接交给上层（见 gemini.go 同一处）。
+ 		var mde *ModelDowngradedError
+ 		if errors.As(err, &mde) {
+@@ -383,6 +390,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
+ 		}
  		if err != nil || statusCode != 200 || !hasContentFrame(string(raw)) {
 +			if cerr := ctx.Err(); cerr != nil {
 +				return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID}, cerr
@@ -887,7 +1154,7 @@ index aef12eb..8ba963f 100644
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -386,7 +392,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -397,7 +407,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -898,7 +1165,7 @@ index aef12eb..8ba963f 100644
  			}
  			continue
  		}
-@@ -427,7 +435,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -438,7 +450,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -907,17 +1174,31 @@ index aef12eb..8ba963f 100644
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -462,7 +470,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
- 		logf("[conv] 续接命中 turn=%d，只发 %d 字节（历史留服务端）", conv.turn, len(prompt))
+@@ -488,7 +500,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+ 				}
+ 			}
+ 		}
+-		res, err = streamGenerateConv(prompt, mc, conv, onDelta, onReasoning)
++		res, err = streamGenerateConv(ctx, prompt, mc, conv, onDelta, onReasoning)
+ 		if !retryOnAnotherAccount(res, err, mc, exclude) || !fresh {
+ 			break
+ 		}
+diff --git a/internal/app/cookie_pool.go b/internal/app/cookie_pool.go
+index 6a88ac2..dc828d6 100644
+--- a/internal/app/cookie_pool.go
++++ b/internal/app/cookie_pool.go
+@@ -546,6 +546,9 @@ func checkAccountCookie(a CookieAccount) CookieCheck {
+ 		return CookieCheck{Detail: explainCookieFailure(err), ProxyName: name, TookMs: took}
  	}
- 
--	res, err := streamGenerateConv(prompt, mc, conv, onDelta, onReasoning)
-+	res, err := streamGenerateConv(ctx, prompt, mc, conv, onDelta, onReasoning)
- 	if err != nil {
- 		if !fresh {
- 			// 续接失败：这路会话作废，客户端重试时会当新会话全量重发。
+ 	markAccountResult(a.ID, true, "")
++	if picked.ID > 0 && a.ProxyID != picked.ID {
++		bindAccountProxy(a.ID, picked.ID)
++	}
+ 	detail := "登录态有效"
+ 	if extractSAPISID(a.Cookie) == "" {
+ 		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 723725f..150b022 100644
+index 7c9186f..a6b0213 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -926,9 +1207,9 @@ index 723725f..150b022 100644
  	"bytes"
 +	"context"
  	"encoding/json"
+ 	"errors"
  	"fmt"
- 	"io"
-@@ -10,6 +11,7 @@ import (
+@@ -11,6 +12,7 @@ import (
  	"net/url"
  	"regexp"
  	"strings"
@@ -936,7 +1217,7 @@ index 723725f..150b022 100644
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -311,7 +313,7 @@ func (d *deltaTracker) Push(fullText string) string {
+@@ -373,7 +375,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -945,7 +1226,7 @@ index 723725f..150b022 100644
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -326,8 +328,16 @@ type fileRef struct {
+@@ -388,15 +390,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -961,10 +1242,29 @@ index 723725f..150b022 100644
 +// 取消导致的失败不记进代理 / cookie 健康度，那不是它们的错。
 +func streamGenerateWithFiles(ctx context.Context, prompt string, pc promptCtx, mc ModelConfig, pending []pendingUpload,
 +	onDelta, onReasoning func(string), stopWhen func(string) bool) (*StreamResult, error) {
+ 	// strict_model 换号：被降级的号记冷却、本次排除，换下一个号重来。上限跟 XSRF 换号
+ 	// 一样是 maxCookieTries——连着几个号都降级，说明池子整体见底，不是撞上个别号。
+ 	exclude := map[int64]bool{}
+ 	var res *StreamResult
+ 	var err error
+ 	for try := 0; try < maxCookieTries; try++ {
+-		next, nextErr := streamGenerateOnce(prompt, latest, mc, pending, onDelta, onReasoning, exclude)
++		next, nextErr := streamGenerateOnce(ctx, prompt, pc, mc, pending, onDelta, onReasoning, stopWhen, exclude)
+ 		var exhausted *ModelDowngradedError
+ 		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
+ 			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
+@@ -414,8 +424,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+ 	return res, err
+ }
+ 
+-func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pendingUpload,
+-	onDelta, onReasoning func(string), exclude map[int64]bool) (*StreamResult, error) {
++func streamGenerateOnce(ctx context.Context, prompt string, pc promptCtx, mc ModelConfig, pending []pendingUpload,
++	onDelta, onReasoning func(string), stopWhen func(string) bool, exclude map[int64]bool) (*StreamResult, error) {
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -337,6 +347,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -425,6 +435,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -972,9 +1272,9 @@ index 723725f..150b022 100644
 +		return nil, err
 +	}
  	var acct *CookieAccount
- 	if !anonFirstEligible(mc, len(pending) > 0) {
- 		if a, ok := pickCookieAccount(); ok {
-@@ -392,6 +405,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+ 	skip := exclude
+ 	if mc.PinAccountID > 0 {
+@@ -489,6 +502,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -984,16 +1284,7 @@ index 723725f..150b022 100644
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -419,6 +435,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
- 			rotatedOnce[acct.ID] = true
- 			if _, _, rerr := rotateAccount(*acct); rerr == nil {
- 				if fresh := accountByID(acct.ID); fresh != nil {
-+					// rotateAccount 成功改了 cookie 时已经用新 cookie 重取过 token
-+					// （失败则作废了缓存），所以这里命中的缓存就是刚验证过的。
- 					if tok2, err2 := getXSRF(fresh.Cookie, proxyURL); err2 == nil {
- 						logf("[cookie] 账号 #%d 轮转后恢复可用", acct.ID)
- 						acct = fresh
-@@ -458,7 +476,10 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -569,7 +585,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -1005,7 +1296,7 @@ index 723725f..150b022 100644
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -475,7 +496,10 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -586,7 +605,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -1017,15 +1308,21 @@ index 723725f..150b022 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -596,32 +620,18 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -713,45 +735,29 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
 -	tracker := &deltaTracker{}
 -	rtracker := &deltaTracker{}
--	var lineCB func(string)
--	if onDelta != nil || onReasoning != nil {
--		lineCB = func(line string) {
+ 	strictCheck := strictLineCheck(mc, func() int64 { return cookieID })
+-	var lineCB func(string) error
+-	if onDelta != nil || onReasoning != nil || strictCheck != nil {
+-		lineCB = func(line string) error {
+-			if strictCheck != nil {
+-				if err := strictCheck(line); err != nil {
+-					return err
+-				}
+-			}
 -			// 思考链先推完才轮到正文，所以先处理它，客户端拿到的顺序才对。
 -			if onReasoning != nil {
 -				if r := reasoningInLine(line); r != "" {
@@ -1035,15 +1332,16 @@ index 723725f..150b022 100644
 -				}
 -			}
 -			if onDelta == nil {
--				return
+-				return nil
 -			}
 -			for _, t := range textsInLine(line) {
 -				if d := tracker.Push(t); d != "" {
 -					onDelta(d)
 -				}
 -			}
+-			return nil
 -		}
-+	lh := newLineHandler(onDelta, onReasoning, stopWhen)
++	lh := newLineHandler(onDelta, onReasoning, stopWhen, strictCheck)
 +	tracker, rtracker := lh.tracker, lh.rtracker
 +
 +	retryWait := func() error {
@@ -1059,8 +1357,18 @@ index 723725f..150b022 100644
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
  				cookieStr = merged
-@@ -629,6 +639,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+ 				updateAccountCookie(cookieID, merged)
  			}
+ 		}
++		var aie *argonIdentityError
++		if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(mc, aie.name) {
++			err = &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: cookieID}
++		}
+ 		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
+ 		var mde *ModelDowngradedError
+ 		if errors.As(err, &mde) {
+@@ -763,6 +769,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+ 			return res, err
  		}
  		if err != nil {
 +			if cerr := ctx.Err(); cerr != nil {
@@ -1069,7 +1377,7 @@ index 723725f..150b022 100644
  			lastErr = err
  			if pickedOK {
  				recordProxyResult(picked.ID, false, err.Error())
-@@ -639,7 +652,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -773,7 +782,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1080,7 +1388,7 @@ index 723725f..150b022 100644
  			}
  			continue
  		}
-@@ -667,7 +682,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -801,7 +812,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1091,7 +1399,7 @@ index 723725f..150b022 100644
  			}
  			continue
  		}
-@@ -690,7 +707,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -829,7 +842,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1102,7 +1410,7 @@ index 723725f..150b022 100644
  			}
  			continue
  		}
-@@ -750,6 +769,54 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -895,6 +910,60 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1114,19 +1422,24 @@ index 723725f..150b022 100644
 +type lineHandler struct {
 +	tracker, rtracker *deltaTracker
 +	stop              atomic.Bool
-+	cb                func(string) // nil 表示不需要逐行处理
++	cb                func(string) error // nil 表示不需要逐行处理
 +}
 +
-+func newLineHandler(onDelta, onReasoning func(string), stopWhen func(string) bool) *lineHandler {
++func newLineHandler(onDelta, onReasoning func(string), stopWhen func(string) bool, check func(string) error) *lineHandler {
 +	lh := &lineHandler{tracker: &deltaTracker{}, rtracker: &deltaTracker{}}
-+	if onDelta == nil && onReasoning == nil && stopWhen == nil {
++	if onDelta == nil && onReasoning == nil && stopWhen == nil && check == nil {
 +		return lh
 +	}
 +	watch := lh.tracker
 +	if onDelta == nil {
 +		watch = &deltaTracker{}
 +	}
-+	lh.cb = func(line string) {
++	lh.cb = func(line string) error {
++		if check != nil {
++			if err := check(line); err != nil {
++				return err
++			}
++		}
 +		// 思考链先推完才轮到正文，所以先处理它，客户端拿到的顺序才对。
 +		if onReasoning != nil {
 +			if r := reasoningInLine(line); r != "" {
@@ -1136,7 +1449,7 @@ index 723725f..150b022 100644
 +			}
 +		}
 +		if onDelta == nil && stopWhen == nil {
-+			return
++			return nil
 +		}
 +		grew := false
 +		for _, t := range textsInLine(line) {
@@ -1150,6 +1463,7 @@ index 723725f..150b022 100644
 +		if grew && stopWhen != nil && stopWhen(watch.emitted) {
 +			lh.stop.Store(true)
 +		}
++		return nil
 +	}
 +	return lh
 +}
@@ -1157,10 +1471,10 @@ index 723725f..150b022 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -819,10 +886,43 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
+@@ -964,10 +1033,43 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
- 	onLine func(string)) (int, []byte, int64, []string, error) {
+ 	onLine func(string) error) (int, []byte, int64, []string, error) {
 +	return doGeminiRequestStop(context.Background(), endpoint, body, headers, proxyURL, onLine, nil)
 +}
 +
@@ -1193,7 +1507,7 @@ index 723725f..150b022 100644
 +// doGeminiRequestStop 同 doGeminiRequest，stop 置位后提前结束读取（见 stopReader），
 +// ctx 结束时中止连接和读取。
 +func doGeminiRequestStop(ctx context.Context, endpoint, body string, headers map[string]string, proxyURL string,
-+	onLine func(string), stop *atomic.Bool) (int, []byte, int64, []string, error) {
++	onLine func(string) error, stop *atomic.Bool) (int, []byte, int64, []string, error) {
  	sendAt := time.Now()
  	if proxyURL != "" {
  		// 走 stdlib 的 http.ProxyURL，已知能过 socks5/socks5h。
@@ -1202,7 +1516,7 @@ index 723725f..150b022 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -836,7 +936,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -981,7 +1083,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  			return 0, nil, 0, nil, err
  		}
  		defer resp.Body.Close()
@@ -1211,7 +1525,7 @@ index 723725f..150b022 100644
  		if err != nil {
  			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
  		}
-@@ -844,10 +944,11 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -989,10 +1091,11 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  	}
  
  	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
@@ -1224,7 +1538,7 @@ index 723725f..150b022 100644
  	for k, v := range headers {
  		req.Header.Set(k, v)
  	}
-@@ -857,7 +958,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1002,7 +1105,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		return 0, nil, 0, nil, err
  	}
  	defer resp.Body.Close()
@@ -1233,7 +1547,7 @@ index 723725f..150b022 100644
  	if err != nil {
  		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
  	}
-@@ -1159,6 +1260,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1313,6 +1416,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -1241,6 +1555,82 @@ index 723725f..150b022 100644
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
+diff --git a/internal/app/gemini_api.go b/internal/app/gemini_api.go
+index 3721e44..d5950ab 100644
+--- a/internal/app/gemini_api.go
++++ b/internal/app/gemini_api.go
+@@ -1,6 +1,7 @@
+ package app
+ 
+ import (
++	"context"
+ 	"encoding/base64"
+ 	"encoding/json"
+ 	"fmt"
+@@ -458,6 +459,7 @@ func geminiCandidate(parts []interface{}, finish string) map[string]interface{}
+ // prepareGemini 是 generateContent / streamGenerateContent 共用的前半段：
+ // 解析、选模型、收图、拼 prompt。出错时已经写好响应。
+ type geminiCall struct {
++	ctx        context.Context
+ 	req        *geminiAPIRequest
+ 	modelName  string
+ 	modelCfg   ModelConfig
+@@ -466,7 +468,7 @@ type geminiCall struct {
+ 	toolChoice interface{}
+ 	images     []pendingUpload
+ 	prompt     string
+-	latest     string
++	pc         promptCtx
+ }
+ 
+ func prepareGemini(w http.ResponseWriter, r *http.Request, model string) (*geminiCall, bool) {
+@@ -492,21 +494,21 @@ func prepareGemini(w http.ResponseWriter, r *http.Request, model string) (*gemin
+ 		writeGeminiError(w, 400, err.Error())
+ 		return nil, false
+ 	}
+-	prompt, latest := messagesToPrompt(messages, tools, toolChoice)
++	prompt, pc := messagesToPrompt(messages, tools, toolChoice)
+ 	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
+ 		writeGeminiError(w, 400, "contents is empty")
+ 		return nil, false
+ 	}
+-	return &geminiCall{req: req, modelName: modelName, modelCfg: modelCfg, messages: messages,
+-		tools: tools, toolChoice: toolChoice, images: images, prompt: prompt, latest: latest}, true
++	return &geminiCall{ctx: r.Context(), req: req, modelName: modelName, modelCfg: modelCfg, messages: messages,
++		tools: tools, toolChoice: toolChoice, images: images, prompt: prompt, pc: pc}, true
+ }
+ 
+ // run 调上游；多轮开关的分流跟 /v1/chat/completions 一致。
+ func (g *geminiCall) run(onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
+ 	if rtCfg().MultiTurn && len(g.images) == 0 && g.modelCfg.Tool == 0 {
+-		return callGeminiConv(g.messages, g.modelCfg, g.tools, g.toolChoice, onDelta, onReasoning)
++		return callGeminiConv(g.ctx, g.messages, g.modelCfg, g.tools, g.toolChoice, onDelta, onReasoning)
+ 	}
+-	return callGemini(g.prompt, g.latest, g.modelCfg, g.tools, g.images, onDelta, onReasoning)
++	return callGemini(g.ctx, g.prompt, g.pc, g.modelCfg, g.tools, g.images, onDelta, onReasoning)
+ }
+ 
+ // runGeminiCall 是调上游那一步，测试里替换成桩。
+@@ -521,6 +523,9 @@ func handleGenerateContent(w http.ResponseWriter, r *http.Request, model string)
+ 	}
+ 	text, calls, res, err := runGeminiCall(g, nil, nil)
+ 	if err != nil {
++		if clientGone(r, "gemini.generateContent", g.modelName, g.prompt, res, false) {
++			return
++		}
+ 		status := 502
+ 		if _, ok := err.(*ModelDowngradedError); ok {
+ 			status = 429
+@@ -656,6 +661,9 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request, model s
+ 
+ 	text, calls, res, err := runGeminiCall(g, onDelta, onReasoning)
+ 	if err != nil {
++		if clientGone(r, "gemini.streamGenerateContent", g.modelName, g.prompt, res, true) {
++			return
++		}
+ 		status := 502
+ 		if _, ok := err.(*ModelDowngradedError); ok {
+ 			status = 429
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
 index 00eb305..2b4c6ca 100644
 --- a/internal/app/gemini_test.go
@@ -1255,14 +1645,15 @@ index 00eb305..2b4c6ca 100644
  		name, mc, err := resolveModel(c.name)
 diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
 new file mode 100644
-index 0000000..b80a9fa
+index 0000000..9613045
 --- /dev/null
 +++ b/internal/app/headers_test.go
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,98 @@
 +package app
 +
 +import (
 +	"context"
++	"fmt"
 +	"net/http"
 +	"net/http/httptest"
 +	"testing"
@@ -1290,9 +1681,10 @@ index 0000000..b80a9fa
 +	proxy := httptest.NewServer(record("proxy"))
 +	defer proxy.Close()
 +
-+	key := rtCfg().Impersonate
++	imp := effectiveImpersonate()
++	key := fmt.Sprintf("%s|%d", imp, rtCfg().RequestTimeout)
 +	insecure, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
-+		tls_client.WithClientProfile(resolveProfile(key)),
++		tls_client.WithClientProfile(resolveProfile(imp)),
 +		tls_client.WithInsecureSkipVerify(),
 +		tls_client.WithNotFollowRedirects())
 +	if err != nil {
@@ -1357,10 +1749,10 @@ index 0000000..b80a9fa
 +}
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
-index 0000000..b30336f
+index 0000000..236a51d
 --- /dev/null
 +++ b/internal/app/latency_test.go
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,310 @@
 +package app
 +
 +import (
@@ -1518,11 +1910,12 @@ index 0000000..b30336f
 +	src := &countingReader{chunks: [][]byte{[]byte("a\n"), []byte("b\n"), []byte("c\n"), []byte("d\n")}}
 +	var stop atomic.Bool
 +	var got []string
-+	_, _, err := readBody(stopReader{src, &stop}, func(line string) {
++	_, _, err := readBody(stopReader{src, &stop}, func(line string) error {
 +		got = append(got, line)
 +		if line == "b" {
 +			stop.Store(true)
 +		}
++		return nil
 +	}, time.Now())
 +	if err != nil {
 +		t.Fatal(err)
@@ -1543,7 +1936,10 @@ index 0000000..b30336f
 +	// 身份晚到：之前的帧先扣住，确认后按原顺序放行。
 +	var got []string
 +	body := bytes.Join([][]byte{[]byte(")]}'\n"), noID, argonLine(hexArgon4, "4 Argon", "ok")}, nil)
-+	_, _, err := readModelCheckedBody(bytes.NewReader(body), func(l string) { got = append(got, l) }, time.Now(), 200, header)
++	_, _, err := readModelCheckedBody(bytes.NewReader(body), func(l string) error {
++		got = append(got, l)
++		return nil
++	}, time.Now(), 200, header)
 +	if err != nil || len(got) != 3 || got[0] != ")]}'" {
 +		t.Fatalf("晚到身份: err=%v lines=%d", err, len(got))
 +	}
@@ -1554,7 +1950,10 @@ index 0000000..b30336f
 +		chunks:          [][]byte{argonLine(hexArgon4, "4 Argon", "a"), argonLine(hexArgon4, "4 Argon", "ab"), noID},
 +		callbacksCalled: &calls,
 +	}
-+	if _, _, err := readModelCheckedBody(inc, func(string) { calls++ }, time.Now(), 200, header); err != nil || calls != 3 {
++	if _, _, err := readModelCheckedBody(inc, func(string) error {
++		calls++
++		return nil
++	}, time.Now(), 200, header); err != nil || calls != 3 {
 +		t.Fatalf("确认后未增量转发: err=%v calls=%d", err, calls)
 +	}
 +
@@ -1565,14 +1964,20 @@ index 0000000..b30336f
 +		argonLine(hexFlash36, "3.6 Flash", "b"),
 +		argonLine(hexArgon4, "4 Argon", "c"),
 +	}}
-+	_, _, err = readModelCheckedBody(src, func(l string) { got = append(got, l) }, time.Now(), 200, header)
++	_, _, err = readModelCheckedBody(src, func(l string) error {
++		got = append(got, l)
++		return nil
++	}, time.Now(), 200, header)
 +	if err == nil || !strings.Contains(err.Error(), "mismatch") || len(got) != 1 || src.reads != 2 {
 +		t.Fatalf("先对后错: err=%v lines=%d reads=%d", err, len(got), src.reads)
 +	}
 +
 +	// 始终没有身份：一行都不放行。
 +	got = nil
-+	_, _, err = readModelCheckedBody(bytes.NewReader(bytes.Repeat(noID, 3)), func(l string) { got = append(got, l) }, time.Now(), 200, header)
++	_, _, err = readModelCheckedBody(bytes.NewReader(bytes.Repeat(noID, 3)), func(l string) error {
++		got = append(got, l)
++		return nil
++	}, time.Now(), 200, header)
 +	if err == nil || !strings.Contains(err.Error(), "identity missing") || len(got) != 0 {
 +		t.Fatalf("无身份: err=%v lines=%d", err, len(got))
 +	}
@@ -1629,7 +2034,7 @@ index 0000000..b30336f
 +		src := &countingReader{chunks: frames}
 +		var sent strings.Builder
 +		gate := newToolFenceGate(func(s string) { sent.WriteString(s) })
-+		lh := newLineHandler(gate.Push, nil, toolCallComplete(toolsFixture("bash")))
++		lh := newLineHandler(gate.Push, nil, toolCallComplete(toolsFixture("bash")), nil)
 +
 +		raw, _, err := readModelCheckedBody(stopReader{src, &lh.stop}, lh.cb, time.Now(), 200,
 +			fmt.Sprintf(`[1,null,null,null,"%s"]`, hexID))
@@ -1650,7 +2055,7 @@ index 0000000..b30336f
 +
 +	// 非流式（onDelta 为 nil）同样提前收尾，但不能把 tracker 记成「已发给客户端」，否则失败时不能重试。
 +	src := &countingReader{chunks: [][]byte{genFrame("好的\n"+call, false), genFrame("好的\n"+call, false)}}
-+	lh := newLineHandler(nil, nil, toolCallComplete(toolsFixture("bash")))
++	lh := newLineHandler(nil, nil, toolCallComplete(toolsFixture("bash")), nil)
 +	if _, _, err := readModelCheckedBody(stopReader{src, &lh.stop}, lh.cb, time.Now(), 200, `[1,null,null,null,"x"]`); err != nil {
 +		t.Fatal(err)
 +	}
@@ -1658,11 +2063,32 @@ index 0000000..b30336f
 +		t.Fatalf("非流式: stop=%v reads=%d tracker=%q", lh.stop.Load(), src.reads, lh.tracker.emitted)
 +	}
 +}
+diff --git a/internal/app/mcp_media.go b/internal/app/mcp_media.go
+index acb1131..a8bab02 100644
+--- a/internal/app/mcp_media.go
++++ b/internal/app/mcp_media.go
+@@ -1,6 +1,7 @@
+ package app
+ 
+ import (
++	"context"
+ 	"encoding/base64"
+ 	"encoding/json"
+ 	"fmt"
+@@ -71,7 +72,7 @@ func mcpGenerateMedia(model, prompt string, refs []string) (map[string]interface
+ 		}
+ 		images = append(images, img)
+ 	}
+-	_, _, res, err := callGemini(prompt, prompt, mc, nil, images, nil, nil)
++	_, _, res, err := callGemini(context.Background(), prompt, promptCtx{Latest: prompt}, mc, nil, images, nil, nil)
+ 	if err != nil {
+ 		return nil, err
+ 	}
 diff --git a/internal/app/media.go b/internal/app/media.go
-index 9844778..03610f9 100644
+index 23d09b8..060df77 100644
 --- a/internal/app/media.go
 +++ b/internal/app/media.go
-@@ -505,6 +505,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
+@@ -748,6 +748,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
  	if err != nil {
  		return 0, nil, nil, err
  	}
@@ -1868,7 +2294,7 @@ index 376171f..87b91fe 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index c3a7df1..eb02909 100644
+index b451d12..b0dbbd3 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -1877,18 +2303,26 @@ index c3a7df1..eb02909 100644
  import (
 +	"context"
  	"encoding/json"
+ 	"errors"
  	"fmt"
- 	"io"
-@@ -9,7 +10,7 @@ import (
+@@ -10,7 +11,7 @@ import (
  	"time"
  )
  
--const Version = "4.22.0"
-+const Version = "4.22.0-argon.1"
+-const Version = "4.26.0"
++const Version = "4.26.0-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
-@@ -129,9 +130,9 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
+@@ -43,6 +44,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
+ 	writeJSON(w, 200, map[string]interface{}{
+ 		"status":  "ok",
+ 		"version": Version,
+ 		"models":  modelNames,
++		"capabilities": map[string]bool{"account_proxy_binding": true},
+ 	})
+ }
+@@ -130,9 +131,9 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
  	return nil
  }
  
@@ -1900,7 +2334,7 @@ index c3a7df1..eb02909 100644
  	if err != nil {
  		// res 非 nil：失败时它只带归属（哪个号 / 哪个出口），给 recordRequest 用
  		return "", nil, res, err
-@@ -267,7 +268,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -268,7 +269,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -1909,7 +2343,7 @@ index c3a7df1..eb02909 100644
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
  		return
-@@ -304,11 +305,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -305,11 +306,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
  		// 多轮：按历史前缀识别续接，命中就只发新消息、历史留服务端。带 tools 也走这条。
@@ -1923,10 +2357,10 @@ index c3a7df1..eb02909 100644
 +		if clientGone(r, "chat.completions", modelName, prompt, res, stream) {
 +			return
 +		}
- 		recordRequest("chat.completions", modelName, prompt, "", res, 502, err.Error(), stream)
- 		if sse != nil && sse.Started() {
- 			sse.Fail(err) // 已经开流，HTTP 状态码改不了了
-@@ -390,6 +394,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+ 		mde, downgraded := err.(*ModelDowngradedError)
+ 		status := 502
+ 		if downgraded {
+@@ -400,6 +404,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	})
  }
  
@@ -1948,7 +2382,7 @@ index c3a7df1..eb02909 100644
  // usageOf 是 buildUsageWithReasoning 的便捷包装，res 可能为 nil。
  func usageOf(prompt, text string, res *StreamResult) map[string]int {
  	r := ""
-@@ -565,7 +584,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -575,7 +594,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -1957,7 +2391,7 @@ index c3a7df1..eb02909 100644
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
  		return
-@@ -659,11 +678,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -669,11 +688,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  	var toolCalls []ToolCall
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
@@ -1971,9 +2405,158 @@ index c3a7df1..eb02909 100644
 +		if clientGone(r, "responses", modelName, prompt, res, stream) {
 +			return
 +		}
- 		recordRequest("responses", modelName, prompt, "", res, 502, err.Error(), stream)
- 		if stream {
- 			writeEvent("response.failed", map[string]interface{}{
+ 		mde, downgraded := err.(*ModelDowngradedError)
+ 		status := 502
+ 		if downgraded {
+diff --git a/internal/app/strict_model.go b/internal/app/strict_model.go
+index ecc17ac..88267c5 100644
+--- a/internal/app/strict_model.go
++++ b/internal/app/strict_model.go
+@@ -150,7 +150,8 @@ func strictLineCheck(mc ModelConfig, accountID func() int64) func(line string) e
+ var modelNameFoldRe = regexp.MustCompile(`[^a-z0-9.]+`)
+ 
+ func foldModelName(s string) string {
+-	return strings.TrimSpace(modelNameFoldRe.ReplaceAllString(strings.ToLower(s), " "))
++	folded := strings.TrimSpace(modelNameFoldRe.ReplaceAllString(strings.ToLower(s), " "))
++	return strings.TrimPrefix(folded, "gemini ")
+ }
+ 
+ // modelDowngraded 判断服务端自报的显示名是不是请求的那个模型。
+diff --git a/internal/app/tokenizer.go b/internal/app/tokenizer.go
+index 634f3b7..399057e 100644
+--- a/internal/app/tokenizer.go
++++ b/internal/app/tokenizer.go
+@@ -1,9 +1,17 @@
+ package app
+ 
+ import (
++	"crypto/sha1"
++	"encoding/base64"
+ 	"fmt"
++	"io"
++	"net/http"
+ 	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
+ 	"sync"
++	"time"
+ 
+ 	"github.com/pkoukk/tiktoken-go"
+ )
+@@ -13,16 +21,108 @@ import (
+ //
+ // 加载一次到内存（~5MB），后续 Encode 每次 ~微秒级。
+ var (
+-	tokenizer     *tiktoken.Tiktoken
+-	tokenizerOnce sync.Once
+-	tokenizerOK   bool
++	tokenizer            *tiktoken.Tiktoken
++	tokenizerOnce        sync.Once
++	tokenizerOK          bool
++	tokenizerHTTPTimeout = 2 * time.Second
+ )
+ 
++type boundedBpeLoader struct{}
++
++func tokenizerCacheDir() string {
++	if d := strings.TrimSpace(os.Getenv("TIKTOKEN_CACHE_DIR")); d != "" {
++		return d
++	}
++	if d := strings.TrimSpace(os.Getenv("DATA_GYM_CACHE_DIR")); d != "" {
++		return d
++	}
++	return filepath.Join(os.TempDir(), "data-gym-cache")
++}
++
++func parseTiktokenBpe(contents []byte) (map[string]int, error) {
++	bpeRanks := make(map[string]int)
++	for _, line := range strings.Split(string(contents), "\n") {
++		line = strings.TrimSpace(line)
++		if line == "" {
++			continue
++		}
++		parts := strings.Split(line, " ")
++		if len(parts) != 2 {
++			return nil, fmt.Errorf("invalid tiktoken bpe line")
++		}
++		token, err := base64.StdEncoding.DecodeString(parts[0])
++		if err != nil {
++			return nil, err
++		}
++		rank, err := strconv.Atoi(parts[1])
++		if err != nil {
++			return nil, err
++		}
++		bpeRanks[string(token)] = rank
++	}
++	if len(bpeRanks) == 0 {
++		return nil, fmt.Errorf("empty tiktoken bpe file")
++	}
++	return bpeRanks, nil
++}
++
++func (l *boundedBpeLoader) LoadTiktokenBpe(tiktokenBpeFile string) (map[string]int, error) {
++	if tiktokenBpeFile == "" {
++		return nil, fmt.Errorf("blobpath cannot be empty")
++	}
++	if !strings.HasPrefix(tiktokenBpeFile, "http://") && !strings.HasPrefix(tiktokenBpeFile, "https://") {
++		contents, err := os.ReadFile(tiktokenBpeFile)
++		if err != nil {
++			return nil, err
++		}
++		return parseTiktokenBpe(contents)
++	}
++
++	cacheDir := tokenizerCacheDir()
++	cacheKey := fmt.Sprintf("%x", sha1.Sum([]byte(tiktokenBpeFile)))
++	cachePath := filepath.Join(cacheDir, cacheKey)
++	if contents, err := os.ReadFile(cachePath); err == nil {
++		if ranks, err := parseTiktokenBpe(contents); err == nil {
++			return ranks, nil
++		}
++	}
++
++	client := &http.Client{Timeout: tokenizerHTTPTimeout}
++	resp, err := client.Get(tiktokenBpeFile)
++	if err != nil {
++		return nil, err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return nil, fmt.Errorf("unexpected HTTP %d fetching tokenizer", resp.StatusCode)
++	}
++	contents, err := io.ReadAll(resp.Body)
++	if err != nil {
++		return nil, err
++	}
++	ranks, err := parseTiktokenBpe(contents)
++	if err != nil {
++		return nil, err
++	}
++
++	if err := os.MkdirAll(cacheDir, 0o755); err == nil {
++		tmp := fmt.Sprintf("%s.%d.tmp", cachePath, time.Now().UnixNano())
++		if err := os.WriteFile(tmp, contents, 0o644); err == nil {
++			if err := os.Rename(tmp, cachePath); err != nil {
++				_ = os.Remove(tmp)
++			}
++		}
++	}
++	return ranks, nil
++}
++
+ func initTokenizer() {
+ 	tokenizerOnce.Do(func() {
+ 		// tiktoken-go 第一次加载会从远端下 cl100k_base.tiktoken (~3MB)，
+ 		// 缓存到 ${TIKTOKEN_CACHE_DIR} 或 ${HOME}/.cache/tiktoken。
+-		// docker 镜像里建议预先 docker build 时缓存。
++		// 默认 loader 使用无超时的 http.DefaultClient，黑洞代理下会卡住启动；
++		// 这里改用带超时的 boundedBpeLoader，超时后立即回退到 chars/4。
++		tiktoken.SetBpeLoader(&boundedBpeLoader{})
+ 		t, err := tiktoken.GetEncoding("cl100k_base")
+ 		if err != nil {
+ 			fmt.Fprintf(os.Stderr, "[tokenizer] init failed (will fall back to chars/4): %v\n", err)
 diff --git a/internal/app/upload.go b/internal/app/upload.go
 index 7747a72..2753f93 100644
 --- a/internal/app/upload.go
@@ -2045,8 +2628,29 @@ index 7747a72..2753f93 100644
  	for k, v := range headers {
  		req.Header.Set(k, v)
  	}
+diff --git a/internal/app/video_cooldown_test.go b/internal/app/video_cooldown_test.go
+index 8eda49e..cf64828 100644
+--- a/internal/app/video_cooldown_test.go
++++ b/internal/app/video_cooldown_test.go
+@@ -2,6 +2,7 @@ package app
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+@@ -24,7 +25,7 @@ func withVideoAccounts(t *testing.T, n int, call func(mc ModelConfig) (*StreamRe
+ 		ids = append(ids, id)
+ 	}
+ 	prevCall := videoCall
+-	videoCall = func(_, _ string, mc ModelConfig, _ []map[string]interface{}, _ []pendingUpload, _, _ func(string)) (string, []ToolCall, *StreamResult, error) {
++	videoCall = func(_ context.Context, _ string, _ promptCtx, mc ModelConfig, _ []map[string]interface{}, _ []pendingUpload, _, _ func(string)) (string, []ToolCall, *StreamResult, error) {
+ 		res, err := call(mc)
+ 		return "", nil, res, err
+ 	}
 diff --git a/internal/app/videos.go b/internal/app/videos.go
-index 390b580..0365a78 100644
+index 4ea7ac6..861f72e 100644
 --- a/internal/app/videos.go
 +++ b/internal/app/videos.go
 @@ -10,6 +10,7 @@ package app
@@ -2055,17 +2659,26 @@ index 390b580..0365a78 100644
  import (
 +	"context"
  	"encoding/json"
- 	"net/http"
- 	"strings"
-@@ -105,7 +106,7 @@ func runVideoJob(j *videoJob) {
- 		finishVideoJob(j, nil, "", err.Error())
- 		return
- 	}
--	_, _, res, err := callGemini(j.Prompt, j.Prompt, mc, nil, nil, nil, nil)
-+	_, _, res, err := callGemini(context.Background(), j.Prompt, promptCtx{Latest: j.Prompt}, mc, nil, nil, nil, nil)
- 	if err != nil {
- 		recordRequest("videos", j.Model, j.Prompt, "", res, 502, err.Error(), false)
- 		finishVideoJob(j, nil, "", err.Error())
+ 	"errors"
+ 	"fmt"
+@@ -233,7 +234,7 @@ func runVideoJobWith(j *videoJob, images []pendingUpload, pin int64, cont *ConvR
+ 		// An extension stays on the account and conversation of its parent; an exhausted
+ 		// account is still remembered so new videos skip it.
+ 		mc.PinAccountID = pin
+-		_, _, res, err = videoCall(j.Prompt, j.Prompt, mc, nil, images, nil, nil)
++		_, _, res, err = videoCall(context.Background(), j.Prompt, promptCtx{Latest: j.Prompt}, mc, nil, images, nil, nil)
+ 		if errors.Is(err, errVideoQuotaUsed) {
+ 			markVideoExhausted(pin, videoQuotaReset(err))
+ 		}
+@@ -283,7 +284,7 @@ func callOnVideoAccount(j *videoJob, mc ModelConfig, images []pendingUpload) (*S
+ 		}
+ 		skip[acct.ID] = true
+ 		mc.PinAccountID = acct.ID
+-		_, _, res, err = videoCall(j.Prompt, j.Prompt, mc, nil, images, nil, nil)
++		_, _, res, err = videoCall(context.Background(), j.Prompt, promptCtx{Latest: j.Prompt}, mc, nil, images, nil, nil)
+ 		if err == nil {
+ 			return res, nil
+ 		}
 diff --git a/internal/app/vision.go b/internal/app/vision.go
 index b0c9724..b1ca7cb 100644
 --- a/internal/app/vision.go

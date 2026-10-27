@@ -84,7 +84,9 @@ describe('3. Invalid options validation', () => {
     assert.equal(s.requestTimeoutMs, 240000);
     assert.equal(s.modelTimeoutMs, 10000);
     assert.equal(s.stripCitations, true);
+    assert.equal(s.proxy, '');
     assert.equal(settings({ stripCitations: false }).stripCitations, false);
+    assert.equal(settings({ proxy: ' http://127.0.0.1:7890 ' }).proxy, 'http://127.0.0.1:7890');
   });
 
   it('rejects unknown options to catch typos', () => {
@@ -100,6 +102,8 @@ describe('3. Invalid options validation', () => {
     assert.throws(() => settings({ requestTimeoutMs: 'slow' }), /requestTimeoutMs: must be a positive integer/);
     assert.throws(() => settings({ modelTimeoutMs: -1 }), /modelTimeoutMs: must be a positive integer/);
     assert.throws(() => settings({ stripCitations: 'off' }), /stripCitations: must be a boolean/);
+    assert.throws(() => settings({ proxy: 123 }), /proxy: must be a string/);
+    assert.throws(() => settings({ proxy: '127.0.0.1:7890' }), /代理地址/);
   });
 });
 
@@ -964,7 +968,7 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
   });
 
   const reset = () => {
-    modelIds = ['gemini-4-argon', 'gemini-4-argon-thinking', 'gemini-3.6-flash', 'gemini-3.6-flash-thinking', 'gemini-canvas', 'gemini-solo', 'gemini-lone-thinking'];
+    modelIds = ['gemini-4-argon', 'gemini-4-argon-thinking-medium', 'gemini-4-argon-thinking', 'gemini-3.6-flash', 'gemini-3.6-flash-thinking', 'gemini-canvas', 'gemini-solo', 'gemini-lone-thinking'];
     modelsStatus = 200;
     modelsCalls = 0;
     chatModels = [];
@@ -979,13 +983,14 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
     }, async () => ({ type: 'api', key, metadata: { baseURL } }), settings({ baseURL }));
   };
 
-  it('declares low/high variants only on base models that have a -thinking twin, and hides the twin', async () => {
+  it('declares low/medium/high variants on base models with thinking twins, and hides the twins', async () => {
     reset();
     const c = { key: 'variants_key', baseURL: `http://127.0.0.1:${serverPort}/v1` };
     const models = await listModels(c, settings({ baseURL: c.baseURL }));
 
-    assert.deepEqual(models['gemini-4-argon'].variants, { low: {}, high: {} });
+    assert.deepEqual(models['gemini-4-argon'].variants, { low: {}, medium: {}, high: {} });
     assert.deepEqual(models['gemini-3.6-flash'].variants, { low: {}, high: {} });
+    assert.equal(models['gemini-4-argon-thinking-medium'], undefined);
     assert.equal(models['gemini-4-argon-thinking'], undefined);
     assert.equal(models['gemini-3.6-flash-thinking'], undefined);
     assert.deepEqual(models['gemini-solo'].variants, {});
@@ -993,18 +998,20 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
     assert.equal(models['gemini-canvas'], undefined);
   });
 
-  it('routes high and other non-low efforts to the twin, low/none/absent to the base', async () => {
+  it('routes medium to -thinking-medium when available, high and other non-low efforts to -thinking, low/none/absent to the base', async () => {
     reset();
     const cases = [
       [{ model: 'gemini-4-argon', reasoning_effort: 'high' }, 'gemini-4-argon-thinking'],
-      [{ model: 'gemini-4-argon', reasoning_effort: 'medium' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-4-argon', reasoning_effort: 'medium' }, 'gemini-4-argon-thinking-medium'],
       [{ model: 'gemini-4-argon', reasoning_effort: 'xhigh' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-3.6-flash', reasoning_effort: 'medium' }, 'gemini-3.6-flash-thinking'],
       [{ model: 'gemini-3.6-flash', reasoning_effort: 'high' }, 'gemini-3.6-flash-thinking'],
       [{ model: 'gemini-4-argon', reasoning_effort: 'low' }, 'gemini-4-argon'],
       [{ model: 'gemini-4-argon', reasoning_effort: 'minimal' }, 'gemini-4-argon'],
       [{ model: 'gemini-4-argon', reasoning_effort: 'none' }, 'gemini-4-argon'],
       [{ model: 'gemini-4-argon' }, 'gemini-4-argon'],
       [{ model: 'gemini-4-argon-thinking', reasoning_effort: 'low' }, 'gemini-4-argon-thinking'],
+      [{ model: 'gemini-4-argon-thinking-medium', reasoning_effort: 'low' }, 'gemini-4-argon-thinking-medium'],
       [{ model: 'gemini-solo', reasoning_effort: 'high' }, 'gemini-solo']
     ];
     for (const [body] of cases) {

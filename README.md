@@ -14,10 +14,10 @@
 | :--- | :--- | :--- |
 | **适用场景** | **推荐 Coding Agent 使用** | 日常对话、使用网页版专属模型与额度 |
 | **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
-| **思考档位** | `minimal` / `low` / `medium` / `high` 四档（`minimal` 最快最省） | `low`（普通）/ `high`（`-thinking` 扩展思考）两档 |
+| **思考档位** | `minimal` / `low` / `medium` / `high` 四档（`minimal` 最快最省） | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API (`v0.2.14`) | gemini-web2api-go (`4.22.0-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API (`v0.2.16`) | gemini-web2api-go (`4.26.0-magpie.1` 优化版) |
 
 ---
 
@@ -34,13 +34,15 @@
 
 ### 方式二：Gemini Web (`gemini-web`)
 
-1. 在 Magpie 中登录 **Gemini Web**，选择 **「一键配置本地 Gemini Web（推荐）」**。
+1. 在 Magpie 中登录 **Gemini Web**，选择 **「一键配置本地 Gemini Web（推荐）」**（若访问 Google 需要代理，可在第一步提示中直接填写代理地址，例如 `http://127.0.0.1:7890`，无需代理或已配置代理池可留空）。
 2. 打开浏览器**无痕 / 隐私窗口**（推荐 Firefox）获取 Cookie：
    1. 访问 <https://gemini.google.com/app> 并登录 Google 账号；
    2. 按 `F12`（macOS 按 `⌥⌘I`）切到 **Network（网络）**，刷新页面；
    3. 点击任意 `gemini.google.com` 请求 → **Headers** → **Request Headers**，复制 `cookie` 的值粘贴回 Magpie；
    4. **直接关闭无痕窗口，不要点退出登录**（点退出会使 Cookie 失效）。
 3. 插件验证账号可用后即完成登录。想添加更多账号，重复上述步骤即可。
+
+> **升级后提示后端不支持登录时绑定代理？** 旧后台进程可能仍在运行。请按提示先退出 Magpie，停止对应的 `gemini-web2api-go` 进程（Windows：任务管理器 → 详细信息 → `gemini-web2api-go.exe`），再运行提示中的完整安装命令。它会保留账号和配置，并切换到插件的托管后端；如下载需要代理，先设置 `GEMINI_WEB_PROXY`。完成后重新打开 Magpie 登录。
 
 > **为什么必须用无痕窗口？** 后端会定时刷新会话来保活。若与日常浏览器共用同一登录会话，Google 会将整个会话作废，导致你的浏览器退出所有 Google 服务。使用无痕窗口（或单独准备 Google 小号）可提供独立会话。
 
@@ -84,6 +86,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `allowImages` | `false` | 共用（可用 `studio.allowImages` 单独覆盖） | 允许图片输入 |
 | `requestTimeoutMs` / `modelTimeoutMs` | Web：`240000` / `10000`；Studio：`1800000` / `10000` | 共用（`studio.*` 可覆盖） | 单次等待后端 / 拉取模型列表的超时（毫秒）；收到流数据后重新计时，显式配置优先 |
 | `stripCitations` | `true` | 仅 `gemini-web` | 剥离回复与工具参数中的 `[cite: 1]`、`[cite_start]` 标记（AI Studio 不支持剥离） |
+| `proxy` | 无 | 仅 `gemini-web` | 一键配置后端访问 Google 的代理（`http` / `https` / `socks5` / `socks5h`），也可用环境变量 `GEMINI_WEB_PROXY` 或在登录第一步填写 |
 | `baseURL` | `http://127.0.0.1:8083/v1` | 仅 `gemini-web` | Gemini Web 默认后端地址 |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | 仅 `gemini-web` | 向客户端声明的上下文 / 输出上限 |
 | `studio.proxy` | 无 | 仅 `ai-studio` | 访问 Google 的代理（`http` / `https` / `socks5`），也可用环境变量 `AI_STUDIO_PROXY`；设置后优先于管理页里保存的代理，留空等于不设置 |
@@ -97,7 +100,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
   - **后端不使用 Magpie 的代理（包括给 `ai-studio` 设置的供应商代理），也不读取 `HTTPS_PROXY` 等环境变量**：它在 Magpie 退出后仍会运行，借用 Magpie 的代理到时可能已经失效。请用上面两种方式之一设置。加入这项修复之前的插件版本启动的后端，可能还在用启动时环境变量里的代理（比如 Magpie 的）；「代理出口」一行会标出来，并说明重启后会怎样。
   - 额度卡片的「代理出口」一行会显示后端当前实际使用的代理、它来自哪里，以及新设置是否还要重启才生效；登录 Google 时的说明、登录失败的提示和 `npm run studio:status` 也会显示。
   - 监听地址、API Key、管理员账号等由插件管理，在管理页修改不会生效。
-- **Gemini Web**：后端不读取 `HTTP_PROXY`，请打开本地管理面板 `http://127.0.0.1:8083/admin` 在代理池中添加（登录口令为数据目录 `secrets.json` 中的 `adminToken`）。
+- **Gemini Web**：后端不读取系统代理或 `HTTP_PROXY`。可在「一键配置本地 Gemini Web」登录第一步直接填写代理地址，或设置插件选项 `proxy` / 环境变量 `GEMINI_WEB_PROXY`，也可以打开本地管理面板 `http://127.0.0.1:8083/admin` 在代理池中添加（登录口令为数据目录 `secrets.json` 中的 `adminToken`）。
   - *注意*：配置代理池后，新添加的账号需先发送一次请求以绑定代理，再通过「添加本地后端里已有的 Google 账号」重新添加，才能正常读取邮箱和用量（不支持通过 SOCKS 代理读取用量）。
 
 **连接自建后端：**
@@ -144,7 +147,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 插件将请求并发限制为 1，但仍无法完全排除 Google 账号风控风险，请自行评估使用。
 
 **AI Studio 升级与模型范围：**
-- 插件固定使用经过 SHA-256 校验的 `v0.2.14-magpie.1`（基于上游 `v0.2.14`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
+- 插件固定使用经过 SHA-256 校验的 `v0.2.16-magpie.1`（基于上游 `v0.2.16`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
 - **托管后端已在 macOS、Linux、Windows 统一禁用在线更新**：管理页提示“更新由 magpie-gemini-web 管理”，更新接口返回 HTTP 409，检查更新也不会访问 GitHub。用户自行连接的外部服务不受影响。托管构建方式和可复现构建流程见 [docs/studio-release.md](docs/studio-release.md)。
 - Unix 的 `package/` 仍尽力设置为 `0555`，作为额外的文件保护；权限设置失败不阻断服务，在线更新的禁用也不依赖该权限。若要手动删除数据目录来重置，请先停止服务，再运行 `chmod -R u+w "<数据目录>/package"` 恢复可写权限，然后删除；将 `<数据目录>` 替换为实际路径。
 - 若自行更新到更新版或定制版，插件会提示版本冲突，并提供带正确 `--data-dir` 的 `stop`、`install`、`start` 命令。停止时会找回更新后的监听进程 PID，并核对可执行文件路径；无法核实身份就不会发送终止信号。HTTP 端口关闭但进程尚未退出时，插件不会重装或启动第二个进程。
@@ -154,11 +157,11 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
-- 插件默认使用本仓库发布的 [4.22.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.22.0-magpie.1)（基于上游 v4.22.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。
+- 插件默认使用本仓库发布的 [4.26.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.26.0-magpie.1)（基于上游 v4.26.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：
   ```bash
-  npm run backend:install:upstream  # 回退并固定使用官方 v4.22.0
+  npm run backend:install:upstream  # 回退并固定使用官方 v4.26.0
   npm run backend:install           # 恢复默认优化版
   ```
 - 源码复现构建与发布流程见 [docs/backend-release.md](docs/backend-release.md)。

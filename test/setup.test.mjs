@@ -8,8 +8,10 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
-import { ensureBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
-import { parseCookieInput, importCookie, REQUIRED_COOKIES } from '../lib/setup.mjs';
+import { ensureBackend, installBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
+import { parseCookieInput, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
+
+const LOGIN_CAPABILITIES = { capabilities: { account_proxy_binding: true } };
 
 const SIGNED_IN = REQUIRED_COOKIES.map(n => `${n}=v-${n}`).join('; ');
 
@@ -70,7 +72,8 @@ describe('25. Cookie import through the admin API', () => {
 
   function adminFetch(check, calls) {
     return async (url, init) => {
-      calls.push({ path: new URL(url).pathname, method: init.method, auth: init.headers.Authorization, body: init.body });
+      calls.push({ path: new URL(url).pathname, method: init.method, auth: init.headers?.Authorization, body: init.body });
+      if (new URL(url).pathname === '/') return Response.json(LOGIN_CAPABILITIES);
       if (init.method === 'POST' && url.endsWith('/cookies')) return Response.json({ id: 7 });
       if (url.endsWith('/check')) return check();
       return Response.json({ ok: true });
@@ -81,9 +84,9 @@ describe('25. Cookie import through the admin API', () => {
     const calls = [];
     const r = await importCookie(setup, SIGNED_IN, { fetchFn: adminFetch(() => Response.json({ ok: true, detail: 'fine' }), calls) });
     assert.deepEqual(r, { id: 7, detail: 'fine' });
-    assert.deepEqual(calls.map(c => `${c.method} ${c.path}`), ['POST /admin/api/cookies', 'POST /admin/api/cookies/7/check']);
-    assert.equal(calls[0].auth, 'Bearer admin_test');
-    assert.equal(JSON.parse(calls[0].body).cookie, SIGNED_IN);
+    assert.deepEqual(calls.map(c => `${c.method} ${c.path}`), ['GET /', 'POST /admin/api/cookies', 'POST /admin/api/cookies/7/check']);
+    assert.equal(calls[1].auth, 'Bearer admin_test');
+    assert.equal(JSON.parse(calls[1].body).cookie, SIGNED_IN);
   });
 
   it('removes an account that fails the check', async () => {
@@ -133,7 +136,94 @@ describe('25. Cookie import through the admin API', () => {
 
   it('still says the backend is unreachable when the request itself fails', async () => {
     const refused = async () => { throw new TypeError('fetch failed'); };
-    await assert.rejects(importCookie(setup, SIGNED_IN, { fetchFn: refused }), /连不上本地 Gemini Web 后端（http:\/\/127\.0\.0\.1:1）：fetch failed/);
+    await assert.rejects(importCookie(setup, SIGNED_IN, { fetchFn: refused }), /无法确认本地 Gemini Web 后端的登录能力.*fetch failed/);
+  });
+
+  it('validates proxy URLs and configures the backend proxy pool before checking a cookie', async () => {
+    assert.equal(validateProxyURL(''), '');
+    assert.equal(validateProxyURL('  http://127.0.0.1:7890 '), 'http://127.0.0.1:7890');
+    assert.equal(validateProxyURL('socks5://127.0.0.1:1080'), 'socks5://127.0.0.1:1080');
+    assert.throws(() => validateProxyURL('127.0.0.1:7890'), /代理地址/);
+    assert.throws(() => validateProxyURL('ftp://127.0.0.1:21'), /http:\/\/、https:\/\/、socks5:\/\//);
+
+    const calls = [];
+    let proxies = [];
+    const fetchFn = async (url, init) => {
+      const pathname = new URL(url).pathname;
+      calls.push({ path: pathname, method: init.method, body: init.body ? JSON.parse(init.body) : undefined });
+      if (pathname === '/') return Response.json(LOGIN_CAPABILITIES);
+      if (pathname === '/admin/api/proxies' && init.method === 'GET') return Response.json({ items: proxies });
+      if (pathname === '/admin/api/proxies' && init.method === 'POST') {
+        proxies = [{ id: 3, name: 'Magpie', url: JSON.parse(init.body).url, enabled: true, fail_count: 0 }];
+        return Response.json({ id: 3 });
+      }
+      if (pathname === '/admin/api/proxies/3' && init.method === 'PATCH') {
+        Object.assign(proxies[0], JSON.parse(init.body));
+        return Response.json({ ok: true });
+      }
+      if (pathname === '/admin/api/proxies/3/reset' && init.method === 'POST') {
+        proxies[0].fail_count = 0;
+        return Response.json({ ok: true });
+      }
+      if (pathname === '/admin/api/cookies' && init.method === 'POST') return Response.json({ id: 7 });
+      if (pathname === '/admin/api/cookies/7/check') return Response.json({ ok: true, detail: 'via proxy' });
+      return Response.json({ ok: true });
+    };
+
+    const r = await importCookie(setup, SIGNED_IN, { proxy: 'http://127.0.0.1:7890', fetchFn });
+    assert.deepEqual(r, { id: 7, detail: 'via proxy' });
+    assert.deepEqual(calls.map(c => `${c.method} ${c.path}`), [
+      'GET /',
+      'GET /admin/api/proxies',
+      'POST /admin/api/proxies',
+      'POST /admin/api/cookies',
+      'POST /admin/api/cookies/7/check'
+    ]);
+    assert.equal(calls.find(c => c.path === '/admin/api/cookies').body.proxy_id, 3, 'account must be bound to the chosen proxy before check');
+
+    // Updating the Magpie proxy URL and resetting failures reuses the existing pool row in-place.
+    calls.length = 0;
+    proxies[0].enabled = false;
+    proxies[0].fail_count = 5;
+    await ensureProxy(setup, 'http://127.0.0.1:10809', { fetchFn });
+    assert.deepEqual(calls.map(c => `${c.method} ${c.path}`), [
+      'GET /admin/api/proxies',
+      'PATCH /admin/api/proxies/3',
+      'POST /admin/api/proxies/3/reset'
+    ]);
+    assert.equal(proxies[0].url, 'http://127.0.0.1:10809');
+    assert.equal(proxies[0].enabled, true);
+    assert.equal(proxies[0].fail_count, 0);
+  });
+
+  it('rejects legacy, upstream and unadvertised builds before sending cookies or changing proxies', async () => {
+    for (const info of [
+      { version: '4.22.0-magpie.1' }, { version: '4.26.0' },
+      { version: '4.26.0-magpie.1' }, { capabilities: { account_proxy_binding: 'true' } }
+    ]) {
+      const calls = [];
+      await assert.rejects(importCookie(setup, SIGNED_IN, {
+        proxy: 'http://127.0.0.1:7890',
+        fetchFn: async (url, init) => { calls.push([url, init]); return Response.json(info); }
+      }), /不支持登录时绑定代理/);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], `${setup.origin}/`);
+      assert.equal(calls[0][1].method, 'GET');
+      assert.equal(calls[0][1].body, undefined);
+    }
+  });
+
+  it('includes the correct custom data directory and PowerShell literal quoting in recovery instructions', async () => {
+    await assert.rejects(requireLoginBackend(setup, {
+      platform: 'win32', dataDir: path.resolve("review user's $data space"),
+      fetchFn: async () => Response.json({ version: '4.22.0-magpie.1' })
+    }), err => {
+      assert.match(err.message, /任务管理器.*gemini-web2api-go\.exe/);
+      assert.match(err.message, /backend\.mjs' install --data-dir='/);
+      assert.ok(err.message.includes("user''s $data space'"));
+      assert.match(err.message, /GEMINI_WEB_PROXY/);
+      return true;
+    });
   });
 });
 
@@ -229,9 +319,66 @@ describe('26. ensureBackend', () => {
     assert.equal(localBackend({ dataDir, platform: 'darwin' }), null);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
+
+  it('kills the spawned child and cleans up backend.pid when startup times out', async () => {
+    const dataDir = makeDataDir();
+    trustBinary(dataDir);
+    const signals = [];
+    await assert.rejects(
+      ensureBackend({
+        dataDir,
+        platform: 'darwin',
+        arch: 'arm64',
+        startTimeoutMs: 50,
+        fetchFn: async () => { throw new Error('ECONNREFUSED'); },
+        spawnFn: () => {
+          const child = new EventEmitter();
+          child.pid = 999999;
+          child.kill = sig => { signals.push(sig); };
+          child.unref = () => {};
+          return child;
+        }
+      }),
+      /did not start within/
+    );
+    assert.deepEqual(signals, ['SIGTERM']);
+    assert.equal(fs.existsSync(path.join(dataDir, 'backend.pid')), false);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('forwards proxy to installBackend and downloads through a local HTTP proxy', async () => {
+    const dataDir = makeDataDir({ binary: null });
+    const payload = Buffer.from('proxied backend binary');
+    const expectedHash = crypto.createHash('sha256').update(payload).digest('hex');
+    const proxiedRequests = [];
+    const proxyServer = http.createServer((req, res) => {
+      proxiedRequests.push(req.url);
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      res.end(payload);
+    });
+    await new Promise(resolve => proxyServer.listen(0, '127.0.0.1', resolve));
+    const proxyURL = `http://127.0.0.1:${proxyServer.address().port}`;
+    try {
+      await installBackend({
+        dataDir,
+        platform: 'darwin',
+        arch: 'arm64',
+        url: 'http://release.invalid/gemini-web2api-go',
+        expectedHash,
+        proxy: proxyURL
+      });
+      assert.equal(proxiedRequests.length, 1);
+      assert.equal(proxiedRequests[0], 'http://release.invalid/gemini-web2api-go');
+      assert.deepEqual(fs.readFileSync(path.join(dataDir, 'bin', 'gemini-web2api-go')), payload);
+    } finally {
+      await new Promise(resolve => proxyServer.close(resolve));
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('27. One-click sign-in through the plugin', () => {
+  let backendCapabilities = LOGIN_CAPABILITIES;
   let server;
   let dataDir;
   let previousDataDir;
@@ -254,20 +401,39 @@ describe('27. One-click sign-in through the plugin', () => {
           res.writeHead(status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(data));
         };
+        if (req.url === '/') return send(200, backendCapabilities);
         if (req.url === '/v1/models') {
           return req.headers.authorization === 'Bearer gw_test' ? send(200, { data: [] }) : send(401, { error: 'bad key' });
         }
         if (req.headers.authorization !== 'Bearer admin_test') return send(401, { error: 'bad admin token' });
-        if (req.method === 'POST' && req.url === '/admin/api/cookies') {
+        if (req.method === 'GET' && req.url === '/admin/api/proxies') {
+          const items = db.prepare('SELECT id, name, url, enabled FROM proxies ORDER BY id').all()
+            .map(p => ({ ...p, enabled: p.enabled === 1, fail_count: 0 }));
+          return send(200, { items });
+        }
+        if (req.method === 'POST' && req.url === '/admin/api/proxies') {
+          const parsed = JSON.parse(body);
           const id = nextId++;
-          accounts.set(id, JSON.parse(body).cookie);
-          db.prepare(`INSERT INTO accounts (id, label, cookie, status, proxy_id) VALUES (?, 'Magpie', ?, 'enabled', 0)`)
-            .run(id, JSON.parse(body).cookie);
+          db.prepare('INSERT INTO proxies (id, name, url, enabled) VALUES (?, ?, ?, 1)').run(id, parsed.name, parsed.url);
+          return send(200, { id });
+        }
+        if (req.method === 'POST' && req.url === '/admin/api/cookies') {
+          const parsed = JSON.parse(body);
+          const id = nextId++;
+          const proxyId = Number.isInteger(parsed.proxy_id) ? parsed.proxy_id : 0;
+          accounts.set(id, { cookie: parsed.cookie, proxyId, checkedProxyId: null });
+          db.prepare(`INSERT INTO accounts (id, label, cookie, status, proxy_id) VALUES (?, 'Magpie', ?, 'enabled', ?)`)
+            .run(id, parsed.cookie, proxyId);
           return send(200, { id });
         }
         const m = req.url.match(/^\/admin\/api\/cookies\/(\d+)(\/check)?$/);
         if (m && req.method === 'POST' && m[2]) {
-          const cookie = accounts.get(Number(m[1])) || '';
+          const entry = accounts.get(Number(m[1]));
+          const cookie = entry?.cookie || '';
+          if (entry) {
+            const row = db.prepare('SELECT proxy_id FROM accounts WHERE id = ?').get(Number(m[1]));
+            entry.checkedProxyId = row?.proxy_id ?? 0;
+          }
           return send(200, cookie.includes('SID=good') ? { ok: true, detail: 'ok' } : { ok: false, detail: 'not signed in' });
         }
         if (m && req.method === 'DELETE') {
@@ -310,6 +476,34 @@ describe('27. One-click sign-in through the plugin', () => {
     const types = ['oauth', 'api', 'oauth'];
     if (process.platform === 'darwin') types.push('oauth'); // the Task route, last (see task.test.mjs)
     assert.deepEqual(plugin.auth.methods.map(m => m.type), types);
+  });
+
+  it('blocks a reused live legacy backend before changing its pool, and permits login after its upgrade', async () => {
+    const method = await oauthMethod();
+    const before = nextId;
+    backendCapabilities = { version: '4.22.0-magpie.1' };
+    try {
+      // authorize returns at once (see the first-download test); the check comes in the callback.
+      const blocked = await method.authorize({ proxy: 'http://127.0.0.1:7890' });
+      const result = await blocked.callback(SIGNED_IN);
+      assert.equal(result.type, 'failed');
+      assert.match(result.error, /请先升级/);
+      assert.equal(nextId, before, 'no proxy or account may be added to the old backend');
+    } finally { backendCapabilities = LOGIN_CAPABILITIES; }
+    const pending = await method.authorize();
+    assert.equal(pending.method, 'code');
+  });
+
+  it('rechecks capability if an old service replaces the backend while the cookie form is open', async () => {
+    const pending = await (await oauthMethod()).authorize();
+    const before = nextId;
+    backendCapabilities = { version: '4.22.0-magpie.1' };
+    try {
+      const result = await pending.callback(SIGNED_IN);
+      assert.equal(result.type, 'failed');
+      assert.match(result.error, /请先升级/);
+      assert.equal(nextId, before);
+    } finally { backendCapabilities = LOGIN_CAPABILITIES; }
   });
 
   it('signs in with the local backend key after a working cookie is imported', async () => {
@@ -429,6 +623,46 @@ describe('27. One-click sign-in through the plugin', () => {
       globalThis.fetch = realFetch;
       process.env.GEMINI_WEB_DATA_DIR = dataDir;
       fs.rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+
+  it('asks for an optional proxy up front, binds the new account to it before checking, and uses it even when another proxy is in the pool', async () => {
+    const method = await oauthMethod();
+    assert.equal(method.prompts[0].key, 'proxy');
+    const question = method.ask({});
+    assert.equal(question.key, 'proxy');
+    assert.equal(question.validate(''), undefined);
+    assert.equal(question.validate('http://127.0.0.1:7890'), undefined);
+    assert.match(question.validate('bad-proxy'), /代理地址/);
+    assert.equal(method.ask({ proxy: '' }), null);
+    assert.equal(method.ask({ proxy: 'http://127.0.0.1:7890' }), null);
+
+    // Pre-populate Proxy A in the pool so Proxy B is the second entry.
+    db.exec(`INSERT INTO proxies VALUES (1, 'proxy-a', 'http://127.0.0.1:18080', 1)`);
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => url === 'https://gemini.google.com/app'
+      ? Promise.resolve(new Response('{"oPEP7c":"proxied@gmail.com"}'))
+      : realFetch(url, init);
+    try {
+      // authorize returns at once; the proxy pool is set up in the callback.
+      const pending = await method.authorize({ proxy: 'http://127.0.0.1:7890' });
+      const result = await pending.callback(SIGNED_IN.replace('SID=v-SID', 'SID=good-proxied'));
+      assert.equal(result.type, 'success');
+
+      const rows = db.prepare('SELECT id, name, url, enabled FROM proxies ORDER BY id').all();
+      assert.equal(rows.length, 2);
+      const proxyB = rows[1];
+      assert.equal(proxyB.name, 'Magpie');
+      assert.equal(proxyB.url, 'http://127.0.0.1:7890');
+      assert.equal(proxyB.enabled, 1);
+
+      const acctId = result.metadata.account;
+      assert.equal(accounts.get(acctId).checkedProxyId, proxyB.id, 'check must run with the account already bound to Proxy B');
+      const acctRow = db.prepare('SELECT proxy_id FROM accounts WHERE id = ?').get(acctId);
+      assert.equal(acctRow.proxy_id, proxyB.id);
+    } finally {
+      globalThis.fetch = realFetch;
+      db.exec('DELETE FROM proxies');
     }
   });
 });
