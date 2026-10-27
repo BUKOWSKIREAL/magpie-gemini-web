@@ -30,9 +30,9 @@ it('ships pinned optimized and rollback downloads for all six supported targets'
     const [platform, arch] = key.split('-');
     const optimized = pinnedBinary(platform, arch);
     const upstream = pinnedBinary(platform, arch, 'upstream');
-    assert.match(optimized.url, /^https:\/\/github\.com\/BUKOWSKIREAL\/magpie-gemini-web\/releases\/download\/backend-v4\.22\.0-magpie\.1\//);
+    assert.match(optimized.url, /^https:\/\/github\.com\/BUKOWSKIREAL\/magpie-gemini-web\/releases\/download\/backend-v4\.26\.0-magpie\.1\//);
     assert.match(optimized.sha256, /^[a-f0-9]{64}$/);
-    assert.match(upstream.url, /^https:\/\/github\.com\/zexadev\/gemini-web2api-go\/releases\/download\/v4\.22\.0\//);
+    assert.match(upstream.url, /^https:\/\/github\.com\/zexadev\/gemini-web2api-go\/releases\/download\/v4\.26\.0\//);
     assert.notEqual(optimized.sha256, upstream.sha256);
     assert.equal(optimized.url.endsWith('.exe'), platform === 'win32');
   }

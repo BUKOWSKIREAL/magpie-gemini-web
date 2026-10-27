@@ -14,6 +14,7 @@ const args = process.argv.slice(2);
 const packageRoot = args.find(arg => arg.startsWith('--package-root='))?.slice('--package-root='.length) || root;
 const download = args.includes('--download');
 const { ensureBackend, installBackend, computeFileHash, pinnedBinary } = await import(pathToFileURL(path.join(packageRoot, 'lib/native.mjs')));
+const { importCookie, REQUIRED_COOKIES } = await import(pathToFileURL(path.join(packageRoot, 'lib/setup.mjs')));
 const release = JSON.parse(fs.readFileSync(path.join(packageRoot, 'lib/backend-release.json'), 'utf8'));
 const pin = pinnedBinary();
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-release-smoke-'));
@@ -21,8 +22,14 @@ const portProbe = net.createServer();
 await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve));
 const port = portProbe.address().port;
 await new Promise(resolve => portProbe.close(resolve));
-// Make tokenizer startup take its offline fallback, with no external request or cached data.
-const offlineProxy = net.createServer(socket => socket.destroy());
+// Hold proxy connections open without replying so smoke verifies that a blackholed
+// tokenizer download times out quickly and falls back to chars/4 instead of hanging startup.
+const heldSockets = new Set();
+const offlineProxy = net.createServer(socket => {
+  heldSockets.add(socket);
+  socket.on('close', () => heldSockets.delete(socket));
+  socket.on('error', () => {});
+});
 await new Promise(resolve => offlineProxy.listen(0, '127.0.0.1', resolve));
 const proxy = `http://127.0.0.1:${offlineProxy.address().port}`;
 let child, exited, spawnCount = 0, log = '';
@@ -53,6 +60,7 @@ try {
   assert.equal(computeFileHash(installed), pin.sha256);
   const health = await (await fetch(`${setup.origin}/`)).json();
   assert.equal(health.version, release.version);
+  assert.equal(health.capabilities?.account_proxy_binding, true);
   assert.equal((await fetch(`${setup.baseURL}/models`)).status, 401);
   const modelsResponse = await fetch(`${setup.baseURL}/models`, { headers: { Authorization: `Bearer ${setup.apiKey}` } });
   assert.equal(modelsResponse.status, 200);
@@ -64,9 +72,34 @@ try {
   assert.deepEqual(fs.readFileSync(path.join(dir, 'secrets.json')), secrets);
   await ensureBackend({ dataDir: dir, fetchFn, spawnFn: () => { throw new Error('Running backend must be reused'); } });
   assert.equal(spawnCount, 1);
+
+  // Verify with two local proxies that specifying Proxy B binds the account to Proxy B before
+  // checking the cookie, so the very first check hits Proxy B and never Proxy A.
+  let proxyAHits = 0, proxyBHits = 0;
+  const proxyServerA = net.createServer(socket => { proxyAHits++; socket.destroy(); });
+  const proxyServerB = net.createServer(socket => { proxyBHits++; socket.destroy(); });
+  await new Promise(resolve => proxyServerA.listen(0, '127.0.0.1', resolve));
+  await new Promise(resolve => proxyServerB.listen(0, '127.0.0.1', resolve));
+  try {
+    const proxyA = `http://127.0.0.1:${proxyServerA.address().port}`;
+    const proxyB = `http://127.0.0.1:${proxyServerB.address().port}`;
+    const addProxyRes = await fetch(`${setup.origin}/admin/api/proxies`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${setup.adminToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'proxy-a', url: proxyA, weight: 1 })
+    });
+    assert.equal(addProxyRes.status, 200);
+    const cookie = REQUIRED_COOKIES.map(n => `${n}=v-${n}`).join('; ');
+    await assert.rejects(importCookie(setup, cookie, { proxy: proxyB }));
+    assert.equal(proxyAHits, 0, 'first cookie check must not go through existing Proxy A');
+    assert.equal(proxyBHits, 1, 'first cookie check must go through chosen Proxy B');
+  } finally {
+    await new Promise(resolve => proxyServerA.close(resolve));
+    await new Promise(resolve => proxyServerB.close(resolve));
+  }
   console.log(JSON.stringify({ platform: process.platform, arch: process.arch, version: health.version,
     sha256: pin.sha256, source: download ? 'GitHub release' : 'local release artifact',
-    install: 'passed', startup: 'passed', auth: 'passed', models: models.data.length, reuse: 'passed' }));
+    install: 'passed', startup: 'passed', auth: 'passed', proxyBind: 'passed', models: models.data.length, reuse: 'passed' }));
 } catch (error) {
   console.error(log);
   throw error;
@@ -76,6 +109,7 @@ try {
     await Promise.race([exited, pause(5000, undefined, { ref: false })]);
     if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
   }
+  for (const socket of heldSockets) socket.destroy();
   await new Promise(resolve => offlineProxy.close(resolve));
   fs.rmSync(dir, { recursive: true, force: true });
 }

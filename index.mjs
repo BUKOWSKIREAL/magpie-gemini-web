@@ -1,6 +1,6 @@
 import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER } from './lib/backend.mjs';
 import { ensureBackend, localBackend } from './lib/native.mjs';
-import { parseCookieInput, importCookie } from './lib/setup.mjs';
+import { parseCookieInput, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
 import { taskSupported, taskMethod, taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
 
@@ -55,7 +55,7 @@ async function forwardManaged(input, init, getAuth, opts) {
   }
   if (!managedBackend(c.baseURL)) return res;
   try {
-    await ensureBackend();
+    await ensureBackend({ proxy: opts.proxy });
   } catch {
     return res;
   }
@@ -68,11 +68,30 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
   }
   const { studio: _studio, ...webOptions } = options;
   const opts = settings(webOptions);
+  const proxyPrompt = {
+    type: 'text',
+    key: 'proxy',
+    message: '访问 Google 的代理地址（无需代理或已在代理池配置可留空）',
+    placeholder: opts.proxy || 'http://127.0.0.1:7890',
+    validate: value => {
+      try {
+        validateProxyURL(value);
+      } catch (e) {
+        return e.message;
+      }
+    }
+  };
 
   // Bring a backend set up earlier back after Magpie or the computer restarts. Not awaited:
   // requests that arrive first start it themselves through forwardManaged.
   if (localBackend()) {
-    ensureBackend().catch(err => console.error(`[gemini-web] could not start the local backend: ${err.message}`));
+    ensureBackend({ proxy: opts.proxy })
+      .then(async local => {
+        if (!opts.proxy) return;
+        await requireLoginBackend(local);
+        await ensureProxy(local, opts.proxy);
+      })
+      .catch(err => console.error(`[gemini-web] could not start the local backend: ${err.message}`));
   }
 
   return {
@@ -86,11 +105,18 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       methods: [{
         type: 'oauth',
         label: '一键配置本地 Gemini Web（推荐）',
-        // Installs and starts the pinned backend while the user copies the Gemini cookie.
+        prompts: [proxyPrompt],
+        ask(inputs) {
+          return inputs && 'proxy' in inputs ? null : proxyPrompt;
+        },
+        // Installs and starts the pinned backend while the user copies the Gemini cookie; the
+        // callback then waits for it, configures its proxy pool when a proxy URL is given, and
+        // imports the cookie (importCookie checks the backend can bind the account to a proxy).
         // The result carries the backend's own API key, so Magpie saves an API-key sign-in,
         // one for each Google account (see signInFor).
-        async authorize() {
-          const ready = ensureBackend();
+        async authorize(inputs) {
+          const proxy = validateProxyURL(inputs?.proxy || opts.proxy || '');
+          const ready = ensureBackend({ proxy });
           ready.catch(() => {});
           return {
             url: GEMINI_URL,
@@ -101,7 +127,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
               try {
                 cookie = parseCookieInput(code);
                 local = await ready;
-                added = await importCookie(local, cookie);
+                added = await importCookie(local, cookie, proxy ? { proxy } : {});
               } catch (err) {
                 return { type: 'failed', error: err.message };
               }
@@ -208,7 +234,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
           return await listModels(c, opts);
         } catch (err) {
           if (!err.unreachable || !managedBackend(c.baseURL)) throw err;
-          await ensureBackend();
+          await ensureBackend({ proxy: opts.proxy });
           return listModels(c, opts);
         }
       }

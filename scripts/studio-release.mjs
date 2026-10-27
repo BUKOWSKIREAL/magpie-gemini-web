@@ -62,6 +62,8 @@ try {
   npm(['ci', '--no-audit', '--no-fund']);
   npm(['run', 'lint']);
   npm(['run', 'build']);
+  // Node's gzip differs between builders; Go's is the same everywhere (see studio-regzip.go).
+  go(['run', path.join(root, 'scripts/studio-regzip.go'), path.join(source, 'internal/webui/dist')]);
   go(['test', '-mod=readonly', './cmd/...', './internal/...', '-count=1']);
   const binaries = {};
   for (const key of target ? [target] : Object.keys(platforms)) {

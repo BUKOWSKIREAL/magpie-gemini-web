@@ -51,6 +51,8 @@ jobs:
           fi
           npm pack --dry-run
       - uses: actions/upload-artifact@v4
+        # Kept on failure too, so a pin mismatch can be compared with the local build.
+        if: always()
         with:
           name: studio-${{ matrix.runner }}
           path: studio-build/release/*

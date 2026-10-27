@@ -27,6 +27,7 @@
     "scripts/studio.mjs",
     "scripts/studio-release.mjs",
     "scripts/studio-archive.go",
+    "scripts/studio-regzip.go",
     "scripts/studio-managed-smoke.mjs",
     "patches/",
     "native-task/lib/",

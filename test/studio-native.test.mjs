@@ -135,6 +135,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(envContent.includes('WAA_BACKEND=go'), 'WAA_BACKEND must be go');
     assert.ok(envContent.includes('UPSTREAM_CHANNELS=playground'), 'UPSTREAM_CHANNELS must be playground');
     assert.ok(envContent.includes('BUILD_NATIVE_NONSTREAM=false'));
+    assert.ok(envContent.includes('NONSTREAM_KEEPALIVE=false'));
     assert.ok(envContent.includes('TEMPORARY_CHAT=true'));
     assert.ok(envContent.includes('PER_ACCOUNT_CONCURRENCY=1'));
     assert.ok(envContent.includes('WARM_WORKER_LIMIT=1'));
@@ -142,6 +143,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(envContent.includes('REQUEST_TIMEOUT=30m'));
     assert.ok(envContent.includes('INIT_TIMEOUT=2m'));
     assert.ok(envContent.includes(`LISTEN_ADDR=127.0.0.1:${config.port}`));
+    assert.ok(envContent.includes('PREVIEW_LISTEN_ADDR=127.0.0.1:2050'));
     assert.ok(envContent.includes(`PROXY_API_KEY=${config.apiKey}`));
     assert.ok(envContent.includes(`ADMIN_PASSWORD=${config.adminPassword}`));
 
@@ -530,7 +532,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const { dataDir } = installedStandIn('managed-version-upgrade');
     const local = localStudio({ dataDir });
     // An earlier plugin's managed build is replaced like an official one, not reported as custom
-    for (const version of ['v0.2.12', 'v0.2.13', 'v0.2.14', 'v0.2.13-magpie.1', 'v0.2.13-magpie.9', 'v0.1.99-magpie.3']) {
+    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
       const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
       assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
     }
@@ -544,7 +546,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    for (const version of ['v0.2.15', 'v1.0.0', 'v0.2.14-magpie.2', 'v0.2.15-magpie.1', 'v0.2.13-custom', 'unknown']) {
+    for (const version of ['v0.2.17', 'v1.0.0', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.15-custom', 'unknown']) {
       const fetchFn = async (url, init) => {
         if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
@@ -577,7 +579,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(manifest, JSON.stringify(old));
     const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
     const child = spawn(bin, ['-e', `process.on('message', () => { ${STAND_IN_SERVICE} }); process.send('ready');`], {
-      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.15', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
+      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.17', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc']
     });
     const exited = new Promise(resolve => child.on('exit', resolve));
@@ -1452,6 +1454,18 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       const config = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'));
       fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ ...config, port: busy }) + '\n', { mode: 0o600 });
       assert.equal(ensureStudioConfig(dataDir).port, busy);
+
+      // PREVIEW_LISTEN_ADDR avoids LISTEN_ADDR's port and moves off a busy port before launch
+      const previewDir = path.join(tmpRoot, 'preview-port-test');
+      ensureStudioConfig(previewDir, '', { port: 2050 });
+      assert.equal(readStudioEnv(previewDir).PREVIEW_LISTEN_ADDR, '127.0.0.1:2051');
+      const envPath = path.join( dataDir, '.env');
+      fs.writeFileSync(envPath, fs.readFileSync(envPath, 'utf8').replace(/PREVIEW_LISTEN_ADDR=.*/, `PREVIEW_LISTEN_ADDR=127.0.0.1:${busy}`));
+      fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(config) + '\n', { mode: 0o600 });
+      spawned = 0;
+      await ensureStudio({ dataDir, fetchFn, spawnFn: () => { spawned++; return { pid: 1, on: () => {}, unref: () => {} }; } });
+      assert.notEqual(readStudioEnv(dataDir).PREVIEW_LISTEN_ADDR, `127.0.0.1:${busy}`);
+      assert.notEqual(readStudioEnv(dataDir).PREVIEW_LISTEN_ADDR, `127.0.0.1:${config.port}`);
     } finally {
       await new Promise(r => taken.close(r));
     }
