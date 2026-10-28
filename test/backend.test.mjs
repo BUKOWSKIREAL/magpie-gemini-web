@@ -5,9 +5,10 @@ import zlib from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { GeminiWebPlugin } from '../index.mjs';
+import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
 import {
   DEFAULT_BASE,
+  PLUGIN_ICON,
   normalizeBaseURL,
   settings,
   credentials,
@@ -1051,5 +1052,21 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
     const res = await send('broken_models_key', { model: 'gemini-4-argon', reasoning_effort: 'high' });
     assert.equal(res.status, 200);
     assert.deepEqual(chatModels, ['gemini-4-argon']);
+  });
+});
+
+describe('23. Plugin icon metadata for Magpie', () => {
+  it('declares a valid base64 SVG data URI in package.json and both provider auth hooks', async () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.equal(pkg.magpie?.icon, PLUGIN_ICON);
+    assert.match(PLUGIN_ICON, /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+$/);
+
+    const svg = Buffer.from(PLUGIN_ICON.slice('data:image/svg+xml;base64,'.length), 'base64').toString('utf8');
+    assert.match(svg, /^<svg\b[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"[^>]*>[\s\S]*<\/svg>$/);
+
+    const web = await GeminiWebPlugin();
+    const studio = await AIStudioPlugin();
+    assert.equal(web.auth.icon, PLUGIN_ICON);
+    assert.equal(studio.auth.icon, PLUGIN_ICON);
   });
 });
