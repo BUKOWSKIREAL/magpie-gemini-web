@@ -39,6 +39,7 @@
     "native-task/LICENSE",
     "README.md",
     "README.en.md",
+    "docs/logo.svg",
     "docs/backend-release.md",
     "docs/studio-release.md",
     "LICENSE",
@@ -51,7 +52,9 @@
     "opencode",
     "provider",
     "gemini",
-    "gemini-web"
+    "gemini-web",
+    "ai-studio",
+    "google-ai-studio"
   ],
   "engines": {
     "node": ">=22"
