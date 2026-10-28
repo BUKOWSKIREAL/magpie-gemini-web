@@ -178,3 +178,17 @@ On macOS, Gemini Web sign-in includes an experimental **macOS Native Task** opti
 ## License
 
 MIT. The upstream `gemini-web2api-go` project is also MIT (see `LICENSE-UPSTREAM`).
+
+---
+
+## Star History
+
+<p align="center">
+  <a href="https://www.star-history.com/#BUKOWSKIREAL/magpie-gemini-web&amp;Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=BUKOWSKIREAL/magpie-gemini-web&amp;type=Date&amp;theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BUKOWSKIREAL/magpie-gemini-web&amp;type=Date" />
+      <img alt="GitHub star history for magpie-gemini-web" src="https://api.star-history.com/svg?repos=BUKOWSKIREAL/magpie-gemini-web&amp;type=Date" width="800" />
+    </picture>
+  </a>
+</p>

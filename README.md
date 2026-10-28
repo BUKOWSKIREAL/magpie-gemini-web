@@ -182,3 +182,17 @@ macOS 用户登录 Gemini Web 时会额外看到「macOS 原生 Task（实验性
 ## 许可证
 
 MIT。上游 `gemini-web2api-go` 同为 MIT（见 `LICENSE-UPSTREAM`）。
+
+---
+
+## Star 趋势
+
+<p align="center">
+  <a href="https://www.star-history.com/#BUKOWSKIREAL/magpie-gemini-web&amp;Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=BUKOWSKIREAL/magpie-gemini-web&amp;type=Date&amp;theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=BUKOWSKIREAL/magpie-gemini-web&amp;type=Date" />
+      <img alt="magpie-gemini-web 的 GitHub Star 增长趋势" src="https://api.star-history.com/svg?repos=BUKOWSKIREAL/magpie-gemini-web&amp;type=Date" width="800" />
+    </picture>
+  </a>
+</p>
