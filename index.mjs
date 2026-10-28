@@ -1,4 +1,4 @@
-import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER } from './lib/backend.mjs';
+import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER, PLUGIN_ICON } from './lib/backend.mjs';
 import { ensureBackend, localBackend } from './lib/native.mjs';
 import { parseCookieInput, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
@@ -101,6 +101,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
     },
     auth: {
       provider: ID,
+      icon: PLUGIN_ICON,
       maxConcurrency: 1,
       methods: [{
         type: 'oauth',
