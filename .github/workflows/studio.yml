@@ -117,7 +117,7 @@ jobs:
             echo "Download the \`candidate-pins\` artifact over \`lib/studio-release.json\`, commit it, and let verification rebuild it:"
             echo
             echo '```sh'
-            echo "gh run download $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --name candidate-pins --dir lib"
+            echo "dir=\"\$(mktemp -d)\" && gh run download $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --name candidate-pins --dir \"\$dir\" && cp \"\$dir/studio-release.json\" lib/studio-release.json"
             echo '```'
             echo
             echo '```diff'

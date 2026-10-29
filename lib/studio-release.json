@@ -40,13 +40,13 @@
   "binaries": {
     "darwin-arm64": {
       "asset": "aistudio2api-v0.2.17-magpie.1-darwin-arm64.tar.gz",
-      "sha256": "628fc2be1501ba8793ddbd6ec75d6049336626b8b1012218f2cbbdedca83dd1e",
-      "binarySha256": "5c931ffe915439ce01bf7af701f5e2f917c7d34165db48a436dae622e6bbdd47"
+      "sha256": "10a6f71fcd8313b4d3afc72797027454ff45ae545dfd2bbd96cc0b4b97004517",
+      "binarySha256": "5978c56cb705eb1b449e59b772655aac2b3aa933da82e71ce28e7d6f7029e8ef"
     },
     "darwin-x64": {
       "asset": "aistudio2api-v0.2.17-magpie.1-darwin-amd64.tar.gz",
-      "sha256": "54912ad5e3cf78fd2288938e4bfc64f3f61f7d6becb0a796f23f31911e4137ff",
-      "binarySha256": "89a3dcc393efb2e9c5d8252e4403734071ff10698ebd216a56865003984caf06"
+      "sha256": "44527571d9294db1451ebb215552a76f3836be9e3a1a5e5fd79bfc57ad6b9878",
+      "binarySha256": "f3b3d48094d1a7849c455b31487db5e4569de00124d092d1c639d63fb0162178"
     },
     "linux-x64": {
       "asset": "aistudio2api-v0.2.17-magpie.1-linux-amd64.tar.gz",

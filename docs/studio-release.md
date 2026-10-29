@@ -63,10 +63,11 @@ node scripts/studio-release.mjs --source=/path/to/AIStudio2API --verify
    ```
 
    每个 runner 构建、测试、记录自己平台的哈希；`Collect candidate pins` 作业用 `scripts/studio-pins.mjs` 校验所有构建记录来自同一源码、补丁和工具链，再把五个平台合并成 `candidate-pins` 产物，并在作业摘要中给出 diff。
-3. 下载产物覆盖清单后提交：
+3. 下载产物覆盖清单后提交（`gh run download` 不覆盖已有文件，所以先下载到临时目录）：
 
    ```bash
-   gh run download <run-id> --name candidate-pins --dir lib
+   dir="$(mktemp -d)" && gh run download <run-id> --name candidate-pins --dir "$dir" \
+     && cp "$dir/studio-release.json" lib/studio-release.json
    ```
 
 4. 推送后，PR 上的验证会在全新 runner 上重新构建并严格比对。这一步证明 pin 可以复现，而不只是记录了一次构建结果。
@@ -87,10 +88,11 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 ## 本次升级验证（2026-10-29）
 
-- macOS arm64 本机完成五个平台构建，并再次构建通过全部安装包及二进制 SHA-256 校验。
-- 上游前端 lint/build、Go 测试（含迁移补丁测试）通过；插件完整测试 203 项通过，无跳过。
-- macOS arm64 真实安装冒烟验证通过；Linux 二进制为静态链接，Windows 二进制只导入系统 DLL；npm 打包检查包含迁移补丁，排除构建产物。
-- Linux/Windows 真机运行、不同构建机器的 CGO 哈希一致性，以及新版 Google 登录/生成端到端验证尚未完成。现有 CI 保持严格哈希校验；Apple SDK 或 MinGW 工具链不同可能导致差异，需要发布前核对。
+- 上游前端 lint/build、Go 测试（含迁移补丁测试）通过；插件完整测试 207 项通过，无跳过。
+- Linux 二进制为静态链接，Windows 二进制只导入 UCRT 与 KERNEL32、PE 时间戳为 0；npm 打包检查包含迁移补丁，排除构建产物。
+- 跨机器一致性：Linux 与 Windows 的 pin 在 macOS arm64 本机交叉编译生成，CI 的 Linux x64/arm64 和 Windows x64 runner 原生重建后哈希完全一致；CI 候选构建得到的这三个平台哈希也与本机相同。macOS 的 pin 由 CI 在 Xcode 26.3 下生成，另一次独立的 CI 构建得到相同的 darwin-arm64 哈希。
+- 五个平台都在 CI 原生 runner 上通过真实安装冒烟验证（含旧请求正文迁移及重启）和插件测试。
+- 新版 Google 登录/生成端到端验证尚未完成。
 - 此分支未发布后端 release 或 npm 包。本机日常后端仍使用 `0.2.16-magpie.1`，新版仅在临时数据目录运行。
 
 发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.2.17-magpie.1` release。该 release 可公开下载后，才能发布引用它的插件版本，否则新安装会遇到 404。构建脚本及验证 CI 不自动发布 release 或 npm 包。
