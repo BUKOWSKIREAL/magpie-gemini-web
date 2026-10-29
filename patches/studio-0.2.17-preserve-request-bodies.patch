@@ -1,0 +1,160 @@
+diff --git a/internal/requestdb/legacy_bodies.go b/internal/requestdb/legacy_bodies.go
+new file mode 100644
+index 0000000..5569c03
+--- /dev/null
++++ b/internal/requestdb/legacy_bodies.go
+@@ -0,0 +1,49 @@
++package requestdb
++
++import "database/sql"
++
++// migrateLegacyBodies preserves pre-0.2.17 plaintext bodies before removing their old table.
++func migrateLegacyBodies(db *sql.DB) error {
++	var exists bool
++	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='bodies')`).Scan(&exists); err != nil || !exists {
++		return err
++	}
++	tx, err := db.Begin()
++	if err != nil {
++		return err
++	}
++	defer tx.Rollback()
++	rows, err := tx.Query(`SELECT id,time,request,request_size,response,response_size FROM bodies ORDER BY seq`)
++	if err != nil {
++		return err
++	}
++	defer rows.Close()
++	for rows.Next() {
++		var id, request, response string
++		var at, requestSize, responseSize int64
++		if err := rows.Scan(&id, &at, &request, &requestSize, &response, &responseSize); err != nil {
++			return err
++		}
++		req, err := compress(request)
++		if err != nil {
++			return err
++		}
++		res, err := compress(response)
++		if err != nil {
++			return err
++		}
++		if _, err := tx.Exec(`INSERT OR IGNORE INTO request_bodies (id,time,request,request_size,response,response_size) VALUES (?,?,?,?,?,?)`, id, at, req, requestSize, res, responseSize); err != nil {
++			return err
++		}
++	}
++	if err := rows.Err(); err != nil {
++		return err
++	}
++	if err := rows.Close(); err != nil {
++		return err
++	}
++	if _, err := tx.Exec(`DROP TABLE bodies`); err != nil {
++		return err
++	}
++	return tx.Commit()
++}
+diff --git a/internal/requestdb/legacy_bodies_test.go b/internal/requestdb/legacy_bodies_test.go
+new file mode 100644
+index 0000000..2761c06
+--- /dev/null
++++ b/internal/requestdb/legacy_bodies_test.go
+@@ -0,0 +1,77 @@
++package requestdb
++
++import (
++	"context"
++	"path/filepath"
++	"testing"
++
++	"github.com/Mag1cFall/AIStudio2API/internal/sqlitedb"
++)
++
++func TestLegacyBodiesMigration(t *testing.T) {
++	file := filepath.Join(t.TempDir(), "requests.db")
++	db, err := sqlitedb.Open(file)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_, err = db.Exec(`CREATE TABLE bodies (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, time INTEGER NOT NULL, request TEXT NOT NULL, request_size INTEGER NOT NULL, response TEXT NOT NULL, response_size INTEGER NOT NULL);
++INSERT INTO bodies (id,time,request,request_size,response,response_size) VALUES ('old',1234,'旧请求',100,'reply',200);`)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Close(); err != nil {
++		t.Fatal(err)
++	}
++	for round := range 2 {
++		store, err := Open(file, func(string, string) {})
++		if err != nil {
++			t.Fatal(err)
++		}
++		body, err := store.RequestBody(context.Background(), "old")
++		if err != nil {
++			t.Fatal(err)
++		}
++		if body.Request != "旧请求" || body.Response != "reply" || body.RequestSize != 100 || body.ResponseSize != 200 || body.Time.UnixMilli() != 1234 {
++			t.Fatalf("changed body: %+v", body)
++		}
++		var old int
++		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='bodies'`).Scan(&old); err != nil || old != 0 {
++			t.Fatalf("old table: %d, %v", old, err)
++		}
++		if round == 0 {
++			// A retry must keep an already migrated body over a stale legacy copy.
++			if _, err := store.db.Exec(`CREATE TABLE bodies (seq INTEGER, id TEXT, time INTEGER, request TEXT, request_size INTEGER, response TEXT, response_size INTEGER);
++INSERT INTO bodies VALUES (1,'old',9999,'stale',1,'stale',1);`); err != nil {
++				t.Fatal(err)
++			}
++		}
++		if err := store.Close(); err != nil {
++			t.Fatal(err)
++		}
++	}
++}
++
++func TestLegacyBodiesMigrationRollback(t *testing.T) {
++	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "requests.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer db.Close()
++	if _, err := db.Exec(schema + `CREATE TABLE bodies (seq INTEGER, id TEXT, time INTEGER, request TEXT, request_size INTEGER, response TEXT, response_size INTEGER);
++INSERT INTO bodies VALUES (1,'good',1234,'request',1,'reply',1),(2,'bad',1234,NULL,1,'reply',1);`); err != nil {
++		t.Fatal(err)
++	}
++	if err := migrateLegacyBodies(db); err == nil {
++		t.Fatal("expected invalid legacy row to fail")
++	}
++	var old, migrated int
++	if err := db.QueryRow(`SELECT COUNT(*) FROM bodies`).Scan(&old); err != nil {
++		t.Fatal(err)
++	}
++	if err := db.QueryRow(`SELECT COUNT(*) FROM request_bodies`).Scan(&migrated); err != nil {
++		t.Fatal(err)
++	}
++	if old != 2 || migrated != 0 {
++		t.Fatalf("migration was not atomic: old=%d new=%d", old, migrated)
++	}
++}
+diff --git a/internal/requestdb/requestdb.go b/internal/requestdb/requestdb.go
+index bff3477..ae92661 100644
+--- a/internal/requestdb/requestdb.go
++++ b/internal/requestdb/requestdb.go
+@@ -58,7 +58,6 @@ CREATE INDEX IF NOT EXISTS requests_account_time ON requests(account, time);
+ CREATE INDEX IF NOT EXISTS requests_state_time ON requests(state, time);
+ CREATE TABLE IF NOT EXISTS hours (` + rollupColumns + `) WITHOUT ROWID;
+ CREATE TABLE IF NOT EXISTS days (` + rollupColumns + `) WITHOUT ROWID;
+-DROP TABLE IF EXISTS bodies;
+ CREATE TABLE IF NOT EXISTS request_bodies (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, time INTEGER NOT NULL,
+  request BLOB NOT NULL, request_size INTEGER NOT NULL, response BLOB NOT NULL, response_size INTEGER NOT NULL);`
+@@ -121,6 +120,9 @@ func Open(path string, log Logger) (*Store, error) {
+ 	if _, err := db.Exec(schema); err != nil {
+ 		return nil, errors.Join(fmt.Errorf("初始化请求账本: %w", err), db.Close())
+ 	}
++	if err := migrateLegacyBodies(db); err != nil {
++		return nil, errors.Join(fmt.Errorf("迁移请求正文: %w", err), db.Close())
++	}
+ 	if err := addCachedTokens(db); err != nil {
+ 		return nil, errors.Join(fmt.Errorf("初始化请求账本: %w", err), db.Close())
+ 	}

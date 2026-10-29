@@ -316,6 +316,26 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  it('uses v0.2.17 model thinking levels and keeps the older catalog fallback', async () => {
+    const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/studio-catalog-v0.2.12.json', import.meta.url), 'utf8'));
+    const base = catalog.data.find(m => m.id === 'gemini-4-argon');
+    serverResponses['/v1/models'] = { status: 200, body: JSON.stringify({ data: [
+      { ...base, id: 'gemini-two-levels', thinking_levels: ['low', 'high'] },
+      { ...base, id: 'gemini-no-levels', thinking_levels: [] },
+      { ...base, id: 'gemini-invalid-levels', thinking_levels: ['high', '__proto__', null, 'high'] },
+      base
+    ] }) };
+    try {
+      const models = await listStudioModels({ baseURL: serverURL, key: 'test-key' }, studioSettings());
+      assert.deepEqual(models['gemini-two-levels'].variants, { low: {}, high: {} });
+      assert.deepEqual(models['gemini-no-levels'].variants, {});
+      assert.deepEqual(models['gemini-invalid-levels'].variants, { high: {} });
+      assert.deepEqual(models[base.id].variants, { minimal: {}, low: {}, medium: {}, high: {} });
+    } finally {
+      delete serverResponses['/v1/models'];
+    }
+  });
+
   it('Studio defaults to a 30-minute wait and still respects explicit timeouts', () => {
     assert.equal(studioSettings().requestTimeoutMs, 1800000);
     assert.equal(studioSettings({ requestTimeoutMs: 120000 }).requestTimeoutMs, 120000);
@@ -741,7 +761,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
     // Nor does the sign-in before its instructions show: the download waits in the callback
     const first = await google.authorize({});
-    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*约 25 MB[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
+    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*约 30 MB[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
     assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'authorize may not install');
     const shown = await (await fetch(`${first.url}/status`)).json();
     assert.deepEqual(shown.steps.map(s => [s.state, s.detail ?? '']), [['active', '正在检查'], ['pending', ''], ['pending', '']]);
