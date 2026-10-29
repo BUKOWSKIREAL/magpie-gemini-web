@@ -18,6 +18,8 @@ import {
 
 // The plugin starts the backend it manages in the data dir; keep tests away from the real one.
 process.env.GEMINI_WEB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-gemini-web-test-'));
+process.env.AI_STUDIO_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-icon-test-'));
+after(() => fs.rmSync(process.env.AI_STUDIO_DATA_DIR, { recursive: true, force: true }));
 
 describe('1. URL normalization/root/subpath/HTTPS/local IPv6', () => {
   it('normalizes root path to /v1', () => {

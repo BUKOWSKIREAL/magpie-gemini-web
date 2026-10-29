@@ -1,12 +1,23 @@
 name: Verify managed AI Studio release
 
+# Verification (pull requests, and the dispatch run publish-studio.yml takes) rebuilds each target on
+# its own runner and requires the archive and executable hashes in lib/studio-release.json.
+# A candidate run (dispatch with write_pins) builds and tests the same way, then collects the five
+# targets' hashes into a lib/studio-release.json artifact to commit. macOS pins can only come from
+# the pinned Xcode, so they are made here rather than on a maintainer's machine.
 on:
   workflow_dispatch:
+    inputs:
+      write_pins:
+        description: Make candidate pins instead of verifying the committed ones
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'lib/studio*.mjs'
       - 'lib/studio-release.json'
       - 'scripts/studio*'
+      - 'patches/studio-*'
       - 'test/studio*.mjs'
       - '.github/workflows/studio.yml'
 
@@ -15,7 +26,7 @@ permissions:
 
 jobs:
   studio:
-    name: Build and run (${{ matrix.runner }})
+    name: ${{ inputs.write_pins && 'Candidate' || 'Build and run' }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
@@ -31,29 +42,90 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '26.8.2'
+      - name: Read pinned toolchains
+        id: pins
+        run: |
+          node --input-type=module -e '
+            import r from "./lib/studio-release.json" with { type: "json" };
+            console.log(`go=${r.goVersion}\nzig=${r.toolchains.zig}\nxcode=${r.toolchains.xcode.version}`);
+          ' >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27.1'
+          go-version: ${{ steps.pins.outputs.go }}
           cache: false
-      - name: Build pinned source, test, and compare archive and executable hashes
-        run: node scripts/studio-release.mjs --target=host --verify
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'Linux'
+        with:
+          version: ${{ steps.pins.outputs.zig }}
+      - name: Select pinned Xcode
+        if: runner.os == 'macOS'
+        env:
+          XCODE: /Applications/Xcode_${{ steps.pins.outputs.xcode }}.app
+        run: |
+          if [[ ! -d "$XCODE" ]]; then
+            echo "::error::$XCODE is not on this runner image; pin an Xcode it has in lib/studio-release.json and make new candidate pins"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$XCODE/Contents/Developer" >> "$GITHUB_ENV"
+      # Windows needs no setup: the build fetches the pinned llvm-mingw and checks its SHA-256.
+      - name: Build pinned source, test, and ${{ inputs.write_pins && 'record candidate' || 'compare archive and executable' }} hashes
+        run: node scripts/studio-release.mjs --target=host ${{ inputs.write_pins && '--write-pins' || '--verify' }}
       - name: Test real install, update refusal, admin page, and stop without Google accounts
         run: node scripts/studio-managed-smoke.mjs
-      - name: Plugin tests with the verified local archive
+      - name: Plugin tests with the built local archive
         run: |
           export AI_STUDIO_TEST_ARCHIVE="$(node --input-type=module -e 'import r from "./lib/studio-release.json" with {type:"json"}; console.log(process.cwd()+"/studio-build/release/"+r.binaries[process.platform+"-"+process.arch].asset)')"
           # The macOS-only Task route and older Web fixtures assume POSIX.
           # Exercise the complete Studio suite on Windows, plus the real binary above.
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            node --test test/studio-native.test.mjs test/studio.test.mjs
+            node --test test/studio-native.test.mjs test/studio.test.mjs test/studio-pins.test.mjs
           else
             npm test
           fi
           npm pack --dry-run
       - uses: actions/upload-artifact@v4
-        # Kept on failure too, so a pin mismatch can be compared with the local build.
+        # Kept on failure too, so a pin mismatch can be compared through its build record.
+        # publish-studio.yml takes only studio-* artifacts, so candidates can never be uploaded.
         if: always()
         with:
-          name: studio-${{ matrix.runner }}
+          name: ${{ inputs.write_pins && 'candidate' || 'studio' }}-${{ matrix.runner }}
           path: studio-build/release/*
+          if-no-files-found: error
+
+  pins:
+    name: Collect candidate pins
+    if: inputs.write_pins
+    needs: studio
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.2'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: candidate-*
+          path: candidates
+      - name: Pin all targets from their candidate build records
+        run: node scripts/studio-pins.mjs candidates/*/build-*.json
+      - name: Summarize
+        run: |
+          {
+            echo '## Candidate pins'
+            echo
+            echo "Download the \`candidate-pins\` artifact over \`lib/studio-release.json\`, commit it, and let verification rebuild it:"
+            echo
+            echo '```sh'
+            echo "dir=\"\$(mktemp -d)\" && gh run download $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --name candidate-pins --dir \"\$dir\" && cp \"\$dir/studio-release.json\" lib/studio-release.json"
+            echo '```'
+            echo
+            echo '```diff'
+            git diff -- lib/studio-release.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-pins
+          path: lib/studio-release.json
           if-no-files-found: error

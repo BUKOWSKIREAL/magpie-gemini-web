@@ -165,6 +165,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     Object.assign(saved, {
       PROXY: 'socks5://127.0.0.1:7890',
       REQUEST_TIMEOUT: '45m',
+      FIRST_EVENT_HEDGE: 'auto',
       MODEL_MAPPING: 'a=b',
       LISTEN_ADDR: '127.0.0.1:1',
       ADMIN_PASSWORD: 'changed'
@@ -175,6 +176,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const after = readStudioEnv(dataDir);
     assert.equal(after.PROXY, 'socks5://127.0.0.1:7890', 'the saved proxy is kept over one given');
     assert.equal(after.REQUEST_TIMEOUT, '45m');
+    assert.equal(after.FIRST_EVENT_HEDGE, 'auto');
     assert.equal(after.MODEL_MAPPING, 'a=b');
     assert.equal(after.ROUTING_STRATEGY, 'round robin');
     assert.equal(after.LISTEN_ADDR, `127.0.0.1:${config.port}`, 'this plugin\'s settings are its own');
@@ -183,6 +185,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     saveStudioProxy(dataDir, 'http://127.0.0.1:1082');
     assert.equal(readStudioEnv(dataDir).PROXY, 'http://127.0.0.1:1082');
     assert.equal(readStudioEnv(dataDir).REQUEST_TIMEOUT, '45m');
+    assert.equal(readStudioEnv(dataDir).FIRST_EVENT_HEDGE, 'auto');
   });
 
   it('1c. a missing PROXY is the one given, else the one an older config.json kept', () => {
@@ -532,7 +535,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const { dataDir } = installedStandIn('managed-version-upgrade');
     const local = localStudio({ dataDir });
     // An earlier plugin's managed build is replaced like an official one, not reported as custom
-    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
+    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
       const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
       assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
     }
@@ -546,7 +549,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    for (const version of ['v0.2.17', 'v1.0.0', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.15-custom', 'unknown']) {
+    for (const version of ['v0.2.18', 'v1.0.0', 'v0.2.17-magpie.2', 'v0.2.18-magpie.1', 'v0.2.15-custom', 'unknown']) {
       const fetchFn = async (url, init) => {
         if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
@@ -579,7 +582,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(manifest, JSON.stringify(old));
     const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
     const child = spawn(bin, ['-e', `process.on('message', () => { ${STAND_IN_SERVICE} }); process.send('ready');`], {
-      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.17', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
+      env: { ...process.env, PORT: String(localStudio({ dataDir }).port), VERSION: 'v0.2.18', DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc']
     });
     const exited = new Promise(resolve => child.on('exit', resolve));
@@ -1615,7 +1618,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
   it('31. the service is started with no proxy of its starter\'s, and empty ones the plugin host keeps', async t => {
     const { dataDir } = installedStandIn('proxy-env-test');
     // What Magpie's plugin host or a shell may have
-    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', AI_STUDIO_PROXY: undefined })) {
+    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', FIRST_EVENT_HEDGE: '1', AI_STUDIO_PROXY: undefined })) {
       const saved = process.env[k];
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -1632,6 +1635,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const proxies = Object.entries(env).filter(([k]) => /^(?:https?|all)_proxy$/i.test(k));
     assert.deepEqual(Object.fromEntries(proxies), { HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '' });
     assert.equal('PROXY' in env, false, 'the saved proxy is left to .env');
+    assert.equal('FIRST_EVENT_HEDGE' in env, false, 'host environment cannot override the saved hedge setting');
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'backend.launch.json'), 'utf8')).proxyEnv, 'none');
 
     // studio.proxy is still given as PROXY

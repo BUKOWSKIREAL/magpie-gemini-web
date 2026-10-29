@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2);
@@ -22,7 +23,23 @@ try {
   local = await installStudio({ dataDir, ...(archivePath ? { archivePath } : {}) });
   const bin = path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
   assert.equal(computeFileHash(bin), pin.binarySha256);
+  // A pre-0.2.17 ledger must survive the real process's first startup.
+  fs.mkdirSync(path.join(dataDir, 'runtime'), { recursive: true });
+  const db = new DatabaseSync(path.join(dataDir, 'runtime', 'requests.db'));
+  try {
+    db.exec(`CREATE TABLE bodies (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, time INTEGER NOT NULL,
+      request TEXT NOT NULL, request_size INTEGER NOT NULL, response TEXT NOT NULL, response_size INTEGER NOT NULL)`);
+    db.prepare('INSERT INTO bodies (id,time,request,request_size,response,response_size) VALUES (?,?,?,?,?,?)')
+      .run('legacy-smoke', 1234, '旧请求', 100, 'old response', 200);
+  } finally { db.close(); }
+  fs.appendFileSync(path.join(dataDir, '.env'), 'FIRST_EVENT_HEDGE=auto\n');
   await ensureStudio({ dataDir, managementOnly: true });
+  const migratedBody = await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body');
+  assert.equal(migratedBody.request, '旧请求');
+  assert.equal(migratedBody.response, 'old response');
+  assert.equal(migratedBody.request_size, 100);
+  assert.equal(migratedBody.response_size, 200);
+  assert.equal((await studioAdmin(local, 'GET', '/api/config')).first_event_hedge, 'auto');
   const pidBefore = fs.readFileSync(path.join(dataDir, 'backend.pid'), 'utf8');
   const status = await studioAdmin(local, 'GET', '/api/status');
   assert.equal(status.version, STUDIO_VERSION);
@@ -57,7 +74,10 @@ try {
   assert.match(panel, /version\.managed/);
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
   assert.equal((await studioStatus({ dataDir })).status, 'stopped');
-  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
+  await ensureStudio({ dataDir, managementOnly: true });
+  assert.deepEqual(await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body'), migratedBody);
+  assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
+  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved hedge setting, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
 } finally {
   let stopped = !local;
   if (local) stopped = (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;
