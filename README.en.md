@@ -67,10 +67,15 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 `ai-studio` lists the Nano Banana image models your account can use (such as `gemini-3.1-flash-image` and `gemini-3-pro-image`), for Magpie's image generation. **This needs Magpie v0.1.2075 or later**, the first to take a plugin's Gemini image models as models that draw.
 
-- **No need to tick them, or to pick them for a chat:** Magpie's Settings list them under **Images → Image generation**. Pick one there, or leave it on Automatic.
-- **How agents draw:** an agent calls Magpie's `generate_image` tool (the Magpie Image MCP from the Library), which draws with the model picked there; reference images make it an edit. To try it from the command line: `magpie tool generate_image "a magpie on a branch, watercolour" --size 16:9 -o magpie.png`.
+**Drawing from an agent** (pi, Claude Code, Codex and the rest alike):
+
+1. **Pick the model to draw with:** Magpie's Settings list these models under **Images → Image generation**. Pick one (such as `ai-studio/gemini-nano-banana-2.1`), or leave it on Automatic. There's no need to tick them in any model list.
+2. **Give the agent the drawing tool:** click **Give agents Magpie Image…** under that row, tick the agents that should draw in the Library it opens, then start a new session in the agent. With the Library turned off, the row says **Turn on the Library** instead: click that first. From the command line: `magpie library mcp add magpie-image magpie mcp image agents=pi` (several agents separated by commas, as in `agents=pi,claude`).
+3. **Chat as usual:** keep the agent on its usual chat model and ask it to draw something. It calls the `generate_image` tool, which draws with the model from step 1 and saves the image in the project's `generated-images/` folder; reference images make it an edit.
+
+- **Don't pick an image model as the chat model:** Magpie still keeps a plugin's models that draw in its chat model lists ([yetone/magpie#2792](https://github.com/yetone/magpie/issues/2792)). Picked there, they show no picture: an agent such as pi has no place for an image in the model's reply, so the image the model draws is dropped, while the model believes it was shown. They take no tool calls either, and have 32K–128K context windows.
+- **Drawing from the command line:** `magpie tool generate_image "a magpie on a branch, watercolour" --size 16:9 -o magpie.png`; add `--model ai-studio/gemini-3-pro-image` to draw with another model this once. If the terminal can't find the `magpie` command (step 2's command too), click **Add to PATH** on the **Command line** row of Magpie's Settings, then open a new terminal.
 - **Size:** `size` gives the aspect ratio. A ratio (such as `16:9` or `1:4`) is used as it is when the model takes it, else the nearest one it does; a size such as `1536x1024` is made the nearest usual ratio by Magpie first. `quality` makes no difference for these models.
-- **Don't tick them as chat models:** Magpie still keeps a plugin's models that draw in its chat model lists ([yetone/magpie#2792](https://github.com/yetone/magpie/issues/2792)). They take no tool calls and have 32K–128K context windows, so they make poor chat models for agents.
 - If you don't want the image models, turn them off with `studio.imageModels` (see the options below).
 
 ---
