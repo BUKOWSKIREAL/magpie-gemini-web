@@ -30,12 +30,14 @@
 | 目标 | 工具链 | 跨机器字节一致 |
 |---|---|---|
 | Linux x64/arm64 | Zig `toolchains.zig`（`zig cc` / `zig c++`），musl 静态链接，不依赖构建机器的 glibc | 是：Zig 是自带 libc 的交叉编译器，任何主机产物相同 |
-| Windows x64 | llvm-mingw `toolchains.llvmMingw`（Clang + LLD + UCRT），静态链接，PE 时间戳为 0 | 是：同上；构建脚本自动下载并按 SHA-256 校验 |
+| Windows x64 | llvm-mingw `toolchains.llvmMingw`（Clang + LLD + UCRT），静态链接，PE 时间戳为 0 | 是：同上；构建脚本自动下载并按 SHA-256 校验。Windows 的库（含 C++ 运行库）取自 Linux x64 归档，见下 |
 | macOS arm64/x64 | Xcode `toolchains.xcode`，最低目标 macOS 13（与 Go 1.27 一致），只能在 macOS 上构建 | 仅在同一 Xcode 下：Apple 链接器和 SDK 随 Xcode 变化 |
 
 - Zig 默认从 PATH 查找，也可用 `STUDIO_ZIG=/absolute/path/to/zig` 指定。
 - llvm-mingw 首次使用时下载到 `studio-build/toolchains/`（macOS、Linux x64、Windows x64 主机各有固定的归档及 SHA-256），之后复用。`STUDIO_MINGW_CC` 可指定其他 `x86_64-w64-mingw32-clang`（C++ 编译器取同目录的 `clang++`），但 `--verify` / `--write-pins` 要求其版本与 pin 一致。
+- llvm-mingw 的 Linux 与 Windows 归档里 Windows 目标库逐字节相同，macOS 归档里的是另行构建的，其中 C++ 运行库（libc++abi）会把各自的构建路径写进可执行文件。因此在 macOS 上构建 Windows 时，链接 Linux x64 归档（同样固定 SHA-256）里的目标库；各主机都以一个 `-L` 指明目标库目录，因为 cgo 会把每个链接参数写成生成代码的一行，参数个数不同会改变可执行文件里的行号表。
 - SpiderMonkey 静态库同样在首次使用时按目标下载到 `studio-build/toolchains/` 并校验 SHA-256，之后复用。
+- Linux（musl）的 SpiderMonkey 静态库带有 mozglue 的环境变量拦截函数（`libjs_static.a` 的 `Unified_cpp_mozglue_interposers0.o`）：除 `getenv` 外，`setenv` 等都经 `dlsym(RTLD_NEXT)` 找 C 库原函数，静态链接的程序找不到，便有意崩溃（`MOZ_CRASH`）；Go 的 `os.Setenv` 在 cgo 程序里正走这条路。构建脚本校验下载后用 `zig ar` 删除这个目标文件，改用 musl 自己的函数；找不到该文件时报错，提示核对新版 SpiderMonkey。上游测试只在动态链接的 glibc 库（`linux-amd64-gnu`）上运行，不会遇到这个问题。
 - Xcode 用 `DEVELOPER_DIR=/Applications/Xcode_<版本>.app/Contents/Developer` 选择，不需要改系统默认。不要用 beta 版 Xcode 制作发布包。
 - 所有目标都以 `-trimpath -buildvcs=false -ldflags=-buildid=` 编译：Go 默认的 build ID 会哈希 C 编译器路径等构建输入，导致不同机器上内容相同的程序哈希不同。
 - Windows 使用 Git Bash 执行命令，安装包运行和解压使用 Windows 自带 PowerShell。最终用户不需要构建工具。
@@ -91,7 +93,19 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 本次升级验证（2026-10-29）
+## 0.2.18 升级验证（2026-10-30，进行中）
+
+以下为本分支当前的实际状态，发布前以最新 CI 结果为准。
+
+- 上游 `go test` 与插件测试：macOS arm64/x64、Windows x64 的 CI 候选构建通过，并通过真实安装冒烟验证（含 `waa_backend=spidermonkey`、`search_model_aliases=false`）。Linux x64/arm64 的首次候选构建在上游测试 `TestUserCacheRootWithoutEnvironment` 的 `t.Setenv` 处崩溃（见上文环境变量拦截函数），修复后待重新运行。
+- 跨机器一致性：首次候选构建中，Windows 在 macOS 本机交叉编译的结果与 CI Windows runner 不同，原因是 macOS 版 llvm-mingw 的 C++ 运行库带有不同的构建路径（修复见上文）。修复后的哈希待 CI 重新比对。
+- 正式 pin 仍为全零占位值，需由 CI 候选构建生成，再经一次独立的验证构建复现。
+- 新版 Google 登录/生成端到端验证尚未完成。
+- 此分支未发布后端 release 或 npm 包。
+
+## 0.2.17 升级验证（2026-10-29，历史记录）
+
+以下为上一版 `0.2.17-magpie.1` 的验证结果，不代表 0.2.18。
 
 - 上游前端 lint/build、Go 测试（含迁移补丁测试）通过；插件完整测试 207 项通过，无跳过。
 - Linux 二进制为静态链接，Windows 二进制只导入 UCRT 与 KERNEL32、PE 时间戳为 0；npm 打包检查包含迁移补丁，排除构建产物。
