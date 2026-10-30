@@ -17,6 +17,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Best for** | **Coding agents (recommended)** | General chat, web-only models & web quota |
 | **Tool calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
 | **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
+| **Image input** | On by default; chat models read images | Off by default; needs a signed-in cookie once on (see below) |
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
@@ -81,11 +82,14 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 <br>
 
-Tool calling is enabled by default; image input is disabled by default. Configure plugin options via the CLI:
+Tool calling is enabled by default. Image input is on by default for AI Studio and off for Gemini Web. Configure plugin options via the CLI:
 
 ```bash
-# Enable image input (applies to both providers)
+# Turn image input on for both providers
 magpie plugin options magpie-gemini-web '{"allowImages":true}'
+
+# Turn image input off for AI Studio
+magpie plugin options magpie-gemini-web '{"studio":{"allowImages":false}}'
 
 # Configure a proxy for AI Studio
 magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
@@ -98,7 +102,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | Option | Default | Scope | Description |
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | Shared (override via `studio.allowTools`) | Allow tool calls. When `false`, requests with tools return 400 |
-| `allowImages` | `false` | Shared (override via `studio.allowImages`) | Allow image input in a chat (an image model's reference images don't need it) |
+| `allowImages` | Web: `false`; Studio: `true` | Shared (override via `studio.allowImages`) | Allow image input in a chat (an image model's reference images don't need it). Gemini Web reads images only when signed in and returns 400 otherwise; in testing, `gemini-3.6-flash` waited until the timeout on a chat with an image, while `gemini-3.5-flash-lite` and `gemini-3.8-flash` answered |
 | `requestTimeoutMs` / `modelTimeoutMs` | Web: `240000` / `10000`; Studio: `1800000` / `10000` | Shared (override via `studio.*`) | Timeout (ms) per backend wait or model list fetch; resets on stream data, explicit settings take precedence |
 | `stripCitations` | `true` | `gemini-web` only | Strip `[cite: 1]` and `[cite_start]` markers from replies and tool arguments (not supported on AI Studio) |
 | `proxy` | none | `gemini-web` only | Proxy for the managed Gemini Web backend to reach Google (`http` / `https` / `socks5` / `socks5h`), or set `GEMINI_WEB_PROXY` env var / enter during sign-in |

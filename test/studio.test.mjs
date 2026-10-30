@@ -229,6 +229,14 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(withNested.allowTools, true);
     assert.equal(withNested.proxy, 'http://127.0.0.1:1082');
 
+    // Image input is on for AI Studio unless turned off, for both providers or for it alone;
+    // Gemini Web keeps it off by default
+    assert.equal(studioSettings().allowImages, true);
+    assert.equal(studioSettings({ allowImages: false }).allowImages, false);
+    assert.equal(studioSettings({ studio: { allowImages: false } }).allowImages, false);
+    assert.equal(studioSettings({ allowImages: false, studio: { allowImages: true } }).allowImages, true);
+    assert.equal(settings().allowImages, false);
+
     assert.equal(studioSettings().imageModels, true, 'Image models are listed by default');
     assert.equal(studioSettings({ studio: { imageModels: false } }).imageModels, false);
     assert.throws(() => studioSettings({ studio: { imageModels: 'no' } }), /studio\.imageModels: must be a boolean/);
@@ -303,7 +311,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         assert.equal(model.capabilities.toolcall, true, `${model.id} declares function calling`);
         assert.deepEqual(model.variants, { minimal: {}, low: {}, medium: {}, high: {} });
         assert.deepEqual(model.capabilities.output, { text: true, image: false });
-        assert.equal(model.capabilities.input.image, false, `${model.id} takes images only with allowImages`);
+        assert.equal(model.capabilities.input.image, true, `${model.id} reads a chat's images by default (media_resolution)`);
+        assert.equal(model.capabilities.attachment, true);
         assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
       }
       // An image model draws, on Gemini's API, where Magpie draws with a plugin's Gemini image
@@ -326,6 +335,17 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // Turned off, only the text models are listed
       const textOnly = await listStudioModels(c, studioSettings({ studio: { imageModels: false } }));
       assert.deepEqual(Object.keys(textOnly).sort(), textIds);
+
+      // Image input turned off, for both providers or for AI Studio alone: the text models take
+      // no images, while an image model still takes them to edit or draw from
+      for (const off of [{ allowImages: false }, { studio: { allowImages: false } }]) {
+        const noImages = await listStudioModels(c, studioSettings(off));
+        for (const id of textIds) {
+          assert.equal(noImages[id].capabilities.input.image, false, `${id} with ${JSON.stringify(off)}`);
+          assert.equal(noImages[id].capabilities.attachment, false);
+        }
+        for (const id of imageIds) assert.equal(noImages[id].capabilities.input.image, true);
+      }
 
       // A model no account's subscription covers is listed without channels (or with none)
       const argon = catalog.data.find(m => m.id === 'gemini-4-argon');
@@ -498,6 +518,46 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.deepEqual(bodyJSON.choices[0].message.tool_calls[0].extra_content, toolCall.extra_content);
 
     delete serverResponses['/v1/chat/completions'];
+  });
+
+  it('a chat\'s images reach the service by default, and are refused once image input is off', async () => {
+    serverResponses['/v1/chat/completions'] = { status: 200, body: JSON.stringify({
+      id: 'c_img', object: 'chat.completion',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'left=red, right=blue' }, finish_reason: 'stop' }]
+    }) };
+    const auth = { type: 'api', key: 'test-key', metadata: { mode: 'studio', baseURL: serverURL } };
+    const chat = {
+      model: 'gemini-3.5-flash-lite',
+      stream: false,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'What color is each half?' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n' } }
+      ] }]
+    };
+    const ask = async options => {
+      const plugin = await AIStudioPlugin({}, options);
+      const loader = await plugin.auth.loader(async () => auth);
+      return loader.fetch(`${serverURL}/chat/completions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(chat)
+      });
+    };
+    try {
+      let res = await ask({ studio: { baseURL: serverURL } });
+      assert.equal(res.status, 200);
+      assert.equal((await res.json()).choices[0].message.content, 'left=red, right=blue');
+      assert.equal(serverRequests[serverRequests.length - 1].url, '/v1/chat/completions');
+      assert.deepEqual(JSON.parse(serverRequests[serverRequests.length - 1].body).messages, chat.messages);
+
+      const sent = serverRequests.length;
+      for (const off of [{ allowImages: false, studio: { baseURL: serverURL } }, { studio: { baseURL: serverURL, allowImages: false } }]) {
+        res = await ask(off);
+        assert.equal(res.status, 400);
+        assert.match((await res.json()).error.message, /Image input is turned off/);
+      }
+      assert.equal(serverRequests.length, sent, 'nothing refused reached the service');
+    } finally {
+      delete serverResponses['/v1/chat/completions'];
+    }
   });
 
   it('an image model draws on Gemini\'s API at the service\'s /v1beta, its prompt\'s aspect ratio asked as imageConfig', async () => {

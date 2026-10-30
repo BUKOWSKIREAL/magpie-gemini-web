@@ -17,6 +17,7 @@
 | **适用场景** | **推荐 Coding Agent 使用** | 日常对话、使用网页版专属模型与额度 |
 | **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
 | **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` 中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
+| **图片输入** | 默认开启，对话模型可以读图 | 默认关闭；开启后需要登录（挂 Cookie），见下文 |
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
@@ -81,11 +82,14 @@
 
 <br>
 
-工具调用默认开启，图片输入默认关闭。可通过命令行修改插件配置：
+工具调用默认开启。图片输入在 AI Studio 默认开启，在 Gemini Web 默认关闭。可通过命令行修改插件配置：
 
 ```bash
-# 开启图片输入（对两个 Provider 生效）
+# 两个 Provider 都开启图片输入
 magpie plugin options magpie-gemini-web '{"allowImages":true}'
+
+# 关闭 AI Studio 的图片输入
+magpie plugin options magpie-gemini-web '{"studio":{"allowImages":false}}'
 
 # 为 AI Studio 配置代理
 magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:7890"}}'
@@ -98,7 +102,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | 选项 | 默认值 | 适用范围 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | 共用（可用 `studio.allowTools` 单独覆盖） | 允许工具调用。设为 `false` 时带工具的请求返回 400 |
-| `allowImages` | `false` | 共用（可用 `studio.allowImages` 单独覆盖） | 允许对话中的图片输入（图像模型的参考图不受它限制） |
+| `allowImages` | Web：`false`；Studio：`true` | 共用（可用 `studio.allowImages` 单独覆盖） | 允许对话中的图片输入（图像模型的参考图不受它限制）。Gemini Web 读图需要登录，未登录时返回 400；实测 `gemini-3.6-flash` 带图请求会一直等到超时，`gemini-3.5-flash-lite`、`gemini-3.8-flash` 正常 |
 | `requestTimeoutMs` / `modelTimeoutMs` | Web：`240000` / `10000`；Studio：`1800000` / `10000` | 共用（`studio.*` 可覆盖） | 单次等待后端 / 拉取模型列表的超时（毫秒）；收到流数据后重新计时，显式配置优先 |
 | `stripCitations` | `true` | 仅 `gemini-web` | 剥离回复与工具参数中的 `[cite: 1]`、`[cite_start]` 标记（AI Studio 不支持剥离） |
 | `proxy` | 无 | 仅 `gemini-web` | 一键配置后端访问 Google 的代理（`http` / `https` / `socks5` / `socks5h`），也可用环境变量 `GEMINI_WEB_PROXY` 或在登录第一步填写 |
