@@ -17,6 +17,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Best for** | **Coding agents (recommended)** | General chat, web-only models & web quota |
 | **Tool calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
 | **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
+| **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
 | **Local backend** | AIStudio2API (`v0.2.17`) | gemini-web2api-go (`4.26.0-magpie.1` optimized build) |
@@ -61,6 +62,18 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 ---
 
+## Image Generation (AI Studio)
+
+`ai-studio` lists the Nano Banana image models your account can use (such as `gemini-3.1-flash-image` and `gemini-3-pro-image`), for Magpie's image generation. **This needs Magpie v0.1.2075 or later**, the first to take a plugin's Gemini image models as models that draw.
+
+- **No need to tick them, or to pick them for a chat:** Magpie's Settings list them under **Images → Image generation**. Pick one there, or leave it on Automatic.
+- **How agents draw:** an agent calls Magpie's `generate_image` tool (the Magpie Image MCP from the Library), which draws with the model picked there; reference images make it an edit. To try it from the command line: `magpie tool generate_image "a magpie on a branch, watercolour" --size 16:9 -o magpie.png`.
+- **Size:** `size` gives the aspect ratio. A ratio (such as `16:9` or `1:4`) is used as it is when the model takes it, else the nearest one it does; a size such as `1536x1024` is made the nearest usual ratio by Magpie first. `quality` makes no difference for these models.
+- **Don't tick them as chat models:** Magpie still keeps a plugin's models that draw in its chat model lists ([yetone/magpie#2792](https://github.com/yetone/magpie/issues/2792)). They take no tool calls and have 32K–128K context windows, so they make poor chat models for agents.
+- If you don't want the image models, turn them off with `studio.imageModels` (see the options below).
+
+---
+
 ## Configuration & Advanced Usage
 
 <details>
@@ -85,7 +98,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | Option | Default | Scope | Description |
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | Shared (override via `studio.allowTools`) | Allow tool calls. When `false`, requests with tools return 400 |
-| `allowImages` | `false` | Shared (override via `studio.allowImages`) | Allow image input |
+| `allowImages` | `false` | Shared (override via `studio.allowImages`) | Allow image input in a chat (an image model's reference images don't need it) |
 | `requestTimeoutMs` / `modelTimeoutMs` | Web: `240000` / `10000`; Studio: `1800000` / `10000` | Shared (override via `studio.*`) | Timeout (ms) per backend wait or model list fetch; resets on stream data, explicit settings take precedence |
 | `stripCitations` | `true` | `gemini-web` only | Strip `[cite: 1]` and `[cite_start]` markers from replies and tool arguments (not supported on AI Studio) |
 | `proxy` | none | `gemini-web` only | Proxy for the managed Gemini Web backend to reach Google (`http` / `https` / `socks5` / `socks5h`), or set `GEMINI_WEB_PROXY` env var / enter during sign-in |
@@ -94,6 +107,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `studio.proxy` | none | `ai-studio` only | Proxy for reaching Google (`http` / `https` / `socks5`), or set `AI_STUDIO_PROXY` env var; when set, it takes precedence over the proxy saved in the admin page. An empty value counts as unset |
 | `studio.baseURL` | `http://127.0.0.1:2048/v1` | `ai-studio` only | Default URL when connecting an existing AIStudio2API instance |
 | `studio.contextLimit` / `studio.outputLimit` | Model catalog defaults | `ai-studio` only | Limits reported to clients (can only lower the catalog defaults) |
+| `studio.imageModels` | `true` | `ai-studio` only | List the Nano Banana image models, for Magpie's image generation; `false` lists text models only |
 
 **Using a proxy to reach Google:**
 - **AI Studio:** Preferably set it in the local admin page. Open the address on the usage card's "管理页" (admin page) line (default `http://127.0.0.1:2048`) and sign in as `magpie` with `adminPassword` from `config.json` in the data directory. Save the proxy, then restart the service from the admin page. The plugin keeps the saved value when it restarts the backend.

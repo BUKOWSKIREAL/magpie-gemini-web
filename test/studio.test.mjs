@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
 import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
-import { forward } from '../lib/backend.mjs';
+import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
@@ -229,6 +229,10 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(withNested.allowTools, true);
     assert.equal(withNested.proxy, 'http://127.0.0.1:1082');
 
+    assert.equal(studioSettings().imageModels, true, 'Image models are listed by default');
+    assert.equal(studioSettings({ studio: { imageModels: false } }).imageModels, false);
+    assert.throws(() => studioSettings({ studio: { imageModels: 'no' } }), /studio\.imageModels: must be a boolean/);
+
     assert.throws(() => studioSettings({ studio: { stripCitations: true } }), /cannot be stripped/);
     assert.throws(() => studioSettings({ studio: { outputLimit: 10000, contextLimit: 5000 } }), /cannot exceed contextLimit/);
     assert.throws(() => studioSettings({ studio: { unknownKey: true } }), /Unknown studio option/);
@@ -262,34 +266,66 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(nonthinking.capabilities.reasoning, false);
   });
 
-  it('3b. real v0.2.12 catalog yields only text chat models the account can call', async () => {
+  it('3b. real v0.2.12 catalog yields the text chat models and image models the account can call', async () => {
     // AIStudio2API v0.2.12 /v1/models, captured 2026-10-17; opaque capability_code_* flags removed.
     const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/studio-catalog-v0.2.12.json', import.meta.url), 'utf8'));
     const c = { baseURL: serverURL, key: 'test-key' };
     const opts = studioSettings();
+    const textIds = [
+      'gemini-3-flash-preview',
+      'gemini-3.1-flash-lite',
+      'gemini-3.1-pro-preview',
+      'gemini-3.5-flash-lite',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash',
+      'gemini-4-argon',
+      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
+      'gemini-pro-latest'
+    ];
+    const imageIds = [
+      'gemini-2.5-flash-image',
+      'gemini-3-pro-image',
+      'gemini-3.1-flash-image',
+      'gemini-3.1-flash-lite-image',
+      'gemini-nano-banana-2.1'
+    ];
 
     serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(catalog) };
     try {
       const models = await listStudioModels(c, opts);
-      assert.deepEqual(Object.keys(models).sort(), [
-        'gemini-3-flash-preview',
-        'gemini-3.1-flash-lite',
-        'gemini-3.1-pro-preview',
-        'gemini-3.5-flash-lite',
-        'gemini-3.6-flash',
-        'gemini-3.8-flash',
-        'gemini-4-argon',
-        'gemini-flash-latest',
-        'gemini-flash-lite-latest',
-        'gemini-pro-latest'
-      ]);
+      assert.deepEqual(Object.keys(models).sort(), [...textIds, ...imageIds].sort());
       // Marked chat_model but made for images (aspect_ratio, interactions_api)
       assert.equal(models['gemini-omni-1.1-flash'], undefined);
       assert.equal(models['gemini-omni-flash-preview'], undefined);
-      for (const model of Object.values(models)) {
+      for (const id of textIds) {
+        const model = models[id];
         assert.equal(model.capabilities.toolcall, true, `${model.id} declares function calling`);
         assert.deepEqual(model.variants, { minimal: {}, low: {}, medium: {}, high: {} });
+        assert.deepEqual(model.capabilities.output, { text: true, image: false });
+        assert.equal(model.capabilities.input.image, false, `${model.id} takes images only with allowImages`);
+        assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
       }
+      // An image model draws, on Gemini's API, where Magpie draws with a plugin's Gemini image
+      // model, and takes images to edit or draw from without allowImages
+      for (const id of imageIds) {
+        const model = models[id];
+        assert.equal(model.api.npm, '@ai-sdk/google');
+        assert.equal(model.api.url, serverURL);
+        assert.deepEqual(model.capabilities.output, { text: true, image: true });
+        assert.equal(model.capabilities.input.image, true);
+        assert.equal(model.capabilities.attachment, true);
+        assert.equal(model.capabilities.toolcall, false);
+      }
+      const banana = models['gemini-3.1-flash-image'];
+      assert.equal(banana.name, 'Nano Banana 2');
+      assert.equal(banana.limit.context, 65536);
+      assert.deepEqual(banana.variants, { minimal: {}, low: {}, medium: {}, high: {} });
+      assert.deepEqual(models['gemini-3-pro-image'].variants, {});
+
+      // Turned off, only the text models are listed
+      const textOnly = await listStudioModels(c, studioSettings({ studio: { imageModels: false } }));
+      assert.deepEqual(Object.keys(textOnly).sort(), textIds);
 
       // A model no account's subscription covers is listed without channels (or with none)
       const argon = catalog.data.find(m => m.id === 'gemini-4-argon');
@@ -310,7 +346,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // A backend that lists no channels at all keeps its models
       const noChannels = { ...catalog, data: catalog.data.map(({ channels, ...m }) => m) };
       serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(noChannels) };
-      assert.equal(Object.keys(await listStudioModels(c, opts)).length, 10);
+      assert.equal(Object.keys(await listStudioModels(c, opts)).length, 15);
     } finally {
       delete serverResponses['/v1/models'];
     }
@@ -462,6 +498,175 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.deepEqual(bodyJSON.choices[0].message.tool_calls[0].extra_content, toolCall.extra_content);
 
     delete serverResponses['/v1/chat/completions'];
+  });
+
+  it('an image model draws on Gemini\'s API at the service\'s /v1beta, its prompt\'s aspect ratio asked as imageConfig', async () => {
+    const sse = 'data: {"candidates":[{"content":{"role":"model","parts":[{"inlineData":{"mimeType":"image/png","data":"aW1n"}}]},"finishReason":"STOP","index":0}]}\n\n';
+    const streamPath = model => `/v1beta/models/${model}:streamGenerateContent?alt=sse`;
+    const unaryPath = '/v1beta/models/gemini-3.1-flash-image:generateContent';
+    const image = (id, aspects) => ({
+      id, object: 'model', supported_generation_methods: ['generateContent'],
+      capabilities: { chat_model: true, image_route: true, aspect_ratio: true },
+      ...(aspects ? { capability_options: { image_aspect_ratios: aspects } } : {})
+    });
+    const catalog = { data: [
+      { id: 'gemini-4-argon', object: 'model', supported_generation_methods: ['generateContent'], capabilities: { chat_model: true, function_declarations: true } },
+      // As v0.2.17 lists Nano Banana 2's: the usual ten, and four long ones
+      image('gemini-3.1-flash-image', ['1:1', '9:16', '16:9', '3:4', '4:3', '3:2', '2:3', '5:4', '4:5', '21:9', '4:1', '1:4', '8:1', '1:8']),
+      // One whose entry lists none, which the service takes the usual ten for
+      image('gemini-2.5-flash-image')
+    ] };
+    for (const model of ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-4-argon']) {
+      serverResponses[streamPath(model)] = (_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(sse);
+      };
+    }
+    serverResponses[unaryPath] = (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"candidates":[]}');
+    };
+    serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(catalog) };
+    const auth = { type: 'api', key: 'test-key', metadata: { mode: 'studio', baseURL: serverURL } };
+    const last = () => serverRequests[serverRequests.length - 1];
+    // As Magpie asks a plugin's Gemini image model to draw: its prompt, a size's aspect ratio on a
+    // line after it, an edit's picture, and images asked for beside text
+    const drawing = (prompt, generationConfig = { responseModalities: ['TEXT', 'IMAGE'] }) => ({
+      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/png', data: 'cmVm' } }] }],
+      generationConfig
+    });
+    try {
+      // Magpie lists the models before it draws with one
+      await listStudioModels({ baseURL: serverURL, key: 'test-key' }, studioSettings());
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const loader = await plugin.auth.loader(async () => auth);
+      const draw = (body, path = '/models/gemini-3.1-flash-image:streamGenerateContent?alt=sse', method = 'POST', via = loader) =>
+        via.fetch(`${serverURL}${path}`, {
+          method, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': 'test-key' }, body: body && JSON.stringify(body)
+        });
+      const askedRatio = () => JSON.parse(last().body).generationConfig.imageConfig?.aspectRatio;
+
+      let res = await draw(drawing('a magpie\n\nAspect ratio: 16:9. Transparent background.'));
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), sse);
+      assert.equal(last().url, streamPath('gemini-3.1-flash-image'));
+      assert.equal(last().headers.authorization, 'Bearer test-key');
+      assert.deepEqual(JSON.parse(last().body), drawing('a magpie Transparent background.', {
+        responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '16:9' }
+      }));
+
+      // A ratio the model takes is asked as it is, the long ones too
+      for (const ratio of ['1:4', '1:8', '4:1', '8:1', '21:9']) {
+        await draw(drawing(`a magpie\n\nAspect ratio: ${ratio}.`));
+        assert.equal(askedRatio(), ratio);
+        assert.equal(JSON.parse(last().body).contents[0].parts[0].text, 'a magpie');
+      }
+      // One it doesn't, as the nearest it does
+      await draw(drawing('a magpie\n\nAspect ratio: 2:1.'));
+      assert.equal(askedRatio(), '16:9');
+      // A model whose entry lists none takes the usual ten
+      await draw(drawing('a magpie\n\nAspect ratio: 4:1.'), '/models/gemini-2.5-flash-image:streamGenerateContent?alt=sse');
+      assert.equal(last().url, streamPath('gemini-2.5-flash-image'));
+      assert.equal(askedRatio(), '21:9');
+
+      // One asked for already, or a prompt without the line, goes on as it came
+      const asked = drawing('a magpie\n\nAspect ratio: 16:9.', { imageConfig: { aspectRatio: '1:1' } });
+      await draw(asked);
+      assert.deepEqual(JSON.parse(last().body), asked);
+      await draw(drawing('a magpie'));
+      assert.deepEqual(JSON.parse(last().body), drawing('a magpie'));
+
+      res = await draw(drawing('a magpie'), '/models/gemini-3.1-flash-image:generateContent');
+      assert.equal(res.status, 200);
+      assert.equal(last().url, unaryPath);
+
+      // Tools go on only as allowTools lets them, as on chat completions
+      const withTools = { ...drawing('a magpie'), tools: [{ functionDeclarations: [{ name: 'probe', parameters: { type: 'object' } }] }] };
+      await draw(withTools);
+      assert.deepEqual(JSON.parse(last().body).tools, withTools.tools);
+
+      const before = serverRequests.length;
+      const noTools = await AIStudioPlugin({}, { studio: { baseURL: serverURL, allowTools: false } });
+      const noToolsLoader = await noTools.auth.loader(async () => auth);
+      res = await draw(withTools, undefined, 'POST', noToolsLoader);
+      assert.equal(res.status, 400);
+      assert.match((await res.json()).error.message, /Tool calls are turned off/);
+      res = await draw(withTools, '/models/gemini-4-argon:generateContent', 'POST', noToolsLoader);
+      assert.equal(res.status, 400);
+
+      // A text model is asked on chat completions, where allowImages holds
+      res = await draw(drawing('a magpie'), '/models/gemini-4-argon:streamGenerateContent?alt=sse');
+      assert.equal(res.status, 400);
+      assert.match((await res.json()).error.message, /gemini-4-argon isn't one of AI Studio's image models/);
+      res = await draw(drawing('a magpie'), '/models/gemini-unknown:generateContent');
+      assert.equal(res.status, 400);
+
+      assert.equal((await draw(undefined, '/models/gemini-3.1-flash-image:streamGenerateContent?alt=sse', 'GET')).status, 400);
+      assert.equal((await draw(drawing('a magpie'), '/models/gemini-3.1-flash-image:streamGenerateContent?key=leak')).status, 400);
+      assert.equal((await draw(drawing('a magpie'), '/models/gemini-3.1-flash-image:countTokens')).status, 404);
+      // No images API: Magpie draws with these models on Gemini's API only
+      assert.equal((await draw({ prompt: 'a magpie' }, '/images/generations')).status, 404);
+
+      // Turned off, as for Gemini Web, there is no Gemini API
+      const off = await AIStudioPlugin({}, { studio: { baseURL: serverURL, imageModels: false } });
+      const offLoader = await off.auth.loader(async () => auth);
+      assert.equal((await draw(drawing('a magpie'), '/models/gemini-3.1-flash-image:generateContent', 'POST', offLoader)).status, 404);
+      const web = await forward(`${serverURL}/models/gemini-3.1-flash-image:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(drawing('a magpie'))
+      }, async () => ({ type: 'api', key: 'test-key', metadata: { baseURL: serverURL } }), settings({ baseURL: serverURL }));
+      assert.equal(web.status, 404);
+      assert.deepEqual(serverRequests.slice(before).filter(r => r.url.startsWith('/v1beta/')), [], 'nothing refused reached the service');
+
+      // A list grown old that can't be had again: the last one still holds, for the ratios a model
+      // takes and for which models draw
+      serverResponses['/v1/models'] = { status: 503, body: 'restarting' };
+      const now = Date.now;
+      Date.now = () => now() + 11 * 60 * 1000;
+      try {
+        const listed = serverRequests.filter(r => r.url === '/v1/models').length;
+        res = await draw(drawing('a magpie\n\nAspect ratio: 1:4.'));
+        assert.equal(res.status, 200);
+        assert.equal(askedRatio(), '1:4');
+        assert.equal(serverRequests.filter(r => r.url === '/v1/models').length, listed + 1, 'the old list was asked for again');
+        const sent = serverRequests.length;
+        res = await draw(drawing('a magpie'), '/models/gemini-4-argon:streamGenerateContent?alt=sse');
+        assert.equal(res.status, 400);
+        assert.match((await res.json()).error.message, /gemini-4-argon isn't one of AI Studio's image models/);
+        assert.deepEqual(serverRequests.slice(sent).filter(r => r.url.startsWith('/v1beta/')), []);
+      } finally {
+        Date.now = now;
+      }
+
+      // With no list at all, what a model is isn't known: nothing goes on to the service
+      const unlisted = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const unlistedLoader = await unlisted.auth.loader(async () => ({ ...auth, key: 'unlisted-key' }));
+      const sent = serverRequests.length;
+      res = await draw(drawing('a magpie\n\nAspect ratio: 1:4.'), undefined, 'POST', unlistedLoader);
+      assert.equal(res.status, 503);
+      assert.match((await res.json()).error.message, /Can't tell whether gemini-3\.1-flash-image is one of AI Studio's image models: .*HTTP 503/);
+      serverResponses['/v1/models'] = { status: 401, body: 'bad key' };
+      res = await draw(drawing('a magpie'), undefined, 'POST', unlistedLoader);
+      assert.equal(res.status, 401);
+      assert.equal(res.headers.get('X-Magpie-Sign-In'), 'expired');
+      assert.deepEqual(serverRequests.slice(sent).filter(r => r.url.startsWith('/v1beta/')), []);
+
+      // An unreachable service is answered as one, for a managed one to be started again
+      const closed = http.createServer();
+      await new Promise(resolve => closed.listen(0, '127.0.0.1', resolve));
+      const goneURL = `http://127.0.0.1:${closed.address().port}/v1`;
+      await new Promise(resolve => closed.close(resolve));
+      const gone = await AIStudioPlugin({}, { studio: { baseURL: goneURL } });
+      const goneLoader = await gone.auth.loader(async () => ({ ...auth, metadata: { mode: 'studio', baseURL: goneURL } }));
+      res = await goneLoader.fetch(`${goneURL}/models/gemini-3.1-flash-image:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(drawing('a magpie'))
+      });
+      assert.equal(res.status, 502);
+      assert.equal(res.headers.get(UNREACHABLE_HEADER), 'unreachable');
+    } finally {
+      for (const model of ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-4-argon']) delete serverResponses[streamPath(model)];
+      delete serverResponses[unaryPath];
+      delete serverResponses['/v1/models'];
+    }
   });
 
   it('stream interruption errors pass through without a successful finish or retry', async () => {
