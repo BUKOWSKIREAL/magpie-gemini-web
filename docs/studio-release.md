@@ -93,14 +93,15 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 0.2.18 升级验证（2026-10-30，进行中）
+## 0.2.18 升级验证（2026-10-30）
 
-以下为本分支当前的实际状态，发布前以最新 CI 结果为准。
+以下为本分支的实际状态，发布前以最新 CI 结果为准。
 
-- 上游 `go test` 与插件测试：macOS arm64/x64、Windows x64 的 CI 候选构建通过，并通过真实安装冒烟验证（含 `waa_backend=spidermonkey`、`search_model_aliases=false`）。Linux x64/arm64 的首次候选构建在上游测试 `TestUserCacheRootWithoutEnvironment` 的 `t.Setenv` 处崩溃（见上文环境变量拦截函数），修复后待重新运行。
-- 跨机器一致性：首次候选构建中，Windows 在 macOS 本机交叉编译的结果与 CI Windows runner 不同，原因是 macOS 版 llvm-mingw 的 C++ 运行库带有不同的构建路径（修复见上文）。修复后的哈希待 CI 重新比对。
-- 正式 pin 仍为全零占位值，需由 CI 候选构建生成，再经一次独立的验证构建复现。
-- 新版 Google 登录/生成端到端验证尚未完成。
+- 首次候选构建（run 41025535280）中，Linux x64/arm64 在上游测试 `TestUserCacheRootWithoutEnvironment` 的 `t.Setenv` 处崩溃（见上文环境变量拦截函数），Windows 的 macOS 本机交叉编译结果与 CI 不同（见上文 C++ 运行库）。两处修复后的候选构建（run 41033635405）五个平台都通过上游测试、真实安装冒烟验证（含 `waa_backend=spidermonkey`、`search_model_aliases=false`）与插件测试。
+- 跨机器一致性：Linux x64/arm64 与 Windows x64 的 CI 候选哈希与 macOS arm64 本机交叉编译完全一致；darwin-arm64 两次 CI 构建得到相同哈希。pin 来自第二次候选构建；独立的严格验证构建待运行。
+- Linux 二进制为静态链接，不含环境变量拦截函数；Windows 二进制只导入系统 DLL（UCRT、KERNEL32 等），C++ 运行库静态链接，PE 时间戳为 0。
+- 真实账号端到端验证（CI 构建的 darwin-arm64 安装包，一个已登录账号复制到临时数据目录，原服务在验证期间停止、结束后恢复）：服务 8 秒就绪，WAA 后端为 spidermonkey，全程未启动 Camoufox；45 个模型中无 `-search` 副本；`gemini-3.8-flash` 文本（4 秒）、流式（3 秒）和图片输入（17 秒，答对左右两半颜色）正常；经插件用 `gemini-3.1-flash-image` 按 16:9 画图得到 1376×768 图片（9 秒）；错误密钥在 Gemini 接口上返回 400 `API_KEY_INVALID`，与插件的判断一致。
+- Google 登录（Camoufox 登录窗口）本次未验证：使用的是已登录账号。
 - 此分支未发布后端 release 或 npm 包。
 
 ## 0.2.17 升级验证（2026-10-29，历史记录）
