@@ -1,6 +1,6 @@
 {
   "name": "magpie-gemini-web",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Gemini Web and Google AI Studio provider for Magpie, backed by gemini-web2api-go and AIStudio2API",
   "type": "module",
   "main": "./index.mjs",
