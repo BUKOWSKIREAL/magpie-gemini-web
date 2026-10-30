@@ -38,10 +38,11 @@ const env = { ...process.env, CGO_ENABLED: '1', GOFLAGS: '', GOEXPERIMENT: '',
   GOTOOLCHAIN: `go${release.goVersion}`, GOAMD64: 'v1', GOARM64: 'v8.0' };
 for (const key of ['GOOS', 'GOARCH', 'CC', 'CXX', 'CGO_CFLAGS', 'CGO_CPPFLAGS', 'CGO_CXXFLAGS', 'CGO_LDFLAGS', 'MACOSX_DEPLOYMENT_TARGET']) delete env[key];
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-// SQLite now needs C, so the C toolchain is part of the pin (lib/studio-release.json "toolchains").
-// Zig (Linux/musl) and llvm-mingw (Windows/UCRT) are cross compilers whose output does not depend on
-// the machine they run on, so any builder reproduces those archives. Apple's linker and SDK are only
-// on macOS and differ between Xcode releases, so macOS archives match only under the pinned Xcode.
+// SQLite needs C and SpiderMonkey C++, so the C/C++ toolchain is part of the pin (lib/studio-release.json
+// "toolchains"). Zig (Linux/musl) and llvm-mingw (Windows/UCRT) are cross compilers whose output does
+// not depend on the machine they run on, so any builder reproduces those archives. Apple's linker and
+// SDK are only on macOS and differ between Xcode releases, so macOS archives match only under the
+// pinned Xcode. SpiderMonkey's static libraries are upstream's prebuilt ones, pinned per target.
 const toolchains = release.toolchains;
 const zig = process.env.STUDIO_ZIG || 'zig';
 function pinned(what, actual, expected, hint) {
@@ -50,39 +51,87 @@ function pinned(what, actual, expected, hint) {
   if (strict) throw new Error(message);
   console.warn(`warning: ${message}`);
 }
-// llvmMingw returns the pinned llvm-mingw's x86_64 compiler, fetched once into studio-build/toolchains
-// and checked against its pinned SHA-256, unless STUDIO_MINGW_CC names one.
-function llvmMingw() {
-  if (process.env.STUDIO_MINGW_CC) return process.env.STUDIO_MINGW_CC;
-  const pin = toolchains.llvmMingw;
-  const host = process.platform === 'darwin' ? 'darwin' : `${process.platform}-${process.arch}`;
-  const archive = pin.hosts[host];
-  if (!archive) throw new Error(`No pinned llvm-mingw for ${host}: set STUDIO_MINGW_CC to llvm-mingw ${pin.version}'s x86_64-w64-mingw32-clang`);
+// fetchPinned returns studio-build/toolchains/<name>, where the archive at url is unpacked once after
+// its SHA-256 is checked against the pinned one. top is the folder the archive holds everything in,
+// or null for an archive that unpacks in place; prepare, if given, changes what was unpacked first.
+function fetchPinned(what, url, { asset, sha256 }, name, top, prepare) {
   const cacheDir = path.join(root, 'studio-build/toolchains');
-  const name = archive.asset.replace(/\.(tar\.xz|zip)$/, '');
   const home = path.join(cacheDir, name);
-  const cc = path.join(home, 'bin', `x86_64-w64-mingw32-clang${process.platform === 'win32' ? '.exe' : ''}`);
   const stamp = path.join(home, '.sha256');
-  if (fs.existsSync(cc) && fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim() === archive.sha256) return cc;
+  if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim() === sha256) return home;
   fs.rmSync(home, { recursive: true, force: true });
   fs.mkdirSync(cacheDir, { recursive: true });
   const staging = fs.mkdtempSync(path.join(cacheDir, '.fetch-'));
   try {
-    const file = path.join(staging, archive.asset);
-    const url = `https://github.com/mstorsjo/llvm-mingw/releases/download/${pin.version}/${archive.asset}`;
-    console.log(`Fetching pinned llvm-mingw: ${url}`);
+    const file = path.join(staging, asset);
+    console.log(`Fetching pinned ${what}: ${url}`);
     execFileSync('curl', ['--fail', '--location', '--silent', '--show-error', '--retry', '3', '--output', file, url], { stdio: 'inherit' });
-    const sha256 = hash(file);
-    if (sha256 !== archive.sha256) throw new Error(`${archive.asset} has SHA-256 ${sha256}, not the pinned ${archive.sha256}`);
+    const actual = hash(file);
+    if (actual !== sha256) throw new Error(`${asset} has SHA-256 ${actual}, not the pinned ${sha256}`);
+    const unpacked = path.join(staging, top ?? 'unpacked');
+    if (!top) fs.mkdirSync(unpacked);
     // Windows' own bsdtar reads zip; the GNU tar Git Bash puts ahead of it on PATH does not.
     const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    execFileSync(tar, ['-xf', file, '-C', staging], { stdio: 'inherit' });
-    fs.writeFileSync(path.join(staging, name, '.sha256'), `${archive.sha256}\n`);
-    fs.renameSync(path.join(staging, name), home);
+    execFileSync(tar, ['-xf', file, '-C', top ? staging : unpacked], { stdio: 'inherit' });
+    prepare?.(unpacked);
+    fs.writeFileSync(path.join(unpacked, '.sha256'), `${sha256}\n`);
+    fs.renameSync(unpacked, home);
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
   }
-  return cc;
+  return home;
+}
+// mingwHome returns the pinned llvm-mingw for a builder host, fetched into studio-build/toolchains.
+function mingwHome(host) {
+  const pin = toolchains.llvmMingw;
+  const archive = pin.hosts[host];
+  if (!archive) throw new Error(`No pinned llvm-mingw for ${host}: set STUDIO_MINGW_CC to llvm-mingw ${pin.version}'s x86_64-w64-mingw32-clang`);
+  const name = archive.asset.replace(/\.(tar\.xz|zip)$/, '');
+  return fetchPinned('llvm-mingw', `https://github.com/mstorsjo/llvm-mingw/releases/download/${pin.version}/${archive.asset}`,
+    archive, name, name);
+}
+// llvmMingw returns the pinned llvm-mingw's x86_64 C and C++ compilers, unless STUDIO_MINGW_CC names
+// a C compiler, whose C++ one is next to it. libs is where Windows' libraries are linked from first:
+// llvm-mingw's Linux and Windows archives have the same ones, byte for byte, but its macOS archive's
+// are built apart, and the C++ runtime among them puts its own build paths in the executable. So a
+// macOS builder links the Linux archive's, and makes the same executable as the others. Every host
+// names its folder all the same: cgo writes a line for each linker flag into the Go it generates,
+// so one flag more moves the line numbers the executable keeps.
+function llvmMingw() {
+  const exe = process.platform === 'win32' ? '.exe' : '';
+  const cxxOf = cc => cc.replace(/clang(\.exe)?$/i, 'clang++$1');
+  const libsOf = home => path.join(home, 'x86_64-w64-mingw32', 'lib');
+  const macOS = process.platform === 'darwin';
+  if (process.env.STUDIO_MINGW_CC) {
+    const cc = process.env.STUDIO_MINGW_CC;
+    return { cc, cxx: cxxOf(cc), libs: libsOf(macOS ? mingwHome('linux-x64') : path.resolve(cc, '..', '..')) };
+  }
+  const home = mingwHome(macOS ? 'darwin' : `${process.platform}-${process.arch}`);
+  const cc = path.join(home, 'bin', `x86_64-w64-mingw32-clang${exe}`);
+  return { cc, cxx: cxxOf(cc), libs: libsOf(macOS ? mingwHome('linux-x64') : home) };
+}
+// The Linux (musl) SpiderMonkey libraries keep mozglue's interposers for the environment's functions.
+// But for getenv, each calls the C library's own, found with dlsym(RTLD_NEXT), and a static executable
+// has none to find: setenv and the rest crash on purpose (MOZ_CRASH), as Go's os.Setenv does through
+// cgo. Without them, musl's own are linked; dynamic builds, which upstream tests, find those anyway.
+const ENV_INTERPOSERS = 'Unified_cpp_mozglue_interposers0.o';
+function dropEnvInterposers(dir) {
+  const archive = path.join(dir, 'lib', 'libjs_static.a');
+  const members = execFileSync(zig, ['ar', 't', archive], { encoding: 'utf8' }).split('\n');
+  if (!members.includes(ENV_INTERPOSERS)) {
+    throw new Error(`${archive} has no ${ENV_INTERPOSERS}: check how this SpiderMonkey reaches the environment`);
+  }
+  execFileSync(zig, ['ar', '--format=gnu', 'd', archive, ENV_INTERPOSERS], { stdio: 'inherit' });
+}
+// spidermonkey returns the folder with a target's pinned SpiderMonkey headers (include) and static
+// libraries (lib), the ones upstream builds its own releases with.
+function spidermonkey(key) {
+  const pin = toolchains.spidermonkey;
+  const archive = pin.targets[key];
+  if (!archive) throw new Error(`No pinned SpiderMonkey for ${key}`);
+  const linux = platforms[key][0] === 'linux';
+  return fetchPinned('SpiderMonkey', `https://github.com/${pin.repository}/releases/download/${pin.release}/${archive.asset}`,
+    archive, archive.asset.replace(/\.tar\.gz$/, linux ? '-without-env-interposers' : ''), null, linux ? dropEnvInterposers : null);
 }
 function xcode() {
   try {
@@ -92,11 +141,17 @@ function xcode() {
     return null; // Command-line tools alone have no xcodebuild.
   }
 }
-// cToolchain returns the C settings for a target and what they were made with. Only the targets
-// being built and pinned must use the pinned toolchain; the host's is also used for upstream tests.
+// cToolchain returns the C and C++ settings for a target and what they were made with. Only the
+// targets being built and pinned must use the pinned toolchain; the host's is also used for upstream
+// tests. SpiderMonkey's headers and libraries are found through CGO_CXXFLAGS and CGO_LDFLAGS, as
+// upstream's own build finds them (.github/actions/spidermonkey); its mozjs package names the libraries.
 function cToolchain(key, { pin = false } = {}) {
   const check = pin ? pinned : () => {};
   const [goos, goarch] = platforms[key];
+  const mozjs = spidermonkey(key);
+  // Quoted whole, as cgo splits these flags, so a folder with spaces stays one argument.
+  const include = `"-I${path.join(mozjs, 'include')}"`;
+  const lib = `"-L${path.join(mozjs, 'lib')}"`;
   if (goos === 'darwin') {
     if (process.platform !== 'darwin') throw new Error('Build macOS archives on macOS with Xcode');
     const expected = `${toolchains.xcode.version} (${toolchains.xcode.build})`;
@@ -105,24 +160,27 @@ function cToolchain(key, { pin = false } = {}) {
       `Select it with DEVELOPER_DIR=/Applications/Xcode_${toolchains.xcode.version}.app/Contents/Developer, or let CI make macOS pins (docs/studio-release.md).`);
     const compiler = { xcode: actual, sdk: execFileSync('xcrun', ['--show-sdk-version'], { encoding: 'utf8' }).trim(),
       clang: execFileSync('clang', ['--version'], { encoding: 'utf8' }).split('\n')[0] };
-    return { compiler, env: { CC: 'clang', MACOSX_DEPLOYMENT_TARGET: '13.0',
-      CGO_CFLAGS: '-O2 -g -mmacosx-version-min=13.0', CGO_LDFLAGS: '-O2 -g -mmacosx-version-min=13.0' } };
+    const flags = '-O2 -g -mmacosx-version-min=13.0';
+    return { compiler, env: { CC: 'clang', CXX: 'clang++', MACOSX_DEPLOYMENT_TARGET: '13.0',
+      CGO_CFLAGS: flags, CGO_CXXFLAGS: `${flags} ${include}`, CGO_LDFLAGS: `${flags} ${lib}` } };
   }
   if (goos === 'windows') {
-    const cc = llvmMingw();
+    const { cc, cxx, libs } = llvmMingw();
     const clang = execFileSync(cc, ['--version'], { encoding: 'utf8' }).split('\n')[0];
     const target = execFileSync(cc, ['-dumpmachine'], { encoding: 'utf8' }).trim();
     if (target !== 'x86_64-w64-windows-gnu') throw new Error(`Windows needs llvm-mingw's x86_64 clang, ${cc} targets ${target}`);
     check('Windows C compiler', clang, toolchains.llvmMingw.clang,
       `Unset STUDIO_MINGW_CC to use the pinned llvm-mingw ${toolchains.llvmMingw.version}.`);
     return { compiler: { llvmMingw: toolchains.llvmMingw.version, clang },
-      env: { CC: `"${cc}"`, CGO_CFLAGS: '-O2 -g', CGO_LDFLAGS: '-O2 -g' } };
+      env: { CC: `"${cc}"`, CXX: `"${cxx}"`, CGO_CFLAGS: '-O2 -g', CGO_CXXFLAGS: `-O2 -g ${include}`,
+        CGO_LDFLAGS: `-O2 -g "-L${libs}" ${lib}` } };
   }
   const version = execFileSync(zig, ['version'], { encoding: 'utf8' }).trim();
   check('Zig', version, toolchains.zig, 'Install it, or point STUDIO_ZIG at it.');
   const triple = `${goarch === 'amd64' ? 'x86_64' : 'aarch64'}-linux-musl`;
   return { compiler: { zig: version, target: triple },
-    env: { CC: `"${zig}" cc -target ${triple}`, CGO_CFLAGS: '-O2 -g', CGO_LDFLAGS: '-O2 -g' } };
+    env: { CC: `"${zig}" cc -target ${triple}`, CXX: `"${zig}" c++ -target ${triple}`,
+      CGO_CFLAGS: '-O2 -g', CGO_CXXFLAGS: `-O2 -g ${include}`, CGO_LDFLAGS: `-O2 -g ${lib}` } };
 }
 const go = (argv, extra = {}) => execFileSync('go', argv, { cwd: source, env: { ...env, ...extra }, stdio: 'inherit' });
 const npm = argv => execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', argv,
