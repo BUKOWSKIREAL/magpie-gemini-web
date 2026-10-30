@@ -17,6 +17,7 @@
 | **适用场景** | **推荐 Coding Agent 使用** | 日常对话、使用网页版专属模型与额度 |
 | **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
 | **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` 中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
+| **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
 | **本地后端** | AIStudio2API (`v0.2.17`) | gemini-web2api-go (`4.26.0-magpie.1` 优化版) |
@@ -61,6 +62,18 @@
 
 ---
 
+## 图片生成（AI Studio）
+
+`ai-studio` 会列出账号可用的 Nano Banana 系列图像模型（如 `gemini-3.1-flash-image`、`gemini-3-pro-image`），供 Magpie 的图片生成使用。**需要 Magpie v0.1.2075 及以上**：从这个版本起，Magpie 才会把插件的 Gemini 图像模型列为出图模型。
+
+- **不用勾选，也不用在对话里选它们**：Magpie 设置的 **Images → Image generation** 会直接列出这些模型，选中一个，或保持 Automatic（自动）即可。
+- **Agent 怎么出图**：Agent 调用 Magpie 的 `generate_image` 工具（Library 里的 Magpie Image MCP），Magpie 用上面选的模型出图；带参考图就是改图。也可以在命令行试：`magpie tool generate_image "a magpie on a branch, watercolour" --size 16:9 -o magpie.png`。
+- **尺寸**：`size` 决定宽高比：写比例（如 `16:9`、`1:4`）时，模型支持就照用，不支持就取它支持的最接近的比例；写 `1536x1024` 这样的尺寸时，Magpie 先换成最接近的常用比例。`quality` 对这些模型不起作用。
+- **别把它们勾进对话模型**：Magpie 目前会把能出图的插件模型也留在对话模型列表里（[yetone/magpie#2792](https://github.com/yetone/magpie/issues/2792)）。它们不支持工具调用，上下文也只有 32K–128K，不适合当 Agent 的对话模型。
+- 不需要图像模型时，可以用 `studio.imageModels` 关掉（见下方选项）。
+
+---
+
 ## 配置与进阶
 
 <details>
@@ -85,7 +98,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | 选项 | 默认值 | 适用范围 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `allowTools` | `true` | 共用（可用 `studio.allowTools` 单独覆盖） | 允许工具调用。设为 `false` 时带工具的请求返回 400 |
-| `allowImages` | `false` | 共用（可用 `studio.allowImages` 单独覆盖） | 允许图片输入 |
+| `allowImages` | `false` | 共用（可用 `studio.allowImages` 单独覆盖） | 允许对话中的图片输入（图像模型的参考图不受它限制） |
 | `requestTimeoutMs` / `modelTimeoutMs` | Web：`240000` / `10000`；Studio：`1800000` / `10000` | 共用（`studio.*` 可覆盖） | 单次等待后端 / 拉取模型列表的超时（毫秒）；收到流数据后重新计时，显式配置优先 |
 | `stripCitations` | `true` | 仅 `gemini-web` | 剥离回复与工具参数中的 `[cite: 1]`、`[cite_start]` 标记（AI Studio 不支持剥离） |
 | `proxy` | 无 | 仅 `gemini-web` | 一键配置后端访问 Google 的代理（`http` / `https` / `socks5` / `socks5h`），也可用环境变量 `GEMINI_WEB_PROXY` 或在登录第一步填写 |
@@ -94,6 +107,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `studio.proxy` | 无 | 仅 `ai-studio` | 访问 Google 的代理（`http` / `https` / `socks5`），也可用环境变量 `AI_STUDIO_PROXY`；设置后优先于管理页里保存的代理，留空等于不设置 |
 | `studio.baseURL` | `http://127.0.0.1:2048/v1` | 仅 `ai-studio` | 连接已有 AIStudio2API 时的默认地址 |
 | `studio.contextLimit` / `studio.outputLimit` | 模型目录默认值 | 仅 `ai-studio` | 向客户端声明的上限（仅支持在目录值基础上调低） |
+| `studio.imageModels` | `true` | 仅 `ai-studio` | 列出 Nano Banana 等图像模型，供 Magpie 的图片生成使用；设为 `false` 时只列文本模型 |
 
 **配置代理访问 Google：**
 - **AI Studio**：推荐在本地管理页设置。打开额度卡片「管理页」一行里的地址（默认 `http://127.0.0.1:2048`），用户名 `magpie`，密码是数据目录 `config.json` 里的 `adminPassword`；保存代理后在管理页重启服务即可生效，之后插件重启后端也不会覆盖它。
