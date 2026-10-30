@@ -613,9 +613,22 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
         await new Promise(r => setTimeout(r, 50));
       }
       await assert.rejects(ensureStudio({ dataDir }), /online updater/);
+      // Exited as stopStudio tells it, by asking the OS (process.kill(pid, 0)). On Windows that
+      // answers before this process's loop has taken the child's exit, so exitCode alone can still
+      // be null at stopStudio's first request after it, and no reset was made (Windows CI, #28).
+      // The child's handle, open until exitCode is set, keeps its PID from being reused.
+      const exitedNow = () => {
+        if (child.exitCode !== null || child.signalCode !== null) return true;
+        try {
+          process.kill(child.pid, 0);
+          return false;
+        } catch (err) {
+          return err.code === 'ESRCH';
+        }
+      };
       let resetAfterExit = false;
       const fetchFn = async (...args) => {
-        if (!resetAfterExit && (child.exitCode !== null || child.signalCode !== null)) {
+        if (!resetAfterExit && exitedNow()) {
           resetAfterExit = true;
           throw Object.assign(new Error('pooled connection reset after exit'), { code: 'ECONNRESET' });
         }
