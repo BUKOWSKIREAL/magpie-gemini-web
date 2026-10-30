@@ -640,6 +640,36 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(res.status, 200);
       assert.equal(last().url, unaryPath);
 
+      // The service refusing the key, as v0.2.18 says so on Gemini's API, asks for a sign-in again.
+      // Google's own 403 is about the account, and goes on as it came, as any other error does.
+      const unary = serverResponses[unaryPath];
+      const geminiError = (code, status, message, details) => ({ error: { code, message, status, ...(details && { details }) } });
+      const invalidKey = geminiError(400, 'INVALID_ARGUMENT', 'API key not valid. Please pass a valid API key.',
+        [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com' }]);
+      for (const [status, body] of [
+        [400, invalidKey],
+        // A streamGenerateContent without alt=sse has it in an array
+        [400, [invalidKey]],
+        [403, geminiError(403, 'PERMISSION_DENIED', "Method doesn't allow unregistered callers (callers without established identity). Please use API Key or other form of API consumer identity to call this API.")]
+      ]) {
+        serverResponses[unaryPath] = { status, body: JSON.stringify(body) };
+        res = await draw(drawing('a magpie'), '/models/gemini-3.1-flash-image:generateContent');
+        assert.equal(res.status, 401);
+        assert.equal(res.headers.get('X-Magpie-Sign-In'), 'expired');
+      }
+      for (const [status, body] of [
+        [403, JSON.stringify(geminiError(403, 'PERMISSION_DENIED', 'The caller does not have permission'))],
+        [400, JSON.stringify(geminiError(400, 'INVALID_ARGUMENT', 'Unsupported aspect ratio'))],
+        [400, 'not json']
+      ]) {
+        serverResponses[unaryPath] = { status, body };
+        res = await draw(drawing('a magpie'), '/models/gemini-3.1-flash-image:generateContent');
+        assert.equal(res.status, status);
+        assert.equal(res.headers.get('X-Magpie-Sign-In'), null);
+        assert.equal(await res.text(), body);
+      }
+      serverResponses[unaryPath] = unary;
+
       // Tools go on only as allowTools lets them, as on chat completions
       const withTools = { ...drawing('a magpie'), tools: [{ functionDeclarations: [{ name: 'probe', parameters: { type: 'object' } }] }] };
       await draw(withTools);
@@ -1026,7 +1056,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
     // Nor does the sign-in before its instructions show: the download waits in the callback
     const first = await google.authorize({});
-    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*约 30 MB[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
+    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*约 40 MB[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
     assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'authorize may not install');
     const shown = await (await fetch(`${first.url}/status`)).json();
     assert.deepEqual(shown.steps.map(s => [s.state, s.detail ?? '']), [['active', '正在检查'], ['pending', ''], ['pending', '']]);

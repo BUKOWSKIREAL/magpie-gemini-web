@@ -1,36 +1,41 @@
 # AI Studio 托管后端构建
 
-插件使用 `0.2.17-magpie.1`，基于 AIStudio2API `v0.2.17` 的固定 commit。上游版本、commit、Go 版本、C 工具链（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
+插件使用 `0.2.18-magpie.1`，基于 AIStudio2API `v0.2.18` 的固定 commit。上游版本、commit、Go 版本、C/C++ 工具链与 SpiderMonkey 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
 
 ## 升级兼容
 
+- 上游 v0.2.18 删除了纯 Go（goja）的 WAA 后端 `go`，改为经 CGO 内嵌 Firefox 的 JS 引擎 SpiderMonkey（`WAA_BACKEND=spidermonkey`）。插件固定使用 `spidermonkey`：生成仍在服务进程内完成，不需要浏览器；Camoufox 仍只用于 Google 登录。上游默认的 `camoufox` 后端未采用。
+- SpiderMonkey 使用上游自己发布时用的预编译静态库（`Mag1cFall/firefox` 的 `v152.0.4-aistudio2api.1` release），每个目标的归档名与 SHA-256 记录在 `toolchains.spidermonkey`，构建时下载到 `studio-build/toolchains/` 并校验。头文件与库经 `CGO_CXXFLAGS` / `CGO_LDFLAGS` 传入，库名由上游 `internal/waa/mozjs` 的 `#cgo` 指令给出，与上游 `.github/actions/spidermonkey` 一致。
+- 新增设置 `SEARCH_MODEL_ALIASES`、`GOOGLE_SEARCH`、`CONTINUATION_REWRITE`、`CONTINUATION_PROMPT` 保留管理页保存的值，并隔离宿主环境同名变量。上游默认开启 `SEARCH_MODEL_ALIASES`，把每个可搜索的对话模型再列一份 `<id>-search`；插件在 `.env` 缺少该项时写入 `false`，避免 Magpie 的模型列表大多重复一遍，用户可在管理页开启。其余三项沿用上游默认。
+- Gemini 原生接口（`/v1beta`，Magpie 画图用）在 v0.2.18 按 Gemini 的方式拒绝密钥：错误密钥返回 400 `API_KEY_INVALID`，缺少密钥返回 403。插件把这两种情况当作 401 处理，提示重新登录；Google 自身返回的 403（如 code 7 “The caller does not have permission”）属于账号问题，原样传回。
 - 上游 v0.2.17 改用需要 CGO 的原生 SQLite。账号和配置沿用原目录；首次打开旧数据库会整理空闲页。降级前应停止服务并备份完整数据目录，旧版不保证能读取迁移后的数据。
-- 上游会删除旧的请求正文 `bodies` 表。`patches/studio-0.2.17-preserve-request-bodies.patch` 改为在事务内压缩并迁移到 `request_bodies`，已有新版同 ID 记录优先，成功后才删除旧表；失败回滚。补丁包含旧正文读取、重复打开及迁移失败回滚测试，随上游测试一起运行。
+- 上游（v0.2.17 起，v0.2.18 仍然）会删除旧的请求正文 `bodies` 表。`patches/studio-0.2.17-preserve-request-bodies.patch` 改为在事务内压缩并迁移到 `request_bodies`，已有新版同 ID 记录优先，成功后才删除旧表；失败回滚。补丁原样适用于 v0.2.18，供从 0.2.16 及更早版本直接升级的用户使用；它包含旧正文读取、重复打开及迁移失败回滚测试，随上游测试一起运行。
 - 新增的 `FIRST_EVENT_HEDGE` 保留管理页保存的值，同时隔离宿主环境同名变量。默认仍由上游设为 `off`。备用请求需要空闲账号和 Worker；插件默认单 Worker，不自动提高并发。
-- 模型档位优先使用 `/v1/models` 返回的 `thinking_levels`；旧外部服务未返回该字段时沿用四档。Playground 通道、纯 Go WAA、托管更新限制及插件默认并发保持原设置。
+- 模型档位优先使用 `/v1/models` 返回的 `thinking_levels`；旧外部服务未返回该字段时沿用四档。Playground 通道、托管更新限制及插件默认并发保持原设置。
 - macOS 与 Windows 都可能使用系统代理；显式代理及管理页设置仍优先，宿主的 `HTTP_PROXY` 等变量不传入服务。
 
 ## 在线更新策略
 
 上游从 v0.2.14 起原生支持分发方管理更新。构建时通过 `-ldflags` 写入两个值：
 
-- `internal/app.version=v0.2.17-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
+- `internal/app.version=v0.2.18-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
 - `internal/app.managedBy=magpie-gemini-web`：`GET /api/update`（包括 `?refresh=1`）只返回本地版本、`mode: managed` 和 `managed_by`，不访问 GitHub；`POST /api/update` 返回 HTTP 409，不下载、不替换文件、不重启。管理页显示“更新由 magpie-gemini-web 管理”。
 
 构建不带 `desktop` 标签，不包含桌面窗口。普通插件升级、账户登录、模型调用及管理功能继续保留，用户自行连接的外部服务不受影响。
 
 ## 复现构建
 
-维护者需要 Git、tar、curl、Node.js 26.8.2、Go 1.27.1，以及 `lib/studio-release.json` 的 `toolchains` 固定的 C 工具链。SQLite 需要 CGO，C 工具链因此也是 pin 的一部分：
+维护者需要 Git、tar、curl、Node.js 26.8.2、Go 1.27.1，以及 `lib/studio-release.json` 的 `toolchains` 固定的 C/C++ 工具链。SQLite 需要 C、SpiderMonkey 需要 C++，工具链因此也是 pin 的一部分：
 
 | 目标 | 工具链 | 跨机器字节一致 |
 |---|---|---|
-| Linux x64/arm64 | Zig `toolchains.zig`，musl 静态链接，不依赖构建机器的 glibc | 是：Zig 是自带 libc 的交叉编译器，任何主机产物相同 |
+| Linux x64/arm64 | Zig `toolchains.zig`（`zig cc` / `zig c++`），musl 静态链接，不依赖构建机器的 glibc | 是：Zig 是自带 libc 的交叉编译器，任何主机产物相同 |
 | Windows x64 | llvm-mingw `toolchains.llvmMingw`（Clang + LLD + UCRT），静态链接，PE 时间戳为 0 | 是：同上；构建脚本自动下载并按 SHA-256 校验 |
 | macOS arm64/x64 | Xcode `toolchains.xcode`，最低目标 macOS 13（与 Go 1.27 一致），只能在 macOS 上构建 | 仅在同一 Xcode 下：Apple 链接器和 SDK 随 Xcode 变化 |
 
 - Zig 默认从 PATH 查找，也可用 `STUDIO_ZIG=/absolute/path/to/zig` 指定。
-- llvm-mingw 首次使用时下载到 `studio-build/toolchains/`（macOS、Linux x64、Windows x64 主机各有固定的归档及 SHA-256），之后复用。`STUDIO_MINGW_CC` 可指定其他 `x86_64-w64-mingw32-clang`，但 `--verify` / `--write-pins` 要求其版本与 pin 一致。
+- llvm-mingw 首次使用时下载到 `studio-build/toolchains/`（macOS、Linux x64、Windows x64 主机各有固定的归档及 SHA-256），之后复用。`STUDIO_MINGW_CC` 可指定其他 `x86_64-w64-mingw32-clang`（C++ 编译器取同目录的 `clang++`），但 `--verify` / `--write-pins` 要求其版本与 pin 一致。
+- SpiderMonkey 静态库同样在首次使用时按目标下载到 `studio-build/toolchains/` 并校验 SHA-256，之后复用。
 - Xcode 用 `DEVELOPER_DIR=/Applications/Xcode_<版本>.app/Contents/Developer` 选择，不需要改系统默认。不要用 beta 版 Xcode 制作发布包。
 - 所有目标都以 `-trimpath -buildvcs=false -ldflags=-buildid=` 编译：Go 默认的 build ID 会哈希 C 编译器路径等构建输入，导致不同机器上内容相同的程序哈希不同。
 - Windows 使用 Git Bash 执行命令，安装包运行和解压使用 Windows 自带 PowerShell。最终用户不需要构建工具。
@@ -95,14 +100,14 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 - 新版 Google 登录/生成端到端验证尚未完成。
 - 此分支未发布后端 release 或 npm 包。本机日常后端仍使用 `0.2.16-magpie.1`，新版仅在临时数据目录运行。
 
-发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.2.17-magpie.1` release。该 release 可公开下载后，才能发布引用它的插件版本，否则新安装会遇到 404。构建脚本及验证 CI 不自动发布 release 或 npm 包。
+发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.2.18-magpie.1` release。该 release 可公开下载后，才能发布引用它的插件版本，否则新安装会遇到 404。构建脚本及验证 CI 不自动发布 release 或 npm 包。
 
 本地试用建议使用独立数据目录：
 
 ```bash
-node scripts/studio.mjs install --data-dir /path/to/studio-017-trial --archive /absolute/path/to/archive
-node scripts/studio.mjs start --data-dir /path/to/studio-017-trial
-node scripts/studio.mjs stop --data-dir /path/to/studio-017-trial
+node scripts/studio.mjs install --data-dir /path/to/studio-018-trial --archive /absolute/path/to/archive
+node scripts/studio.mjs start --data-dir /path/to/studio-018-trial
+node scripts/studio.mjs stop --data-dir /path/to/studio-018-trial
 ```
 
 使用现有账号数据测试前，先停止旧服务并备份；不要让两个进程同时写同一个数据目录。

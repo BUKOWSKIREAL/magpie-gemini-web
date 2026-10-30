@@ -39,7 +39,11 @@ try {
   assert.equal(migratedBody.response, 'old response');
   assert.equal(migratedBody.request_size, 100);
   assert.equal(migratedBody.response_size, 200);
-  assert.equal((await studioAdmin(local, 'GET', '/api/config')).first_event_hedge, 'auto');
+  const config = await studioAdmin(local, 'GET', '/api/config');
+  assert.equal(config.first_event_hedge, 'auto');
+  // Generation's WAA runs in the service itself, on SpiderMonkey, with no copies of the models
+  assert.equal(config.waa_backend, 'spidermonkey');
+  assert.equal(config.search_model_aliases, false);
   const pidBefore = fs.readFileSync(path.join(dataDir, 'backend.pid'), 'utf8');
   const status = await studioAdmin(local, 'GET', '/api/status');
   assert.equal(status.version, STUDIO_VERSION);
@@ -77,7 +81,7 @@ try {
   await ensureStudio({ dataDir, managementOnly: true });
   assert.deepEqual(await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body'), migratedBody);
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
-  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved hedge setting, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
+  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved hedge setting, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
 } finally {
   let stopped = !local;
   if (local) stopped = (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;
