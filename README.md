@@ -67,10 +67,15 @@
 
 `ai-studio` 会列出账号可用的 Nano Banana 系列图像模型（如 `gemini-3.1-flash-image`、`gemini-3-pro-image`），供 Magpie 的图片生成使用。**需要 Magpie v0.1.2075 及以上**：从这个版本起，Magpie 才会把插件的 Gemini 图像模型列为出图模型。
 
-- **不用勾选，也不用在对话里选它们**：Magpie 设置的 **Images → Image generation** 会直接列出这些模型，选中一个，或保持 Automatic（自动）即可。
-- **Agent 怎么出图**：Agent 调用 Magpie 的 `generate_image` 工具（Library 里的 Magpie Image MCP），Magpie 用上面选的模型出图；带参考图就是改图。也可以在命令行试：`magpie tool generate_image "a magpie on a branch, watercolour" --size 16:9 -o magpie.png`。
+**让 Agent 出图**（pi、Claude Code、Codex 等都一样）：
+
+1. **选画图模型**：Magpie 设置的 **Images → Image generation** 会直接列出这些模型，选中一个（如 `ai-studio/gemini-nano-banana-2.1`），或保持 Automatic（自动）。不用在模型列表里勾选它们。
+2. **把画图工具交给 Agent**：点这一行下面的 **Give agents Magpie Image…**，在打开的 Library 里勾选要出图的 Agent，然后新开一个 Agent 会话。Library 被关掉时，这里显示的是 **Turn on the Library**，先点它。也可以用命令行：`magpie library mcp add magpie-image magpie mcp image agents=pi`（多个 Agent 用逗号隔开，如 `agents=pi,claude`）。
+3. **照常对话**：Agent 继续用平常的对话模型，跟它说「画一张……」就行。它会调用 `generate_image` 工具，用第 1 步选的模型出图，图片存进项目的 `generated-images/` 文件夹；带参考图就是改图。
+
+- **别把图像模型选成对话模型**：Magpie 目前会把能出图的插件模型也留在对话模型列表里（[yetone/magpie#2792](https://github.com/yetone/magpie/issues/2792)）。选了也看不到图：pi 等 Agent 的回复里放不下图片，模型画出的图会被直接丢掉，模型却以为已经发出去了。它们也不支持工具调用，上下文只有 32K–128K。
+- **在命令行出图**：`magpie tool generate_image "a magpie on a branch, watercolour" --size 16:9 -o magpie.png`，加 `--model ai-studio/gemini-3-pro-image` 可以临时换模型。终端里找不到 `magpie` 命令时（第 2 步的命令也一样），在 Magpie 设置的 **Command line** 一行点 **Add to PATH**，再开一个新终端。
 - **尺寸**：`size` 决定宽高比：写比例（如 `16:9`、`1:4`）时，模型支持就照用，不支持就取它支持的最接近的比例；写 `1536x1024` 这样的尺寸时，Magpie 先换成最接近的常用比例。`quality` 对这些模型不起作用。
-- **别把它们勾进对话模型**：Magpie 目前会把能出图的插件模型也留在对话模型列表里（[yetone/magpie#2792](https://github.com/yetone/magpie/issues/2792)）。它们不支持工具调用，上下文也只有 32K–128K，不适合当 Agent 的对话模型。
 - 不需要图像模型时，可以用 `studio.imageModels` 关掉（见下方选项）。
 
 ---
