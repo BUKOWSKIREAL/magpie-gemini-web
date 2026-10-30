@@ -98,7 +98,7 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 以下为本分支的实际状态，发布前以最新 CI 结果为准。
 
 - 首次候选构建（run 41025535280）中，Linux x64/arm64 在上游测试 `TestUserCacheRootWithoutEnvironment` 的 `t.Setenv` 处崩溃（见上文环境变量拦截函数），Windows 的 macOS 本机交叉编译结果与 CI 不同（见上文 C++ 运行库）。两处修复后的候选构建（run 41033635405）五个平台都通过上游测试、真实安装冒烟验证（含 `waa_backend=spidermonkey`、`search_model_aliases=false`）与插件测试。
-- 跨机器一致性：Linux x64/arm64 与 Windows x64 的 CI 候选哈希与 macOS arm64 本机交叉编译完全一致；darwin-arm64 两次 CI 构建得到相同哈希。pin 来自第二次候选构建；独立的严格验证构建待运行。
+- 跨机器一致性：Linux x64/arm64 与 Windows x64 的 CI 候选哈希与 macOS arm64 本机交叉编译完全一致；darwin-arm64 两次 CI 构建得到相同哈希。pin 来自第二次候选构建，随后的严格验证构建（run 41036094948）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，冒烟验证与插件测试通过。
 - Linux 二进制为静态链接，不含环境变量拦截函数；Windows 二进制只导入系统 DLL（UCRT、KERNEL32 等），C++ 运行库静态链接，PE 时间戳为 0。
 - 真实账号端到端验证（CI 构建的 darwin-arm64 安装包，一个已登录账号复制到临时数据目录，原服务在验证期间停止、结束后恢复）：服务 8 秒就绪，WAA 后端为 spidermonkey，全程未启动 Camoufox；45 个模型中无 `-search` 副本；`gemini-3.8-flash` 文本（4 秒）、流式（3 秒）和图片输入（17 秒，答对左右两半颜色）正常；经插件用 `gemini-3.1-flash-image` 按 16:9 画图得到 1376×768 图片（9 秒）；错误密钥在 Gemini 接口上返回 400 `API_KEY_INVALID`，与插件的判断一致。
 - Google 登录（Camoufox 登录窗口）本次未验证：使用的是已登录账号。
