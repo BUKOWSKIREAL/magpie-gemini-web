@@ -84,7 +84,7 @@ describe('3. Invalid options validation', () => {
     assert.equal(s.allowImages, false);
     assert.equal(s.contextLimit, 1000000);
     assert.equal(s.outputLimit, 8192);
-    assert.equal(s.requestTimeoutMs, 240000);
+    assert.equal(s.requestTimeoutMs, 570000);
     assert.equal(s.modelTimeoutMs, 10000);
     assert.equal(s.stripCitations, true);
     assert.equal(s.proxy, '');
@@ -1057,7 +1057,7 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
   });
 });
 
-describe('23. Plugin icon metadata for Magpie', () => {
+describe('23. Plugin metadata for Magpie', () => {
   it('declares a valid base64 SVG data URI in package.json and both provider auth hooks', async () => {
     const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     assert.equal(pkg.magpie?.icon, PLUGIN_ICON);
@@ -1070,5 +1070,15 @@ describe('23. Plugin icon metadata for Magpie', () => {
     const studio = await AIStudioPlugin();
     assert.equal(web.auth.icon, PLUGIN_ICON);
     assert.equal(studio.auth.icon, PLUGIN_ICON);
+  });
+
+  it('lets each Gemini Web sign-in take two requests at once and AI Studio one', async () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    assert.equal(pkg.magpie?.maxConcurrency, 2);
+
+    const web = await GeminiWebPlugin();
+    const studio = await AIStudioPlugin();
+    assert.equal(web.auth.maxConcurrency, 2);
+    assert.equal(studio.auth.maxConcurrency, 1);
   });
 });
