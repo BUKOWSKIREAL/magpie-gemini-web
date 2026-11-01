@@ -136,59 +136,96 @@ describe('28. Gemini usage limits', () => {
     assert.equal(calls[1].init.headers['Sec-Fetch-Mode'], 'navigate');
   });
 
-  it('reads an account again once it has been used since, no sooner than USAGE_MIN_GAP_MS', async () => {
+  it('reads an account again whenever Magpie asks, once its last reading is 30 seconds old (#34)', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     const calls = [];
     const reads = () => calls.filter(c => c.url.includes('executeQuery')).length;
-    const fetchFn = fakeFetch({ c31: reply(0.2, 0.1) }, calls, { c31: 'r@gmail.com' });
-    const account = { id: 31, cookie: 'c31', pooled: 0, usedAt: 0 };
-    const pool = async () => [account];
-    const first = await usage({ poolAccounts: pool, fetchFn });
-    assert.equal(reads(), 1);
+    const answers = { c31: reply(0, 0.31) };
+    const fetchFn = fakeFetch(answers, calls, { c31: 'r@gmail.com' });
+    const pool = async () => [{ id: 31, cookie: 'c31', pooled: 0 }];
+    const fiveHours = async () => (await usage({ poolAccounts: pool, fetchFn })).windows[0].used;
+    assert.equal(await fiveHours(), 0);
 
-    // Not used since: the last read stands, however long ago it was made.
-    assert.deepEqual(await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 }), first);
-    assert.equal(reads(), 1);
+    // 30% of the 5 hours used in the Gemini app, which the backend never sees: Magpie's own
+    // next ask, a minute and more later, reads it.
+    answers.c31 = reply(0.3, 0.32);
+    t.mock.timers.tick(65 * 1000);
+    assert.equal(await fiveHours(), 30);
 
-    // Used since: read again, once the gap is up.
-    account.usedAt = Math.floor(Date.now() / 1000);
-    await usage({ poolAccounts: pool, fetchFn });
-    assert.equal(reads(), 1);
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 });
-    assert.equal(reads(), 2);
+    // More used: a refresh pressed before Magpie asks again on its own reads that too.
+    answers.c31 = reply(0.5, 0.34);
+    t.mock.timers.tick(61 * 1000);
+    assert.equal(await fiveHours(), 50);
 
-    // And in any case once USAGE_MAX_AGE_MS is up, for use from the Gemini app itself.
-    account.usedAt = 0;
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0, maxAgeMs: 0 });
+    // Pressed again within half a minute: that reading stands.
+    t.mock.timers.tick(1000);
+    assert.equal(await fiveHours(), 50);
+    t.mock.timers.tick(28 * 1000);
+    assert.equal(await fiveHours(), 50);
     assert.equal(reads(), 3);
+    t.mock.timers.tick(1000);
+    await fiveHours();
+    assert.equal(reads(), 4);
   });
 
-  it('reads an account again once a window it showed has started over', async () => {
-    const calls = [];
-    const reads = () => calls.filter(c => c.url.includes('executeQuery')).length;
-    const soon = new Date(Date.now() + 30).toISOString();
-    const fetchFn = fakeFetch({ c33: reply(0.5, 0.1).replace('2026-10-14T11:48:06.036796Z', soon) }, calls, { c33: 's@gmail.com' });
-    const pool = async () => [{ id: 33, cookie: 'c33', pooled: 0, usedAt: 0 }];
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 });
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 });
-    assert.equal(reads(), 1);
-    await new Promise(resolve => setTimeout(resolve, 40));
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 });
-    assert.equal(reads(), 2);
-    // That read still says the window started over then: no more reads for it.
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 });
-    assert.equal(reads(), 2);
+  it('shares a read under way, however long it takes', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    // Google answers every read once the gate opens.
+    let open;
+    const gate = new Promise(resolve => { open = resolve; });
+    let calls = 0;
+    const fetchFn = async url => {
+      if (!url.includes('executeQuery')) return new Response('<html></html>');
+      calls++;
+      await gate;
+      return new Response(reply(0.4, 0.1));
+    };
+    const pool = async () => [{ id: 35, cookie: 'c35', pooled: 0 }];
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    const first = usage({ poolAccounts: pool, fetchFn });
+    await settle();
+    t.mock.timers.tick(40 * 1000);
+    const second = usage({ poolAccounts: pool, fetchFn });
+    await settle();
+    open();
+    assert.deepEqual(await second, await first);
+    assert.equal(calls, 1);
   });
 
-  it('reads an account whose last read failed again after USAGE_MIN_GAP_MS', async () => {
+  it('reads an account whose last read failed again after 10 minutes', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     const calls = [];
     const reads = () => calls.filter(c => c.url.includes('executeQuery')).length;
     const fetchFn = fakeFetch({ c32: 429 }, calls);
-    const pool = async () => [{ id: 32, cookie: 'c32', pooled: 0, usedAt: 0 }];
+    const pool = async () => [{ id: 32, cookie: 'c32', pooled: 0 }];
     const first = await usage({ poolAccounts: pool, fetchFn });
     assert.match(first.error, /HTTP 429/);
-    assert.deepEqual(await usage({ poolAccounts: pool, fetchFn }), first);
+    // Magpie's own asks, a minute apart, take the failure.
+    for (let i = 1; i < 10; i++) {
+      t.mock.timers.tick(60 * 1000);
+      assert.deepEqual(await usage({ poolAccounts: pool, fetchFn }), first);
+    }
     assert.equal(reads(), 1);
-    await usage({ poolAccounts: pool, fetchFn, minGapMs: 0 });
+    t.mock.timers.tick(60 * 1000);
+    await usage({ poolAccounts: pool, fetchFn });
+    assert.equal(reads(), 2);
+  });
+
+  it('reads a failed account again at once when Magpie asks again within its minute', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const calls = [];
+    const reads = () => calls.filter(c => c.url.includes('executeQuery')).length;
+    const answers = { c344: 429 };
+    const fetchFn = fakeFetch(answers, calls, { c344: 'e@gmail.com' });
+    const pool = async () => [{ id: 344, cookie: 'c344', pooled: 0 }];
+    assert.match((await usage({ poolAccounts: pool, fetchFn })).error, /HTTP 429/);
+    answers.c344 = reply(0.2, 0.2);
+    // Asked again straight away, a refresh pressed twice: the failure stands.
+    t.mock.timers.tick(10 * 1000);
+    assert.match((await usage({ poolAccounts: pool, fetchFn })).error, /HTTP 429/);
+    // Asked again within the minute, half a minute after it failed: tried again.
+    t.mock.timers.tick(20 * 1000);
+    assert.equal((await usage({ poolAccounts: pool, fetchFn })).windows[0].used, 20);
     assert.equal(reads(), 2);
   });
 
@@ -220,7 +257,7 @@ describe('28. Gemini usage limits', () => {
     assert.equal(await accountEmail({ id: 102, cookie: 'c2', pooled: 0 }, { fetchFn: pageFetch }), undefined);
     assert.equal(await accountEmail({ id: 102, cookie: 'c2', pooled: 0 }, { fetchFn: pageFetch }), undefined);
     assert.equal(noEmail.length, 1);
-    await accountEmail({ id: 102, cookie: 'c2', pooled: 0 }, { fetchFn: pageFetch, maxAgeMs: 0 });
+    await accountEmail({ id: 102, cookie: 'c2', pooled: 0 }, { fetchFn: pageFetch, emailRetryMs: 0 });
     assert.equal(noEmail.length, 2);
   });
 
@@ -277,21 +314,17 @@ describe('28. Gemini usage limits', () => {
     assert.match((await usage({ poolAccounts: accounts, fetchFn, account: 99 })).error, /已经没有这个账号（#99）/);
   });
 
-  it('reads enabled accounts, their proxy, whether the pool has any and when they were last used from the backend database', async () => {
+  it('reads enabled accounts, their proxy and whether the pool has any from the backend database', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-gemini-web-usage-'));
     const db = new DatabaseSync(path.join(dir, 'gemini.db'));
     db.exec(`CREATE TABLE proxies (id INTEGER PRIMARY KEY, name TEXT, url TEXT, enabled INTEGER);
-      CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER,
-        last_used_at INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE requests (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, account_id INTEGER);
+      CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER);
       INSERT INTO proxies VALUES (1, 'p1', 'http://p1', 1), (2, 'p2', 'http://p2', 0);
-      INSERT INTO accounts VALUES (5, 'a', 'c5', 'enabled', 1, 100), (6, 'b', 'c6', 'disabled', 0, 0),
-        (7, 'c', 'c7', 'enabled', 2, 300);
-      INSERT INTO requests (ts, account_id) VALUES (150, 5), (120, 5), (250, 7), (400, 6);`);
+      INSERT INTO accounts VALUES (5, 'a', 'c5', 'enabled', 1), (6, 'b', 'c6', 'disabled', 0), (7, 'c', 'c7', 'enabled', 2);`);
     const rows = async () => (await poolAccounts(dir)).map(r => ({ ...r }));
     assert.deepEqual(await rows(), [
-      { id: 5, label: 'a', cookie: 'c5', proxy: 'http://p1', proxyEnabled: 1, pooled: 1, usedAt: 150 },
-      { id: 7, label: 'c', cookie: 'c7', proxy: 'http://p2', proxyEnabled: 0, pooled: 1, usedAt: 300 }
+      { id: 5, label: 'a', cookie: 'c5', proxy: 'http://p1', proxyEnabled: 1, pooled: 1 },
+      { id: 7, label: 'c', cookie: 'c7', proxy: 'http://p2', proxyEnabled: 0, pooled: 1 }
     ]);
 
     // A pool whose proxies are all disabled is still a pool: the backend doesn't go direct.
