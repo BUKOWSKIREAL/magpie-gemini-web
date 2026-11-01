@@ -10,27 +10,27 @@
   "binaries": {
     "darwin-arm64": {
       "asset": "gemini-web2api-go_v4.26.0-magpie.2_darwin_arm64",
-      "sha256": "04b38affd94699dcc9e2b81aa9b4447e2522e6b2c3ab02ecc0de0ca52cf662d1"
+      "sha256": "2407896cf76917499cca4cc4c932a774ba65cb6ccbf8b6901fb2c47a29c89e41"
     },
     "darwin-x64": {
       "asset": "gemini-web2api-go_v4.26.0-magpie.2_darwin_amd64",
-      "sha256": "9e34b7aec1848fe6e6b47d857c295df7d4d3762fdbe2096006ac4ec39bec0eab"
+      "sha256": "73774ee8a4687baa5c39cb1911f038e2293326c876e373745385a41378622b3d"
     },
     "linux-x64": {
       "asset": "gemini-web2api-go_v4.26.0-magpie.2_linux_amd64",
-      "sha256": "17daee1ab72e79886a81c1c2318378392106f38030202f342d22aea92e9f4621"
+      "sha256": "b320b050916090ab34e7025596a1daf8d2cb83880908b38786b24c0d3d621c74"
     },
     "linux-arm64": {
       "asset": "gemini-web2api-go_v4.26.0-magpie.2_linux_arm64",
-      "sha256": "cead174825087eb5adebccb8495ea6818728a8d230460558955a7086c9e319d9"
+      "sha256": "9ac7e4feed66a17d1719b2a0057130098640ee0f6cea2d6192e6938bd4f5259d"
     },
     "win32-x64": {
       "asset": "gemini-web2api-go_v4.26.0-magpie.2_windows_amd64.exe",
-      "sha256": "9f7a4811661962160a679e82cde451fc8cdad2f636fda97accee8bbea618655a"
+      "sha256": "16574f5863dae4dc806e1066c9bd515161c9250cbc7e949d8b8e46eca072628a"
     },
     "win32-arm64": {
       "asset": "gemini-web2api-go_v4.26.0-magpie.2_windows_arm64.exe",
-      "sha256": "f0ce91678d2f5c5d9c60a03ed0ee99bef6f26e0eedabfaa2eb57b0a4e3c4b110"
+      "sha256": "8bcefc92a56d26736651cd009c15bf4c0858e41a04f65a0d83d06df7f94296b3"
     }
   }
 }

@@ -1,3 +1,23 @@
+diff --git a/go.mod b/go.mod
+index c6a75e2..db2c8f5 100644
+--- a/go.mod
++++ b/go.mod
+@@ -9,6 +9,7 @@ require (
+ 	github.com/google/uuid v1.6.0
+ 	github.com/lib/pq v1.12.3
+ 	github.com/pkoukk/tiktoken-go v0.1.8
++	golang.org/x/net v0.59.0
+ 	modernc.org/sqlite v1.51.0
+ )
+ 
+@@ -29,7 +30,6 @@ require (
+ 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+ 	github.com/tam7t/hpkp v0.0.0-20160821193359-2b70b4024ed5 // indirect
+ 	golang.org/x/crypto v0.57.0 // indirect
+-	golang.org/x/net v0.59.0 // indirect
+ 	golang.org/x/sys v0.48.0 // indirect
+ 	golang.org/x/text v0.42.0 // indirect
+ 	modernc.org/libc v1.72.3 // indirect
 diff --git a/internal/app/admin_cookies.go b/internal/app/admin_cookies.go
 index f17a675..c90f08a 100644
 --- a/internal/app/admin_cookies.go
@@ -953,10 +973,33 @@ index 0000000..f36c700
 +	t.Fatal("没有记录这次请求")
 +}
 diff --git a/internal/app/client.go b/internal/app/client.go
-index c63b3a9..a1e9db9 100644
+index c63b3a9..da8ccb8 100644
 --- a/internal/app/client.go
 +++ b/internal/app/client.go
-@@ -56,10 +56,20 @@ func resolveProfile(name string) profiles.ClientProfile {
+@@ -1,9 +1,11 @@
+ package app
+ 
+ import (
++	"context"
+ 	"crypto/sha1"
+ 	"encoding/hex"
+ 	"fmt"
++	"net"
+ 	"net/http"
+ 	"net/url"
+ 	"os"
+@@ -11,8 +13,10 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	fhttp "github.com/bogdanfinn/fhttp"
+ 	tls_client "github.com/bogdanfinn/tls-client"
+ 	"github.com/bogdanfinn/tls-client/profiles"
++	"golang.org/x/net/proxy"
+ )
+ 
+ var (
+@@ -56,10 +60,20 @@ func resolveProfile(name string) profiles.ClientProfile {
  // For proxied connections we use stdlib (see getStdlibClient) — tls-client's SOCKS5
  // implementation is fragile compared to net/http.
  func getTLSClient() tls_client.HttpClient {
@@ -978,7 +1021,89 @@ index c63b3a9..a1e9db9 100644
  	key := fmt.Sprintf("%s|%d", imp, timeout)
  	clientCacheMu.RLock()
  	if c, ok := clientCache[key]; ok {
-@@ -112,8 +122,17 @@ var (
+@@ -73,12 +87,7 @@ func getTLSClient() tls_client.HttpClient {
+ 	if c, ok := clientCache[key]; ok {
+ 		return c
+ 	}
+-	opts := []tls_client.HttpClientOption{
+-		tls_client.WithTimeoutSeconds(timeout),
+-		tls_client.WithClientProfile(resolveProfile(imp)),
+-		tls_client.WithNotFollowRedirects(),
+-	}
+-	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
++	client, err := newTLSClient(imp, timeout)
+ 	if err != nil {
+ 		fmt.Fprintf(os.Stderr, "[client] tls-client init failed: %v\n", err)
+ 		os.Exit(1)
+@@ -87,6 +96,67 @@ func getTLSClient() tls_client.HttpClient {
+ 	return client
+ }
+ 
++// newTLSClient 新建一个指纹 imp、整次请求限时 timeout 秒（0 = 不限）的 tls-client，
++// 拨号用 tlsDialer（见下）。测试在 extra 里加上不校验证书，别的配置跟线上同一套。
++func newTLSClient(imp string, timeout int, extra ...tls_client.HttpClientOption) (tls_client.HttpClient, error) {
++	opts := append([]tls_client.HttpClientOption{
++		tls_client.WithTimeoutSeconds(timeout),
++		tls_client.WithClientProfile(resolveProfile(imp)),
++		tls_client.WithNotFollowRedirects(),
++		tls_client.WithProxyDialerFactory(newTLSDialer),
++	}, extra...)
++	return tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
++}
++
++// ─── tls-client 的拨号 ───────────────────────────────────────────────────────
++//
++// tls-client 的 HTTP/2 连接断了（空闲被关、对端 GOAWAY）之后，下一个请求要重新拨号，
++// 这一步却不带请求的 ctx：tls-client 的 dialTLSHTTP2 传的是 context.Background()，fhttp
++// 的连接池也只是干等拨号结束。整次请求的超时、stallWatch、客户端断开都管不到它；拨号时
++// 它还占着这个客户端的锁，同一个客户端里要新建连接的请求都得等它。tls-client 自带的
++// 拨号器只拿整次请求的超时去限 TCP 连接（不限时的客户端就完全不限），TLS 握手从来不限：
++// 对方连上了却不回话，这个客户端就一直卡死。
++//
++// 所以换成自己的拨号器，两步各自限时，数值同 Go 标准库 http.DefaultTransport 的拨号、
++// 握手超时：TCP 30 秒连不上算失败；连上后对方 10 秒内一个字节都没回（握手没有回音）就
++// 断开。tls-client 只连 Google 的 https，对方回的第一个字节总是握手。
++var (
++	dialTimeout      = 30 * time.Second
++	handshakeTimeout = 10 * time.Second
++)
++
++// newTLSDialer 当 tls-client 的 ProxyDialerFactory 用。我们不给 tls-client 配代理（走代理
++// 用 stdlib，见下），它就只管直连，tls-client 传进来的参数都用不上。
++func newTLSDialer(string, time.Duration, *net.TCPAddr, fhttp.Header, tls_client.Logger) (proxy.ContextDialer, error) {
++	return tlsDialer{}, nil
++}
++
++type tlsDialer struct{}
++
++func (tlsDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
++	d := net.Dialer{Timeout: dialTimeout}
++	conn, err := d.DialContext(ctx, network, addr)
++	if err != nil {
++		return nil, err
++	}
++	conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
++	return &answeredConn{Conn: conn}, nil
++}
++
++// answeredConn 在对方头一回回话时撤掉拨号时设的读超时，之后这条连接怎么用都不再限时。
++type answeredConn struct {
++	net.Conn
++	once sync.Once
++}
++
++func (c *answeredConn) Read(p []byte) (int, error) {
++	n, err := c.Conn.Read(p)
++	if n > 0 {
++		c.once.Do(func() { c.Conn.SetReadDeadline(time.Time{}) })
++	}
++	return n, err
++}
++
+ // ─── Stdlib HTTP client for proxied requests ─────────────────────────────────
+ //
+ // 走代理时改用 stdlib 而不是 tls-client，因为：
+@@ -112,13 +182,26 @@ var (
  // getStdlibClient returns an http.Client routed through proxyURL.
  // proxyURL must not be empty (caller checks).
  func getStdlibClient(proxyURL string) *http.Client {
@@ -997,7 +1122,16 @@ index c63b3a9..a1e9db9 100644
  	key := fmt.Sprintf("%s|%d", proxyURL, timeout)
  	if cached, ok := stdlibClientCache.Load(key); ok {
  		return cached.(*http.Client)
-@@ -200,6 +219,37 @@ func currentBrowserUA() string {
+ 	}
+ 	t := &http.Transport{
++		// 跟 Google 的 TLS 握手限时，同 tlsDialer：对话请求不限整次时长，握手没回音时
++		// 不必等满 stallWatch 的上限。连代理那步不另外限：配了 DialContext，Transport 会
++		// 悄悄关掉 HTTP/2；它本来就带着请求的 ctx，stallWatch 管得到。
++		TLSHandshakeTimeout: handshakeTimeout,
+ 		MaxIdleConns:        100,
+ 		MaxIdleConnsPerHost: 20,
+ 		IdleConnTimeout:     90 * time.Second,
+@@ -200,6 +283,37 @@ func currentBrowserUA() string {
  	return ChromeUA
  }
  
@@ -1035,7 +1169,7 @@ index c63b3a9..a1e9db9 100644
  // applyChromeHeaders 给 stdlib 请求填上应用层 header（根据 impersonate 配置自动适配 Chrome 或 Firefox）。
  func applyChromeHeaders(req *http.Request) {
  	applyBrowserHeaders(req)
-@@ -207,21 +257,5 @@ func applyChromeHeaders(req *http.Request) {
+@@ -207,21 +321,5 @@ func applyChromeHeaders(req *http.Request) {
  
  // applyBrowserHeaders 给 stdlib 请求填上对应 impersonate 配置的应用层 header。
  func applyBrowserHeaders(req *http.Request) {
@@ -1058,6 +1192,119 @@ index c63b3a9..a1e9db9 100644
 -	req.Header.Set("Sec-Fetch-Site", "same-origin")
 +	setChromeHeaders(req.Header)
  }
+diff --git a/internal/app/client_timeout_test.go b/internal/app/client_timeout_test.go
+index 94c0b70..2a4b697 100644
+--- a/internal/app/client_timeout_test.go
++++ b/internal/app/client_timeout_test.go
+@@ -1,6 +1,12 @@
+ package app
+ 
+ import (
++	"context"
++	"errors"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"sync"
+ 	"testing"
+ 	"time"
+ )
+@@ -27,3 +33,95 @@ func TestClientCacheFollowsTimeout(t *testing.T) {
+ 		t.Fatal("tls client nil")
+ 	}
+ }
++
++// tls-client 的 HTTP/2 连接断了要重拨时，这一步不带请求的 ctx（见 tlsDialer）：对方连上了
++// 却不回话，以前请求就一直卡着，stallWatch 和客户端断开都掐不掉。
++func TestTLSRedialGivesUpOnASilentServer(t *testing.T) {
++	prev := handshakeTimeout
++	handshakeTimeout = 200 * time.Millisecond
++	t.Cleanup(func() { handshakeTimeout = prev })
++	useInsecureTLSClients(t)
++
++	ln, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	quiet := &quietAfterFirst{Listener: ln}
++	t.Cleanup(quiet.closeHeld)
++	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(200)
++	}))
++	srv.Listener.Close()
++	srv.Listener = quiet
++	srv.EnableHTTP2 = true
++	srv.StartTLS()
++	t.Cleanup(srv.Close)
++
++	send := func() error {
++		_, _, _, _, err := doGeminiRequestStop(context.Background(), srv.URL+"/StreamGenerate", "f.req=x",
++			map[string]string{}, "", nil, nil)
++		return err
++	}
++	if err := send(); err != nil {
++		t.Fatalf("头一个请求就失败了：%v", err)
++	}
++	srv.CloseClientConnections()      // 断掉这条 HTTP/2 连接，下一个请求只能重拨
++	time.Sleep(50 * time.Millisecond) // 等客户端看到连接断了
++
++	done := make(chan error, 1)
++	go func() { done <- send() }()
++	select {
++	case err := <-done:
++		var ne net.Error
++		if !errors.As(err, &ne) || !ne.Timeout() {
++			t.Fatalf("对方不回话应报超时，实际 %v", err)
++		}
++	case <-time.After(5 * time.Second):
++		t.Fatal("重拨时对方不回话，请求一直卡着")
++	}
++	if n := quiet.accepted(); n != 2 {
++		t.Fatalf("应该重拨一次，实际连上来 %d 次", n)
++	}
++}
++
++// quietAfterFirst 只把第一条连接交给服务器，之后连上来的都留着不理：TCP 连得上，
++// TLS 握手没有回音。
++type quietAfterFirst struct {
++	net.Listener
++	mu   sync.Mutex
++	n    int
++	held []net.Conn
++}
++
++func (l *quietAfterFirst) Accept() (net.Conn, error) {
++	for {
++		c, err := l.Listener.Accept()
++		if err != nil {
++			return nil, err
++		}
++		l.mu.Lock()
++		l.n++
++		first := l.n == 1
++		if !first {
++			l.held = append(l.held, c)
++		}
++		l.mu.Unlock()
++		if first {
++			return c, nil
++		}
++	}
++}
++
++func (l *quietAfterFirst) accepted() int {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	return l.n
++}
++
++func (l *quietAfterFirst) closeHeld() {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	for _, c := range l.held {
++		c.Close()
++	}
++}
 diff --git a/internal/app/context_file.go b/internal/app/context_file.go
 index bfc577b..cb60661 100644
 --- a/internal/app/context_file.go
@@ -1253,7 +1500,7 @@ index 6a88ac2..dc828d6 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 7c9186f..1c953fd 100644
+index 7c9186f..c04b69c 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -1575,7 +1822,7 @@ index 7c9186f..1c953fd 100644
 +// 请求。
 +//
 +// 原来客户端的 Timeout 管整次请求，而上游会让请求排很久的队：同一个号问一句「你是谁」，
-+// 3.6 Flash 首字在 120–393 秒之间（3.5 Flash-Lite 4 秒）。排队时上游每 60 秒发一个
++// 3.6 Flash 首字在 48–393 秒之间（3.5 Flash-Lite 4 秒）。排队时上游每 60 秒发一个
 +// 38 字节的心跳帧，出字后 1 秒内写完。整次限时 180 秒，排队超过 180 秒的请求一律被
 +// 掐掉重发，重发又从头排队，三次都掐完才报错；还在出字的长回复也被拦腰截断。按沉默
 +// 计时，心跳就让排队的请求一直等下去，只有连心跳都断了（limit 默认 180 秒，等于连着
@@ -1795,26 +2042,23 @@ index 00eb305..2b4c6ca 100644
  		name, mc, err := resolveModel(c.name)
 diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
 new file mode 100644
-index 0000000..a0cc748
+index 0000000..ef9b476
 --- /dev/null
 +++ b/internal/app/headers_test.go
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,74 @@
 +package app
 +
 +import (
 +	"context"
-+	"fmt"
 +	"net/http"
 +	"net/http/httptest"
 +	"testing"
-+
-+	tls_client "github.com/bogdanfinn/tls-client"
 +)
 +
 +// 同一个账号的请求不能因为走没走代理而呈现两种客户端：两条路径都要带齐 chromeHeaders，
 +// 调用方自己的 header 照样生效。直连那条以前一个都不带，UA 是 Go-http-client/2.0。
 +//
-+// 直连走 tls-client，这里换成跳过证书校验的同款客户端，打本机的 HTTPS 测试服务器；
++// 直连走 tls-client，这里换成不校验证书的同款客户端，打本机的 HTTPS 测试服务器；
 +// 代理那条把 http:// 目标以绝对 URI 发给代理，测试服务器本身就能当代理（同 cancel_test）。
 +func TestDirectAndProxyPathsSendSameBrowserHeaders(t *testing.T) {
 +	got := map[string]http.Header{}
@@ -1831,31 +2075,7 @@ index 0000000..a0cc748
 +	proxy := httptest.NewServer(record("proxy"))
 +	defer proxy.Close()
 +
-+	imp := effectiveImpersonate()
-+	insecure, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
-+		tls_client.WithClientProfile(resolveProfile(imp)),
-+		tls_client.WithInsecureSkipVerify(),
-+		tls_client.WithNotFollowRedirects())
-+	if err != nil {
-+		t.Fatal(err)
-+	}
-+	// 限时的那个给上传等请求，不限时的给 StreamGenerate（getTLSStreamClient）
-+	for _, timeout := range []int{rtCfg().RequestTimeout, 0} {
-+		key := fmt.Sprintf("%s|%d", imp, timeout)
-+		clientCacheMu.Lock()
-+		prev, had := clientCache[key]
-+		clientCache[key] = insecure
-+		clientCacheMu.Unlock()
-+		t.Cleanup(func() {
-+			clientCacheMu.Lock()
-+			defer clientCacheMu.Unlock()
-+			if had {
-+				clientCache[key] = prev
-+			} else {
-+				delete(clientCache, key)
-+			}
-+		})
-+	}
++	useInsecureTLSClients(t)
 +
 +	own := map[string]string{"Accept-Language": "en-US,en;q=0.9", "X-Same-Domain": "1"}
 +	paths := []struct {
@@ -2216,6 +2436,65 @@ index 0000000..236a51d
 +		t.Fatalf("非流式: stop=%v reads=%d tracker=%q", lh.stop.Load(), src.reads, lh.tracker.emitted)
 +	}
 +}
+diff --git a/internal/app/main_test.go b/internal/app/main_test.go
+index 38e1a44..e3f7636 100644
+--- a/internal/app/main_test.go
++++ b/internal/app/main_test.go
+@@ -1,9 +1,12 @@
+ package app
+ 
+ import (
++	"fmt"
+ 	"os"
+ 	"path/filepath"
+ 	"testing"
++
++	tls_client "github.com/bogdanfinn/tls-client"
+ )
+ 
+ // TestMain 把 DB 指向临时目录再跑测试。
+@@ -31,3 +34,41 @@ func withPoolCookie(t *testing.T) {
+ 	}
+ 	t.Cleanup(func() { _ = accountDelete(id) })
+ }
++
++// useInsecureTLSClients 把直连用的两个 tls-client 换成不校验证书的同款，好打本机的
++// HTTPS 测试服务器。限时的那个给上传等请求，不限时的给 StreamGenerate（getTLSStreamClient）；
++// 除了不校验证书，配置跟线上一样（newTLSClient）。
++func useInsecureTLSClients(t *testing.T) {
++	t.Helper()
++	imp := effectiveImpersonate()
++	for _, timeout := range []int{rtCfg().RequestTimeout, 0} {
++		c, err := newTLSClient(imp, timeout, tls_client.WithInsecureSkipVerify())
++		if err != nil {
++			t.Fatal(err)
++		}
++		key := fmt.Sprintf("%s|%d", imp, timeout)
++		clientCacheMu.Lock()
++		prev, had := clientCache[key]
++		clientCache[key] = c
++		clientCacheMu.Unlock()
++		t.Cleanup(func() {
++			clientCacheMu.Lock()
++			defer clientCacheMu.Unlock()
++			if had {
++				clientCache[key] = prev
++			} else {
++				delete(clientCache, key)
++			}
++		})
++	}
++}
++
++// withRequestTimeout 把面板的 request_timeout_sec 临时改成 sec 秒。
++func withRequestTimeout(t *testing.T, sec int) {
++	t.Helper()
++	rtMu.Lock()
++	saved := rtVal.RequestTimeout
++	rtVal.RequestTimeout = sec
++	rtMu.Unlock()
++	t.Cleanup(func() { rtMu.Lock(); rtVal.RequestTimeout = saved; rtMu.Unlock() })
++}
 diff --git a/internal/app/mcp_media.go b/internal/app/mcp_media.go
 index acb1131..a8bab02 100644
 --- a/internal/app/mcp_media.go
@@ -2563,10 +2842,10 @@ index b451d12..5d3cf5b 100644
  		if downgraded {
 diff --git a/internal/app/stall_test.go b/internal/app/stall_test.go
 new file mode 100644
-index 0000000..6d80b46
+index 0000000..cfdd6cf
 --- /dev/null
 +++ b/internal/app/stall_test.go
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,199 @@
 +package app
 +
 +import (
@@ -2580,8 +2859,6 @@ index 0000000..6d80b46
 +	"time"
 +)
 +
-+// 假上游挂在代理那条路上（同 cancel_test）：http:// 目标以绝对 URI 发给代理，
-+// httptest 服务器本身就能当上游。
 +func withStallLimit(t *testing.T, d time.Duration) {
 +	t.Helper()
 +	prev := stallLimit
@@ -2589,35 +2866,61 @@ index 0000000..6d80b46
 +	t.Cleanup(func() { stallLimit = prev })
 +}
 +
++// 每个用例都在两条路上各跑一遍，假上游的行为一样：代理那条（同 cancel_test：http:// 目标
++// 以绝对 URI 发给代理，httptest 服务器本身就能当上游），直连那条（HTTPS + HTTP/2 的测试
++// 服务器，tls-client 换成不校验证书的同款，见 useInsecureTLSClients）。
++var upstreamPaths = []struct {
++	name  string
++	start func(t *testing.T, h http.Handler) (endpoint, proxyURL string)
++}{
++	{"proxy", func(t *testing.T, h http.Handler) (string, string) {
++		srv := httptest.NewServer(h)
++		t.Cleanup(srv.Close)
++		return "http://upstream.invalid/StreamGenerate", srv.URL
++	}},
++	{"direct", func(t *testing.T, h http.Handler) (string, string) {
++		useInsecureTLSClients(t)
++		srv := httptest.NewUnstartedServer(h)
++		srv.EnableHTTP2 = true
++		srv.StartTLS()
++		t.Cleanup(srv.Close)
++		return srv.URL + "/StreamGenerate", ""
++	}},
++}
++
 +// 一直在出字的回复比 request_timeout_sec 长也不能被截断：以前整次请求限时，
 +// 180 秒时还在写的回复被拦腰掐掉。
 +func TestStallWatchKeepsAReplyThatKeepsComing(t *testing.T) {
++	withRequestTimeout(t, 1) // 整次限时的客户端 1 秒就掐，回复要写 1.2 秒
 +	withStallLimit(t, 150*time.Millisecond)
-+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-+		w.WriteHeader(200)
-+		for i := 0; i < 20; i++ {
-+			fmt.Fprintf(w, "frame %d\n", i)
-+			w.(http.Flusher).Flush()
-+			time.Sleep(30 * time.Millisecond)
-+		}
-+	}))
-+	defer srv.Close()
++	for _, p := range upstreamPaths {
++		t.Run(p.name, func(t *testing.T) {
++			endpoint, proxyURL := p.start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				w.WriteHeader(200)
++				for i := 0; i < 20; i++ {
++					fmt.Fprintf(w, "frame %d\n", i)
++					w.(http.Flusher).Flush()
++					time.Sleep(60 * time.Millisecond)
++				}
++			}))
 +
-+	lines := 0
-+	start := time.Now()
-+	status, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
-+		map[string]string{}, srv.URL, func(line string) error {
-+			lines++
-+			return nil
-+		}, nil)
-+	if err != nil || status != 200 {
-+		t.Fatalf("持续出字的回复被掐了：status=%d err=%v", status, err)
-+	}
-+	if lines != 20 {
-+		t.Fatalf("只读到 %d 行", lines)
-+	}
-+	if took := time.Since(start); took < 4*150*time.Millisecond {
-+		t.Fatalf("测试前提不成立：回复只用了 %v，没比沉默上限长", took)
++			lines := 0
++			start := time.Now()
++			status, _, _, _, err := doGeminiRequestStop(context.Background(), endpoint, "f.req=x",
++				map[string]string{}, proxyURL, func(line string) error {
++					lines++
++					return nil
++				}, nil)
++			if err != nil || status != 200 {
++				t.Fatalf("持续出字的回复被掐了：status=%d err=%v", status, err)
++			}
++			if lines != 20 {
++				t.Fatalf("只读到 %d 行", lines)
++			}
++			if took := time.Since(start); took < time.Second {
++				t.Fatalf("测试前提不成立：回复只用了 %v，没比整次限时长", took)
++			}
++		})
 +	}
 +}
 +
@@ -2625,109 +2928,121 @@ index 0000000..6d80b46
 +// 以前整次请求限时，排队超过 180 秒的请求一律被掐掉重发。
 +func TestStallWatchWaitsThroughHeartbeats(t *testing.T) {
 +	withStallLimit(t, 150*time.Millisecond)
-+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-+		w.WriteHeader(200)
-+		w.Write([]byte(")]}'\nfirst frame\n"))
-+		w.(http.Flusher).Flush()
-+		for i := 0; i < 6; i++ {
-+			time.Sleep(100 * time.Millisecond)
-+			w.Write([]byte("heartbeat\n"))
-+			w.(http.Flusher).Flush()
-+		}
-+		w.Write([]byte("answer\n"))
-+	}))
-+	defer srv.Close()
++	for _, p := range upstreamPaths {
++		t.Run(p.name, func(t *testing.T) {
++			endpoint, proxyURL := p.start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				w.WriteHeader(200)
++				w.Write([]byte(")]}'\nfirst frame\n"))
++				w.(http.Flusher).Flush()
++				for i := 0; i < 6; i++ {
++					time.Sleep(100 * time.Millisecond)
++					w.Write([]byte("heartbeat\n"))
++					w.(http.Flusher).Flush()
++				}
++				w.Write([]byte("answer\n"))
++			}))
 +
-+	var got []string
-+	start := time.Now()
-+	_, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
-+		map[string]string{}, srv.URL, func(line string) error {
-+			got = append(got, line)
-+			return nil
-+		}, nil)
-+	if err != nil {
-+		t.Fatalf("还在发心跳的上游被当成卡住了：%v", err)
-+	}
-+	if len(got) == 0 || got[len(got)-1] != "answer" {
-+		t.Fatalf("没等到排队之后的回复：%q", got)
-+	}
-+	if took := time.Since(start); took < 4*150*time.Millisecond {
-+		t.Fatalf("测试前提不成立：排队只用了 %v，没比沉默上限长", took)
++			var got []string
++			start := time.Now()
++			_, _, _, _, err := doGeminiRequestStop(context.Background(), endpoint, "f.req=x",
++				map[string]string{}, proxyURL, func(line string) error {
++					got = append(got, line)
++					return nil
++				}, nil)
++			if err != nil {
++				t.Fatalf("还在发心跳的上游被当成卡住了：%v", err)
++			}
++			if len(got) == 0 || got[len(got)-1] != "answer" {
++				t.Fatalf("没等到排队之后的回复：%q", got)
++			}
++			if took := time.Since(start); took < 4*150*time.Millisecond {
++				t.Fatalf("测试前提不成立：排队只用了 %v，没比沉默上限长", took)
++			}
++		})
 +	}
 +}
 +
 +// 首帧之后就不再出字的上游，沉默满上限就放弃，报 StallError，并真的断开上游连接。
 +func TestStallWatchEndsAQuietUpstream(t *testing.T) {
 +	withStallLimit(t, 150*time.Millisecond)
-+	upstreamGone := make(chan struct{})
-+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-+		w.WriteHeader(200)
-+		w.Write([]byte(")]}'\nfirst frame\n"))
-+		w.(http.Flusher).Flush()
-+		select {
-+		case <-r.Context().Done():
-+			close(upstreamGone)
-+		case <-time.After(10 * time.Second):
-+		}
-+	}))
-+	defer srv.Close()
++	for _, p := range upstreamPaths {
++		t.Run(p.name, func(t *testing.T) {
++			upstreamGone := make(chan struct{})
++			endpoint, proxyURL := p.start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				w.WriteHeader(200)
++				w.Write([]byte(")]}'\nfirst frame\n"))
++				w.(http.Flusher).Flush()
++				select {
++				case <-r.Context().Done():
++					close(upstreamGone)
++				case <-time.After(10 * time.Second):
++				}
++			}))
 +
-+	start := time.Now()
-+	_, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
-+		map[string]string{}, srv.URL, func(string) error { return nil }, nil)
-+	var stall *StallError
-+	if !errors.As(err, &stall) {
-+		t.Fatalf("沉默的上游应报 StallError，实际 %v", err)
-+	}
-+	if took := time.Since(start); took > 3*time.Second {
-+		t.Fatalf("沉默 150ms 就该放弃，实际等了 %v", took)
-+	}
-+	select {
-+	case <-upstreamGone:
-+	case <-time.After(3 * time.Second):
-+		t.Fatal("上游连接没有被关闭")
++			start := time.Now()
++			_, _, _, _, err := doGeminiRequestStop(context.Background(), endpoint, "f.req=x",
++				map[string]string{}, proxyURL, func(string) error { return nil }, nil)
++			var stall *StallError
++			if !errors.As(err, &stall) {
++				t.Fatalf("沉默的上游应报 StallError，实际 %v", err)
++			}
++			if took := time.Since(start); took > 3*time.Second {
++				t.Fatalf("沉默 150ms 就该放弃，实际等了 %v", took)
++			}
++			select {
++			case <-upstreamGone:
++			case <-time.After(3 * time.Second):
++				t.Fatal("上游连接没有被关闭")
++			}
++		})
 +	}
 +}
 +
 +// 连上了却一直不回响应头，同样按沉默计时。
 +func TestStallWatchEndsAnUpstreamThatNeverAnswers(t *testing.T) {
 +	withStallLimit(t, 150*time.Millisecond)
-+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-+		io.Copy(io.Discard, r.Body) // 读完请求体，服务端才盯得到连接断开
-+		select {
-+		case <-r.Context().Done():
-+		case <-time.After(10 * time.Second):
-+		}
-+	}))
-+	defer srv.Close()
++	for _, p := range upstreamPaths {
++		t.Run(p.name, func(t *testing.T) {
++			endpoint, proxyURL := p.start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				io.Copy(io.Discard, r.Body) // 读完请求体，服务端才盯得到连接断开
++				select {
++				case <-r.Context().Done():
++				case <-time.After(10 * time.Second):
++				}
++			}))
 +
-+	_, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
-+		map[string]string{}, srv.URL, nil, nil)
-+	var stall *StallError
-+	if !errors.As(err, &stall) {
-+		t.Fatalf("不回响应头的上游应报 StallError，实际 %v", err)
++			_, _, _, _, err := doGeminiRequestStop(context.Background(), endpoint, "f.req=x",
++				map[string]string{}, proxyURL, nil, nil)
++			var stall *StallError
++			if !errors.As(err, &stall) {
++				t.Fatalf("不回响应头的上游应报 StallError，实际 %v", err)
++			}
++		})
 +	}
 +}
 +
 +// 客户端断开不是上游沉默：照旧报 context.Canceled，调用方据此不重试、不记出口的错。
 +func TestStallWatchLeavesClientCancelAlone(t *testing.T) {
 +	withStallLimit(t, 10*time.Second)
-+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-+		io.Copy(io.Discard, r.Body) // 读完请求体，服务端才盯得到连接断开
-+		select {
-+		case <-r.Context().Done():
-+		case <-time.After(10 * time.Second):
-+		}
-+	}))
-+	defer srv.Close()
++	for _, p := range upstreamPaths {
++		t.Run(p.name, func(t *testing.T) {
++			endpoint, proxyURL := p.start(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				io.Copy(io.Discard, r.Body) // 读完请求体，服务端才盯得到连接断开
++				select {
++				case <-r.Context().Done():
++				case <-time.After(10 * time.Second):
++				}
++			}))
 +
-+	ctx, cancel := context.WithCancel(context.Background())
-+	time.AfterFunc(50*time.Millisecond, cancel)
-+	_, _, _, _, err := doGeminiRequestStop(ctx, "http://upstream.invalid/StreamGenerate", "f.req=x",
-+		map[string]string{}, srv.URL, nil, nil)
-+	var stall *StallError
-+	if errors.As(err, &stall) || !errors.Is(err, context.Canceled) {
-+		t.Fatalf("客户端断开应报 context.Canceled，实际 %v", err)
++			ctx, cancel := context.WithCancel(context.Background())
++			time.AfterFunc(50*time.Millisecond, cancel)
++			_, _, _, _, err := doGeminiRequestStop(ctx, endpoint, "f.req=x",
++				map[string]string{}, proxyURL, nil, nil)
++			var stall *StallError
++			if errors.As(err, &stall) || !errors.Is(err, context.Canceled) {
++				t.Fatalf("客户端断开应报 context.Canceled，实际 %v", err)
++			}
++		})
 +	}
 +}
 diff --git a/internal/app/strict_model.go b/internal/app/strict_model.go
