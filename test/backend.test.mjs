@@ -84,7 +84,7 @@ describe('3. Invalid options validation', () => {
     assert.equal(s.allowImages, false);
     assert.equal(s.contextLimit, 1000000);
     assert.equal(s.outputLimit, 8192);
-    assert.equal(s.requestTimeoutMs, 240000);
+    assert.equal(s.requestTimeoutMs, 570000);
     assert.equal(s.modelTimeoutMs, 10000);
     assert.equal(s.stripCitations, true);
     assert.equal(s.proxy, '');

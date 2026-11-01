@@ -102,7 +102,11 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
     auth: {
       provider: ID,
       icon: PLUGIN_ICON,
-      maxConcurrency: 1,
+      // Two at once per sign-in, as a person with two Gemini tabs: an agent's first turn and
+      // the session title it asks for alongside no longer wait one behind the other, which
+      // Gemini Web can take minutes to answer (#33). The backend still caps each way out to
+      // Google (per-IP limits), and Magpie's own setting on the provider goes over this.
+      maxConcurrency: 2,
       methods: [{
         type: 'oauth',
         label: '一键配置本地 Gemini Web（推荐）',
