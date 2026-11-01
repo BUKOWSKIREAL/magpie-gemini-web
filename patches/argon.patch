@@ -50,6 +50,20 @@ index f17a675..c90f08a 100644
  		if p.Label != nil || p.Note != nil {
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
+diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
+index a765bb1..eb073b6 100644
+--- a/internal/app/admin_ui/index.html
++++ b/internal/app/admin_ui/index.html
+@@ -1020,7 +1020,8 @@ const RT_GROUPS = [
+       { k: 'retry_attempts', label: '重试次数', type: 'int', min: 1, max: 10,
+         hint: '含首次；流式已吐字后不再重试' },
+       { k: 'retry_delay_sec', label: '重试间隔（秒）', type: 'int', min: 0, max: 60 },
+-      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
++      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600,
++        hint: '对话请求按上游沉默计时：这么久一个字节都没来才放弃这一次（没出字前会重试）。排队时上游每 60 秒发一次心跳，回复一直在出也不会截断。其它请求（取页面、上传等）仍是整次请求的上限' },
+     ],
+   },
+   {
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
 index 0000000..a2a5e77
@@ -939,10 +953,51 @@ index 0000000..f36c700
 +	t.Fatal("没有记录这次请求")
 +}
 diff --git a/internal/app/client.go b/internal/app/client.go
-index c63b3a9..de635f7 100644
+index c63b3a9..a1e9db9 100644
 --- a/internal/app/client.go
 +++ b/internal/app/client.go
-@@ -200,6 +200,37 @@ func currentBrowserUA() string {
+@@ -56,10 +56,20 @@ func resolveProfile(name string) profiles.ClientProfile {
+ // For proxied connections we use stdlib (see getStdlibClient) — tls-client's SOCKS5
+ // implementation is fragile compared to net/http.
+ func getTLSClient() tls_client.HttpClient {
++	return tlsClientWithin(rtCfg().RequestTimeout)
++}
++
++// getTLSStreamClient 同 getTLSClient，但不限整次请求的时长，给 StreamGenerate 用：
++// 还在出字的回复可以比 request_timeout_sec 长，上游沉默太久由 stallWatch 掐掉。
++func getTLSStreamClient() tls_client.HttpClient {
++	return tlsClientWithin(0)
++}
++
++// tlsClientWithin 是整次请求限时 timeout 秒（0 = 不限）的 tls-client。
++func tlsClientWithin(timeout int) tls_client.HttpClient {
+ 	imp := effectiveImpersonate()
+ 	// 缓存 key 带上超时：超时是建客户端时定死的，面板改了 request_timeout_sec
+ 	// 要换一个新客户端才生效（只按 imp 缓存时要重启进程才生效）。
+-	timeout := rtCfg().RequestTimeout
+ 	key := fmt.Sprintf("%s|%d", imp, timeout)
+ 	clientCacheMu.RLock()
+ 	if c, ok := clientCache[key]; ok {
+@@ -112,8 +122,17 @@ var (
+ // getStdlibClient returns an http.Client routed through proxyURL.
+ // proxyURL must not be empty (caller checks).
+ func getStdlibClient(proxyURL string) *http.Client {
++	return stdlibClientWithin(proxyURL, rtCfg().RequestTimeout)
++}
++
++// getStdlibStreamClient 同 getStdlibClient，但不限整次请求的时长（见 getTLSStreamClient）。
++func getStdlibStreamClient(proxyURL string) *http.Client {
++	return stdlibClientWithin(proxyURL, 0)
++}
++
++// stdlibClientWithin 是走 proxyURL、整次请求限时 timeout 秒（0 = 不限）的 http.Client。
++func stdlibClientWithin(proxyURL string, timeout int) *http.Client {
+ 	// 同 getTLSClient：超时进 key，面板改超时后换新客户端。
+-	timeout := rtCfg().RequestTimeout
+ 	key := fmt.Sprintf("%s|%d", proxyURL, timeout)
+ 	if cached, ok := stdlibClientCache.Load(key); ok {
+ 		return cached.(*http.Client)
+@@ -200,6 +219,37 @@ func currentBrowserUA() string {
  	return ChromeUA
  }
  
@@ -980,7 +1035,7 @@ index c63b3a9..de635f7 100644
  // applyChromeHeaders 给 stdlib 请求填上应用层 header（根据 impersonate 配置自动适配 Chrome 或 Firefox）。
  func applyChromeHeaders(req *http.Request) {
  	applyBrowserHeaders(req)
-@@ -207,21 +238,5 @@ func applyChromeHeaders(req *http.Request) {
+@@ -207,21 +257,5 @@ func applyChromeHeaders(req *http.Request) {
  
  // applyBrowserHeaders 给 stdlib 请求填上对应 impersonate 配置的应用层 header。
  func applyBrowserHeaders(req *http.Request) {
@@ -1198,7 +1253,7 @@ index 6a88ac2..dc828d6 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 7c9186f..a6b0213 100644
+index 7c9186f..1c953fd 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -1471,7 +1526,7 @@ index 7c9186f..a6b0213 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -964,10 +1033,43 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
+@@ -964,10 +1033,122 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -1504,11 +1559,90 @@ index 7c9186f..a6b0213 100644
 +	return s.r.Read(p)
 +}
 +
++// stallLimit 是 StreamGenerate 上游最多能沉默多久：request_timeout_sec，0 = 不限
++// （同客户端 Timeout 的 0）。测试里换短。
++var stallLimit = func() time.Duration { return time.Duration(rtCfg().RequestTimeout) * time.Second }
++
++// StallError 说上游沉默了 Limit 这么久，这次请求被 stallWatch 掐掉了。
++type StallError struct{ Limit time.Duration }
++
++func (e *StallError) Error() string {
++	return fmt.Sprintf("上游 %s 没有任何数据（request_timeout_sec）", e.Limit)
++}
++
++// stallWatch 盯着一次 StreamGenerate：上游 limit 这么久一个字节都没来（连上了却迟迟
++// 不回、或者回复写到一半停住）就取消这次请求，没出字的照常重试。计的是沉默，不是整次
++// 请求。
++//
++// 原来客户端的 Timeout 管整次请求，而上游会让请求排很久的队：同一个号问一句「你是谁」，
++// 3.6 Flash 首字在 120–393 秒之间（3.5 Flash-Lite 4 秒）。排队时上游每 60 秒发一个
++// 38 字节的心跳帧，出字后 1 秒内写完。整次限时 180 秒，排队超过 180 秒的请求一律被
++// 掐掉重发，重发又从头排队，三次都掐完才报错；还在出字的长回复也被拦腰截断。按沉默
++// 计时，心跳就让排队的请求一直等下去，只有连心跳都断了（limit 默认 180 秒，等于连着
++// 丢三个）才算卡住。
++type stallWatch struct {
++	ctx    context.Context
++	limit  time.Duration
++	timer  *time.Timer
++	cancel context.CancelCauseFunc
++}
++
++func newStallWatch(ctx context.Context, limit time.Duration) *stallWatch {
++	ctx, cancel := context.WithCancelCause(ctx)
++	w := &stallWatch{ctx: ctx, limit: limit, cancel: cancel}
++	if limit > 0 {
++		w.timer = time.AfterFunc(limit, func() { cancel(&StallError{Limit: limit}) })
++	}
++	return w
++}
++
++// heard 说上游又来了数据，沉默从现在重新算。
++func (w *stallWatch) heard() {
++	if w.timer != nil {
++		w.timer.Reset(w.limit)
++	}
++}
++
++// done 结束盯梢。
++func (w *stallWatch) done() {
++	if w.timer != nil {
++		w.timer.Stop()
++	}
++	w.cancel(nil)
++}
++
++// explain 把被 stallWatch 掐掉的请求报的 context canceled 换成 StallError；
++// 别的错误（包括客户端断开）原样返回。
++func (w *stallWatch) explain(err error) error {
++	var stall *StallError
++	if err != nil && errors.As(context.Cause(w.ctx), &stall) {
++		return stall
++	}
++	return err
++}
++
++// heardReader 每读到数据就告诉 stallWatch 一声。
++type heardReader struct {
++	r io.Reader
++	w *stallWatch
++}
++
++func (h heardReader) Read(p []byte) (int, error) {
++	n, err := h.r.Read(p)
++	if n > 0 {
++		h.w.heard()
++	}
++	return n, err
++}
++
 +// doGeminiRequestStop 同 doGeminiRequest，stop 置位后提前结束读取（见 stopReader），
-+// ctx 结束时中止连接和读取。
++// ctx 结束时中止连接和读取。整次请求不限时，上游沉默超过 stallLimit 才放弃（见 stallWatch）。
 +func doGeminiRequestStop(ctx context.Context, endpoint, body string, headers map[string]string, proxyURL string,
 +	onLine func(string) error, stop *atomic.Bool) (int, []byte, int64, []string, error) {
  	sendAt := time.Now()
++	watch := newStallWatch(ctx, stallLimit())
++	defer watch.done()
++	ctx = watch.ctx
  	if proxyURL != "" {
  		// 走 stdlib 的 http.ProxyURL，已知能过 socks5/socks5h。
 -		req, err := http.NewRequest("POST", endpoint, strings.NewReader(body))
@@ -1516,16 +1650,25 @@ index 7c9186f..a6b0213 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -981,7 +1083,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
- 			return 0, nil, 0, nil, err
+@@ -975,36 +1156,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+ 		for k, v := range headers {
+ 			req.Header.Set(k, v)
+ 		}
+-		client := getStdlibClient(proxyURL)
++		client := getStdlibStreamClient(proxyURL)
+ 		resp, err := client.Do(req)
+ 		if err != nil {
+-			return 0, nil, 0, nil, err
++			return 0, nil, 0, nil, watch.explain(err)
  		}
  		defer resp.Body.Close()
 -		raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
-+		raw, ttfb, err := readModelCheckedBody(stopReader{resp.Body, stop}, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
++		raw, ttfb, err := readModelCheckedBody(stopReader{heardReader{resp.Body, watch}, stop}, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
  		if err != nil {
- 			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
+-			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
++			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), watch.explain(err)
  		}
-@@ -989,10 +1091,11 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+ 		return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  	}
  
  	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
@@ -1538,16 +1681,23 @@ index 7c9186f..a6b0213 100644
  	for k, v := range headers {
  		req.Header.Set(k, v)
  	}
-@@ -1002,7 +1105,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
- 		return 0, nil, 0, nil, err
+-	client := getTLSClient()
++	client := getTLSStreamClient()
+ 	resp, err := client.Do(req)
+ 	if err != nil {
+-		return 0, nil, 0, nil, err
++		return 0, nil, 0, nil, watch.explain(err)
  	}
  	defer resp.Body.Close()
 -	raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
-+	raw, ttfb, err := readModelCheckedBody(stopReader{resp.Body, stop}, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
++	raw, ttfb, err := readModelCheckedBody(stopReader{heardReader{resp.Body, watch}, stop}, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
  	if err != nil {
- 		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
+-		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
++		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), watch.explain(err)
  	}
-@@ -1313,6 +1416,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+ 	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
+ }
+@@ -1313,6 +1495,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -1645,10 +1795,10 @@ index 00eb305..2b4c6ca 100644
  		name, mc, err := resolveModel(c.name)
 diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
 new file mode 100644
-index 0000000..9613045
+index 0000000..a0cc748
 --- /dev/null
 +++ b/internal/app/headers_test.go
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,101 @@
 +package app
 +
 +import (
@@ -1682,7 +1832,6 @@ index 0000000..9613045
 +	defer proxy.Close()
 +
 +	imp := effectiveImpersonate()
-+	key := fmt.Sprintf("%s|%d", imp, rtCfg().RequestTimeout)
 +	insecure, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
 +		tls_client.WithClientProfile(resolveProfile(imp)),
 +		tls_client.WithInsecureSkipVerify(),
@@ -1690,19 +1839,23 @@ index 0000000..9613045
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	clientCacheMu.Lock()
-+	prev, had := clientCache[key]
-+	clientCache[key] = insecure
-+	clientCacheMu.Unlock()
-+	t.Cleanup(func() {
++	// 限时的那个给上传等请求，不限时的给 StreamGenerate（getTLSStreamClient）
++	for _, timeout := range []int{rtCfg().RequestTimeout, 0} {
++		key := fmt.Sprintf("%s|%d", imp, timeout)
 +		clientCacheMu.Lock()
-+		defer clientCacheMu.Unlock()
-+		if had {
-+			clientCache[key] = prev
-+		} else {
-+			delete(clientCache, key)
-+		}
-+	})
++		prev, had := clientCache[key]
++		clientCache[key] = insecure
++		clientCacheMu.Unlock()
++		t.Cleanup(func() {
++			clientCacheMu.Lock()
++			defer clientCacheMu.Unlock()
++			if had {
++				clientCache[key] = prev
++			} else {
++				delete(clientCache, key)
++			}
++		})
++	}
 +
 +	own := map[string]string{"Accept-Language": "en-US,en;q=0.9", "X-Same-Domain": "1"}
 +	paths := []struct {
@@ -2294,7 +2447,7 @@ index 376171f..87b91fe 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index b451d12..b0dbbd3 100644
+index b451d12..5d3cf5b 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2310,19 +2463,19 @@ index b451d12..b0dbbd3 100644
  )
  
 -const Version = "4.26.0"
-+const Version = "4.26.0-magpie.1"
++const Version = "4.26.0-magpie.2"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
 @@ -43,6 +44,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
- 	writeJSON(w, 200, map[string]interface{}{
  		"status":  "ok",
  		"version": Version,
  		"models":  modelNames,
 +		"capabilities": map[string]bool{"account_proxy_binding": true},
  	})
  }
-@@ -130,9 +131,9 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
+ 
+@@ -130,9 +132,9 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
  	return nil
  }
  
@@ -2334,7 +2487,7 @@ index b451d12..b0dbbd3 100644
  	if err != nil {
  		// res 非 nil：失败时它只带归属（哪个号 / 哪个出口），给 recordRequest 用
  		return "", nil, res, err
-@@ -268,7 +269,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -268,7 +270,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -2343,7 +2496,7 @@ index b451d12..b0dbbd3 100644
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
  		return
-@@ -305,11 +306,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -305,11 +307,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
  		// 多轮：按历史前缀识别续接，命中就只发新消息、历史留服务端。带 tools 也走这条。
@@ -2360,7 +2513,7 @@ index b451d12..b0dbbd3 100644
  		mde, downgraded := err.(*ModelDowngradedError)
  		status := 502
  		if downgraded {
-@@ -400,6 +404,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -400,6 +405,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	})
  }
  
@@ -2382,7 +2535,7 @@ index b451d12..b0dbbd3 100644
  // usageOf 是 buildUsageWithReasoning 的便捷包装，res 可能为 nil。
  func usageOf(prompt, text string, res *StreamResult) map[string]int {
  	r := ""
-@@ -575,7 +594,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -575,7 +595,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -2391,7 +2544,7 @@ index b451d12..b0dbbd3 100644
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
  		return
-@@ -669,11 +688,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -669,11 +689,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  	var toolCalls []ToolCall
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
@@ -2408,6 +2561,175 @@ index b451d12..b0dbbd3 100644
  		mde, downgraded := err.(*ModelDowngradedError)
  		status := 502
  		if downgraded {
+diff --git a/internal/app/stall_test.go b/internal/app/stall_test.go
+new file mode 100644
+index 0000000..6d80b46
+--- /dev/null
++++ b/internal/app/stall_test.go
+@@ -0,0 +1,163 @@
++package app
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++)
++
++// 假上游挂在代理那条路上（同 cancel_test）：http:// 目标以绝对 URI 发给代理，
++// httptest 服务器本身就能当上游。
++func withStallLimit(t *testing.T, d time.Duration) {
++	t.Helper()
++	prev := stallLimit
++	stallLimit = func() time.Duration { return d }
++	t.Cleanup(func() { stallLimit = prev })
++}
++
++// 一直在出字的回复比 request_timeout_sec 长也不能被截断：以前整次请求限时，
++// 180 秒时还在写的回复被拦腰掐掉。
++func TestStallWatchKeepsAReplyThatKeepsComing(t *testing.T) {
++	withStallLimit(t, 150*time.Millisecond)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(200)
++		for i := 0; i < 20; i++ {
++			fmt.Fprintf(w, "frame %d\n", i)
++			w.(http.Flusher).Flush()
++			time.Sleep(30 * time.Millisecond)
++		}
++	}))
++	defer srv.Close()
++
++	lines := 0
++	start := time.Now()
++	status, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
++		map[string]string{}, srv.URL, func(line string) error {
++			lines++
++			return nil
++		}, nil)
++	if err != nil || status != 200 {
++		t.Fatalf("持续出字的回复被掐了：status=%d err=%v", status, err)
++	}
++	if lines != 20 {
++		t.Fatalf("只读到 %d 行", lines)
++	}
++	if took := time.Since(start); took < 4*150*time.Millisecond {
++		t.Fatalf("测试前提不成立：回复只用了 %v，没比沉默上限长", took)
++	}
++}
++
++// 上游让请求排队时只发心跳帧（实测每 60 秒一个），排得比沉默上限还久也要等到出字：
++// 以前整次请求限时，排队超过 180 秒的请求一律被掐掉重发。
++func TestStallWatchWaitsThroughHeartbeats(t *testing.T) {
++	withStallLimit(t, 150*time.Millisecond)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(200)
++		w.Write([]byte(")]}'\nfirst frame\n"))
++		w.(http.Flusher).Flush()
++		for i := 0; i < 6; i++ {
++			time.Sleep(100 * time.Millisecond)
++			w.Write([]byte("heartbeat\n"))
++			w.(http.Flusher).Flush()
++		}
++		w.Write([]byte("answer\n"))
++	}))
++	defer srv.Close()
++
++	var got []string
++	start := time.Now()
++	_, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
++		map[string]string{}, srv.URL, func(line string) error {
++			got = append(got, line)
++			return nil
++		}, nil)
++	if err != nil {
++		t.Fatalf("还在发心跳的上游被当成卡住了：%v", err)
++	}
++	if len(got) == 0 || got[len(got)-1] != "answer" {
++		t.Fatalf("没等到排队之后的回复：%q", got)
++	}
++	if took := time.Since(start); took < 4*150*time.Millisecond {
++		t.Fatalf("测试前提不成立：排队只用了 %v，没比沉默上限长", took)
++	}
++}
++
++// 首帧之后就不再出字的上游，沉默满上限就放弃，报 StallError，并真的断开上游连接。
++func TestStallWatchEndsAQuietUpstream(t *testing.T) {
++	withStallLimit(t, 150*time.Millisecond)
++	upstreamGone := make(chan struct{})
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(200)
++		w.Write([]byte(")]}'\nfirst frame\n"))
++		w.(http.Flusher).Flush()
++		select {
++		case <-r.Context().Done():
++			close(upstreamGone)
++		case <-time.After(10 * time.Second):
++		}
++	}))
++	defer srv.Close()
++
++	start := time.Now()
++	_, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
++		map[string]string{}, srv.URL, func(string) error { return nil }, nil)
++	var stall *StallError
++	if !errors.As(err, &stall) {
++		t.Fatalf("沉默的上游应报 StallError，实际 %v", err)
++	}
++	if took := time.Since(start); took > 3*time.Second {
++		t.Fatalf("沉默 150ms 就该放弃，实际等了 %v", took)
++	}
++	select {
++	case <-upstreamGone:
++	case <-time.After(3 * time.Second):
++		t.Fatal("上游连接没有被关闭")
++	}
++}
++
++// 连上了却一直不回响应头，同样按沉默计时。
++func TestStallWatchEndsAnUpstreamThatNeverAnswers(t *testing.T) {
++	withStallLimit(t, 150*time.Millisecond)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		io.Copy(io.Discard, r.Body) // 读完请求体，服务端才盯得到连接断开
++		select {
++		case <-r.Context().Done():
++		case <-time.After(10 * time.Second):
++		}
++	}))
++	defer srv.Close()
++
++	_, _, _, _, err := doGeminiRequestStop(context.Background(), "http://upstream.invalid/StreamGenerate", "f.req=x",
++		map[string]string{}, srv.URL, nil, nil)
++	var stall *StallError
++	if !errors.As(err, &stall) {
++		t.Fatalf("不回响应头的上游应报 StallError，实际 %v", err)
++	}
++}
++
++// 客户端断开不是上游沉默：照旧报 context.Canceled，调用方据此不重试、不记出口的错。
++func TestStallWatchLeavesClientCancelAlone(t *testing.T) {
++	withStallLimit(t, 10*time.Second)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		io.Copy(io.Discard, r.Body) // 读完请求体，服务端才盯得到连接断开
++		select {
++		case <-r.Context().Done():
++		case <-time.After(10 * time.Second):
++		}
++	}))
++	defer srv.Close()
++
++	ctx, cancel := context.WithCancel(context.Background())
++	time.AfterFunc(50*time.Millisecond, cancel)
++	_, _, _, _, err := doGeminiRequestStop(ctx, "http://upstream.invalid/StreamGenerate", "f.req=x",
++		map[string]string{}, srv.URL, nil, nil)
++	var stall *StallError
++	if errors.As(err, &stall) || !errors.Is(err, context.Canceled) {
++		t.Fatalf("客户端断开应报 context.Canceled，实际 %v", err)
++	}
++}
 diff --git a/internal/app/strict_model.go b/internal/app/strict_model.go
 index ecc17ac..88267c5 100644
 --- a/internal/app/strict_model.go
