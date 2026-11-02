@@ -92,6 +92,34 @@ describe('3. Invalid options validation', () => {
     assert.equal(settings({ proxy: ' http://127.0.0.1:7890 ' }).proxy, 'http://127.0.0.1:7890');
   });
 
+  it('falls back to environment proxy variables in priority order', () => {
+    const origEnv = { ...process.env };
+    try {
+      delete process.env.GEMINI_WEB_PROXY;
+      delete process.env.HTTPS_PROXY;
+      delete process.env.HTTP_PROXY;
+      delete process.env.ALL_PROXY;
+
+      assert.equal(settings().proxy, '');
+
+      process.env.ALL_PROXY = 'socks5://127.0.0.1:1080';
+      assert.equal(settings().proxy, 'socks5://127.0.0.1:1080');
+
+      process.env.HTTP_PROXY = 'http://127.0.0.1:7891';
+      assert.equal(settings().proxy, 'http://127.0.0.1:7891');
+
+      process.env.HTTPS_PROXY = 'http://127.0.0.1:7892';
+      assert.equal(settings().proxy, 'http://127.0.0.1:7892');
+
+      process.env.GEMINI_WEB_PROXY = 'http://127.0.0.1:7893';
+      assert.equal(settings().proxy, 'http://127.0.0.1:7893');
+
+      assert.equal(settings({ proxy: 'http://127.0.0.1:7890' }).proxy, 'http://127.0.0.1:7890');
+    } finally {
+      process.env = origEnv;
+    }
+  });
+
   it('rejects unknown options to catch typos', () => {
     assert.throws(() => settings({ unknownOption: true }), /Unknown plugin option/);
   });

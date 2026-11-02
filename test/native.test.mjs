@@ -171,6 +171,9 @@ describe('23. Native helper config/secrets creation reuse modes 600 without valu
     assert.equal(spawnedEnv.API_KEY, 'gw_key');
     assert.equal(spawnedEnv.ADMIN_TOKEN, 'token');
 
+    startBackend({ dataDir, expectedHash: validHash, proxy: 'http://127.0.0.1:7890', spawnFn: fakeSpawn, exitFn: () => {} });
+    assert.deepEqual(spawnedArgs, ['--config', path.join(dataDir, 'config.json'), '--db', path.join(dataDir, 'gemini.db'), '--proxy', 'http://127.0.0.1:7890']);
+
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
