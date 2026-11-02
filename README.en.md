@@ -90,8 +90,8 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 Tool calling and image input are enabled by default. Configure plugin options via the CLI:
 
 ```bash
-# Turn image input off for Gemini Web
-magpie plugin options magpie-gemini-web '{"allowImages":false}'
+# Turn image input off only for Gemini Web, keeping it on for AI Studio
+magpie plugin options magpie-gemini-web '{"allowImages":false,"studio":{"allowImages":true}}'
 
 # Turn image input off for AI Studio
 magpie plugin options magpie-gemini-web '{"studio":{"allowImages":false}}'

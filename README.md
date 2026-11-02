@@ -90,8 +90,8 @@
 工具调用与图片输入默认开启。可通过命令行修改插件配置：
 
 ```bash
-# 关闭 Gemini Web 的图片输入
-magpie plugin options magpie-gemini-web '{"allowImages":false}'
+# 仅关闭 Gemini Web 的图片输入，保留 AI Studio 的图片输入
+magpie plugin options magpie-gemini-web '{"allowImages":false,"studio":{"allowImages":true}}'
 
 # 关闭 AI Studio 的图片输入
 magpie plugin options magpie-gemini-web '{"studio":{"allowImages":false}}'
