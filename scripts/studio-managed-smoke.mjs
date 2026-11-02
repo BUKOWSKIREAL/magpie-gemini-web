@@ -32,7 +32,8 @@ try {
     db.prepare('INSERT INTO bodies (id,time,request,request_size,response,response_size) VALUES (?,?,?,?,?,?)')
       .run('legacy-smoke', 1234, '旧请求', 100, 'old response', 200);
   } finally { db.close(); }
-  fs.appendFileSync(path.join(dataDir, '.env'), 'FIRST_EVENT_HEDGE=auto\n');
+  // Both values would be reset by upstream's legacy full-.env migration.
+  fs.appendFileSync(path.join(dataDir, '.env'), 'FIRST_EVENT_HEDGE=off\nREQUEST_TIMEOUT=5m\n');
   await ensureStudio({ dataDir, managementOnly: true });
   const migratedBody = await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body');
   assert.equal(migratedBody.request, '旧请求');
@@ -40,10 +41,27 @@ try {
   assert.equal(migratedBody.request_size, 100);
   assert.equal(migratedBody.response_size, 200);
   const config = await studioAdmin(local, 'GET', '/api/config');
-  assert.equal(config.first_event_hedge, 'auto');
+  assert.equal(config.first_event_hedge, 'off');
+  assert.equal(config.request_timeout, '5m0s');
   // Generation's WAA runs in the service itself, on SpiderMonkey, with no copies of the models
   assert.equal(config.waa_backend, 'spidermonkey');
   assert.equal(config.search_model_aliases, false);
+  // Save upstream defaults that differ from this plugin's defaults. They must stay explicit
+  // through the backend's Save and the plugin's next config sync, not get silently re-seeded.
+  const choices = {
+    search_model_aliases: true, routing_strategy: 'round-robin', per_account_concurrency: 2,
+    first_event_hedge: 'auto', first_event_hedge_models: 'gemini-3.8-flash',
+    api_key_accounts: `${local.apiKey}:smoke@example.com`
+  };
+  const saved = await studioAdmin(local, 'PUT', '/api/config', {
+    ...config, ...choices,
+    // These fields belong to the plugin and must stay locked even if submitted by a client.
+    listen_addr: '127.0.0.1:1', waa_backend: 'camoufox'
+  });
+  assert.equal(saved.listen_addr, config.listen_addr);
+  assert.equal(saved.waa_backend, 'spidermonkey');
+  assert.ok(saved.environment.includes('WAA_BACKEND'));
+  for (const [key, value] of Object.entries(choices)) assert.equal(saved[key], value, key);
   const pidBefore = fs.readFileSync(path.join(dataDir, 'backend.pid'), 'utf8');
   const status = await studioAdmin(local, 'GET', '/api/status');
   assert.equal(status.version, STUDIO_VERSION);
@@ -80,8 +98,12 @@ try {
   assert.equal((await studioStatus({ dataDir })).status, 'stopped');
   await ensureStudio({ dataDir, managementOnly: true });
   assert.deepEqual(await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body'), migratedBody);
+  const restarted = await studioAdmin(local, 'GET', '/api/config');
+  for (const [key, value] of Object.entries(choices)) assert.equal(restarted[key], value, `${key} after restart`);
+  assert.equal(restarted.request_timeout, '5m0s');
+  assert.equal(restarted.waa_backend, 'spidermonkey');
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
-  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved hedge setting, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
+  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved defaults/hedge/models/key bindings across restart, locked plugin settings, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
 } finally {
   let stopped = !local;
   if (local) stopped = (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;
