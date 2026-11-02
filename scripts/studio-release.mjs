@@ -188,7 +188,7 @@ const npm = argv => execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm
 const MANAGED_BY = 'magpie-gemini-web';
 // An empty build ID: Go's default one hashes the build's inputs, the C compiler's path among them,
 // so two builders' otherwise identical executables would differ in it.
-const managedFlags = `-s -w -buildid= -X github.com/Mag1cFall/AIStudio2API/internal/app.version=v${release.version} -X github.com/Mag1cFall/AIStudio2API/internal/app.managedBy=${MANAGED_BY}`;
+const managedFlags = `-s -w -buildid= -X github.com/Mag1cFall/AIStudio2API/internal/app.version=v${release.version} -X github.com/Mag1cFall/AIStudio2API/internal/app.managedBy=${MANAGED_BY} -X github.com/Mag1cFall/AIStudio2API/internal/config.managedBy=${MANAGED_BY}`;
 function linkFlags(goos) {
   return goos === 'linux' ? "-linkmode external -extldflags '-static -Wl,--strip-all'"
     : goos === 'windows' ? "-linkmode external -extldflags '-static -Wl,--no-insert-timestamp'" : '';
