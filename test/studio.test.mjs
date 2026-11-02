@@ -1206,7 +1206,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // Below the account's own windows, where the service's admin page is (its proxy can't be read here)
       assert.equal(a.windows.length, 2);
       assert.equal(admin.name, '管理页');
+      assert.equal(Object.hasOwn(admin, 'used'), false, 'service information must not become a 100% remaining meter (#34)');
       assert.ok(admin.display.startsWith(`${serverURL.replace(/\/v1$/, '')}（用户名 magpie，密码是 `) && admin.display.includes('config.json'));
+
+      serverResponses['/api/cooldowns'].body = JSON.stringify({ cooldowns: [] });
+      const ready = await plugin.auth.usage(async () => authFor('a@example.com'));
+      assert.equal(ready.error, undefined);
+      assert.deepEqual(ready.windows, [admin], 'without cooldowns only text remains, not an invented allowance');
 
       const b = await plugin.auth.usage(async () => authFor('b@example.com'));
       assert.match(b.error, /这个 Google 账号需要重新登录.*用 Google 账号登录（推荐）.*再选这个账号/);
@@ -1245,6 +1251,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       saveStudioProxy(tempStudioDataDir, 'socks5://127.0.0.1:7890');
       const proxied = await plugin.auth.usage(async () => managedAuth);
       const proxyWindow = proxied.windows.find(w => w.name === '代理出口');
+      assert.deepEqual(proxied.windows.filter(w => Object.hasOwn(w, 'used')), pool,
+        'only real cooldowns have a percentage; proxy and admin information stay textual (#34)');
       assert.match(proxyWindow.display, /^http:\/\/127\.0\.0\.1:9393（服务启动时的设置）；管理页设置的是 socks5:\/\/127\.0\.0\.1:7890，重启本地服务（.* stop.*，下一次请求会自动启动）后生效$/);
       delete serverResponses['/api/config'];
 
