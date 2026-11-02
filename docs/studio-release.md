@@ -103,9 +103,18 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 0.2.18 升级验证（2026-10-30）
+## 0.2.19 升级验证（2026-11-02）
 
-以下为本分支的实际状态，发布前以最新 CI 结果为准。
+- 五个平台的候选构建（[run 41378024737](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41378024737)）通过上游测试、真实安装冒烟验证及插件测试；安装包和二进制 pin 来自该次构建。Windows 首次在安装前的 PowerShell 进程查询超时，失败作业重跑通过，未修改测试或放宽超时。提交 pin 后仍需由严格验证工作流在新 runner 上重建并逐一比对哈希，结果见升级 PR。
+- 本地使用 CI 的 darwin-arm64 安装包运行完整插件测试：212 项通过、无跳过；Python bridge 测试 41 项通过。打包检查包含配置补丁，不包含本地构建和账号数据。
+- 从用户界面操作 Magpie 和本地管理页：刷新模型、测试 Argon（界面报告 4.7 秒响应），并确认生图选择器列出五个 AI Studio 图片模型。管理页实际修改账号绑定、每账号并发、轮转策略、搜索模型别名、备用请求开关及模型，保存后完整重启服务；六项均在界面和 API 中保留。测试后恢复原值并再次重启核对。
+- 通过真实 Magpie 网关调用 `gemini-4-argon`，九项检查全部通过：无登录浏览器启动、两轮原生工具调用、缺少回传签名时续接、字面引用文本保留、下一轮对话读取两次工具结果、取消活跃请求、取消后再次调用、后端进程重启后用原登录继续工具历史，以及结束时无登录浏览器。重启恢复约 30 秒。
+- 通过 Magpie 的 `generate_image` 工具调用 `ai-studio/gemini-3.1-flash-image`，请求 16:9 水彩喜鹊，实际返回 1376×768 JPEG，已打开检查画面。
+- 验证使用现有已登录账号；Google 新登录和重新登录流程本次未验证。升级前已备份完整本地数据目录；本机后端已升级，临时调整的设置和 Magpie 供应商开关均已恢复。此分支未 merge，未发布后端 release 或 npm 包。
+
+## 0.2.18 升级验证（2026-10-30，历史记录）
+
+以下为上一版 `0.2.18-magpie.1` 的验证结果，不代表 0.2.19。
 
 - 首次候选构建（run 41025535280）中，Linux x64/arm64 在上游测试 `TestUserCacheRootWithoutEnvironment` 的 `t.Setenv` 处崩溃（见上文环境变量拦截函数），Windows 的 macOS 本机交叉编译结果与 CI 不同（见上文 C++ 运行库）。两处修复后的候选构建（run 41033635405）五个平台都通过上游测试、真实安装冒烟验证（含 `waa_backend=spidermonkey`、`search_model_aliases=false`）与插件测试。
 - 跨机器一致性：Linux x64/arm64 与 Windows x64 的 CI 候选哈希与 macOS arm64 本机交叉编译完全一致；darwin-arm64 两次 CI 构建得到相同哈希。pin 来自第二次候选构建，随后的严格验证构建（run 41036094948）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，冒烟验证与插件测试通过。
