@@ -229,13 +229,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(withNested.allowTools, true);
     assert.equal(withNested.proxy, 'http://127.0.0.1:1082');
 
-    // Image input is on for AI Studio unless turned off, for both providers or for it alone;
-    // Gemini Web keeps it off by default
+    // Image input is on for both providers unless turned off, for both providers or for it alone
     assert.equal(studioSettings().allowImages, true);
     assert.equal(studioSettings({ allowImages: false }).allowImages, false);
     assert.equal(studioSettings({ studio: { allowImages: false } }).allowImages, false);
     assert.equal(studioSettings({ allowImages: false, studio: { allowImages: true } }).allowImages, true);
-    assert.equal(settings().allowImages, false);
+    assert.equal(settings().allowImages, true);
+    assert.equal(settings({ allowImages: false }).allowImages, false);
 
     assert.equal(studioSettings().imageModels, true, 'Image models are listed by default');
     assert.equal(studioSettings({ studio: { imageModels: false } }).imageModels, false);

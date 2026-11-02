@@ -81,7 +81,8 @@ describe('3. Invalid options validation', () => {
     const s = settings();
     assert.equal(s.baseURL, DEFAULT_BASE);
     assert.equal(s.allowTools, true);
-    assert.equal(s.allowImages, false);
+    assert.equal(s.allowImages, true);
+    assert.equal(settings({ allowImages: false }).allowImages, false);
     assert.equal(s.contextLimit, 1000000);
     assert.equal(s.outputLimit, 8192);
     assert.equal(s.requestTimeoutMs, 570000);
