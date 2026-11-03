@@ -19,10 +19,10 @@ index c6a75e2..db2c8f5 100644
  	golang.org/x/text v0.42.0 // indirect
  	modernc.org/libc v1.72.3 // indirect
 diff --git a/internal/app/admin_cookies.go b/internal/app/admin_cookies.go
-index f17a675..c90f08a 100644
+index 78236c6..a5109b0 100644
 --- a/internal/app/admin_cookies.go
 +++ b/internal/app/admin_cookies.go
-@@ -85,9 +85,10 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
+@@ -87,9 +87,10 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
  		})
  	case http.MethodPost:
  		var p struct {
@@ -33,34 +33,28 @@ index f17a675..c90f08a 100644
 +			Cookie  string `json:"cookie"`
 +			Note    string `json:"note"`
 +			ProxyID *int64 `json:"proxy_id"`
+ 			// 浏览器多号登录时的账号序号（/u/N），不传 = 0
+ 			AuthUser int `json:"authuser"`
  		}
- 		body, _ := io.ReadAll(r.Body)
- 		if err := json.Unmarshal(body, &p); err != nil {
-@@ -99,6 +100,9 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
- 			writeJSON(w, 400, map[string]string{"error": err.Error()})
- 			return
+@@ -114,6 +115,9 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
+ 				return
+ 			}
  		}
 +		if p.ProxyID != nil && *p.ProxyID >= 0 {
 +			bindAccountProxy(id, *p.ProxyID)
 +		}
- 		logf("[cookies] 新增账号 #%d label=%q", id, strings.TrimSpace(p.Label))
+ 		logf("[cookies] 新增账号 #%d label=%q authuser=%d", id, strings.TrimSpace(p.Label), p.AuthUser)
  		writeJSON(w, 200, map[string]interface{}{"id": id})
  	default:
-@@ -189,9 +193,10 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
- 		writeJSON(w, 200, map[string]interface{}{"status": next})
- 	case http.MethodPatch:
- 		var p struct {
--			Label  *string `json:"label"`
--			Note   *string `json:"note"`
--			Status *string `json:"status"`
-+			Label   *string `json:"label"`
-+			Note    *string `json:"note"`
-+			Status  *string `json:"status"`
-+			ProxyID *int64  `json:"proxy_id"`
+@@ -207,6 +211,7 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
+ 			Label    *string `json:"label"`
+ 			Note     *string `json:"note"`
+ 			Status   *string `json:"status"`
++			ProxyID  *int64  `json:"proxy_id"`
+ 			AuthUser *int    `json:"authuser"`
  		}
  		body, _ := io.ReadAll(r.Body)
- 		if err := json.Unmarshal(body, &p); err != nil {
-@@ -204,6 +209,9 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
+@@ -226,6 +231,9 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
  				return
  			}
  		}
@@ -71,7 +65,7 @@ index f17a675..c90f08a 100644
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
 diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
-index a765bb1..eb073b6 100644
+index 4aedd27..2364e2b 100644
 --- a/internal/app/admin_ui/index.html
 +++ b/internal/app/admin_ui/index.html
 @@ -1020,7 +1020,8 @@ const RT_GROUPS = [
@@ -81,6 +75,15 @@ index a765bb1..eb073b6 100644
 -      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
 +      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600,
 +        hint: '对话请求按上游沉默计时：这么久一个字节都没来才放弃这一次（没出字前会重试）。排队时上游每 60 秒发一次心跳，回复一直在出也不会截断。其它请求（取页面、上传等）仍是整次请求的上限' },
+     ],
+   },
+   {
+@@ -1038,8 +1039,6 @@ const RT_GROUPS = [
+         hint: '上游前端版本号。请求大面积失败时先看这里是不是过期了' },
+       { k: 'gemini_bl_auto', label: '自动跟随 bl 版本', type: 'bool',
+         hint: '每 6 小时从 /app 页面抓一次最新版本号，抓到就用抓到的。抓不到或格式不对就继续用上面钉的值' },
+-      { k: 'web_channel', label: '新协议（processSession）', type: 'bool',
+-        hint: '对话改走网页新版用的 processSession（WebChannel）接口，而不是老的 StreamGenerate。后端是同一个，只换传输方式；老接口目前仍正常，老接口出问题时再打开。多轮续接仍走老接口；扩展思考在新协议上暂时不生效（回报普通档）。默认关' },
      ],
    },
    {
@@ -264,7 +267,7 @@ index 0000000..a2a5e77
 +}
 diff --git a/internal/app/argon_probe_test.go b/internal/app/argon_probe_test.go
 new file mode 100644
-index 0000000..dd9e687
+index 0000000..bbc0041
 --- /dev/null
 +++ b/internal/app/argon_probe_test.go
 @@ -0,0 +1,53 @@
@@ -289,7 +292,7 @@ index 0000000..dd9e687
 + dbPath := cfg.DBPath
 + cfg = defaultConfig(); cfg.DBPath = dbPath; cfg.RequestTimeout = 65
 + initRuntimeConfig()
-+ page, err := fetchAppPage(cookie, ""); if err != nil { t.Fatal("page fetch failed") }
++ page, err := fetchAppPage(cookie, 0, ""); if err != nil { t.Fatal("page fetch failed") }
 + tok := snlm0eRe.FindSubmatch(page); if len(tok)<2 {t.Fatal("login token unavailable")}
 + bl := regexp.MustCompile(`"cfb2h":"([^"]+)"`).FindSubmatch(page)
 + if len(bl)<2 {t.Fatal("build version unavailable")}
@@ -782,7 +785,7 @@ index 0000000..2f0b8cd
 +}
 diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
 new file mode 100644
-index 0000000..ae43ef4
+index 0000000..fb1ccec
 --- /dev/null
 +++ b/internal/app/argon_timing_probe_test.go
 @@ -0,0 +1,74 @@
@@ -808,7 +811,7 @@ index 0000000..ae43ef4
 + dbPath := cfg.DBPath
 + cfg = defaultConfig(); cfg.DBPath = dbPath; cfg.RequestTimeout = 65
 + initRuntimeConfig()
-+ page, err := fetchAppPage(cookie, ""); if err != nil { t.Fatal("page fetch failed") }
++ page, err := fetchAppPage(cookie, 0, ""); if err != nil { t.Fatal("page fetch failed") }
 + tok := snlm0eRe.FindSubmatch(page); if len(tok)<2 {t.Fatal("login token unavailable")}
 + bl := regexp.MustCompile(`"cfb2h":"([^"]+)"`).FindSubmatch(page)
 + if len(bl)<2 {t.Fatal("build version unavailable")}
@@ -1306,7 +1309,7 @@ index 94c0b70..2a4b697 100644
 +	}
 +}
 diff --git a/internal/app/context_file.go b/internal/app/context_file.go
-index bfc577b..cb60661 100644
+index 97995a2..ba03140 100644
 --- a/internal/app/context_file.go
 +++ b/internal/app/context_file.go
 @@ -1,6 +1,7 @@
@@ -1321,22 +1324,22 @@ index bfc577b..cb60661 100644
  //
  // 上传失败**不静默回退到超长内联**：那样上游会把最新提问截掉，客户端拿到一个
  // 答非所问的 200 却看不出问题。
--func prepareContextFile(prompt, latest string, budget int, cookie, proxyURL string) (
+-func prepareContextFile(prompt, latest string, budget int, cookie string, authuser int, proxyURL string) (
 +//
 +// 附件里只放对话历史，工具协议（pc.Head / pc.Tail）留在正文：agentic 客户端的
 +// 请求动辄十几万字节，几乎每轮都走这条路，工具说明和末尾锚点一旦进了附件，模型
 +// 就不再稳定地吐 ```tool_call```。工具说明本身就超预算时才退回整段进附件。
-+func prepareContextFile(ctx context.Context, prompt string, pc promptCtx, budget int, cookie, proxyURL string) (
++func prepareContextFile(ctx context.Context, prompt string, pc promptCtx, budget int, cookie string, authuser int, proxyURL string) (
  	string, []fileRef, bool, error) {
  	if budget <= 0 || len(prompt) <= budget {
  		return prompt, nil, false, nil
-@@ -84,11 +89,50 @@ func prepareContextFile(prompt, latest string, budget int, cookie, proxyURL stri
+@@ -84,11 +89,50 @@ func prepareContextFile(prompt, latest string, budget int, cookie string, authus
  	if cookie == "" {
  		return prompt, nil, false, nil // 匿名：引用会被回 1100，转了也没用
  	}
--	ref, err := uploadBytes(cookie, proxyURL, []byte(prompt), contextFileName)
+-	ref, err := uploadBytes(cookie, authuser, proxyURL, []byte(prompt), contextFileName)
 +	history, inline := planContextFile(prompt, pc, budget)
-+	ref, err := uploadBytesCtx(ctx, cookie, proxyURL, []byte(history), contextFileName)
++	ref, err := uploadBytesCtx(ctx, cookie, authuser, proxyURL, []byte(history), contextFileName)
  	if err != nil {
  		return prompt, nil, false, fmt.Errorf("超长对话转附件失败: %w", err)
  	}
@@ -1385,7 +1388,7 @@ index bfc577b..cb60661 100644
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index 74df391..401482e 100644
+index 529cfad..c48b692 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -1396,7 +1399,7 @@ index 74df391..401482e 100644
  	"crypto/sha256"
  	"encoding/hex"
  	"encoding/json"
-@@ -206,7 +207,7 @@ func getAnonSession(proxyURL string) (string, error) {
+@@ -207,7 +208,7 @@ func getAnonSession(proxyURL string) (string, error) {
  		if err != nil {
  			return nil, nil, nil, err
  		}
@@ -1405,7 +1408,7 @@ index 74df391..401482e 100644
  		resp, err := getTLSClient().Do(r)
  		if err != nil {
  			return nil, nil, nil, err
-@@ -238,15 +239,14 @@ func getAnonSession(proxyURL string) (string, error) {
+@@ -239,15 +240,14 @@ func getAnonSession(proxyURL string) (string, error) {
  	return strings.Join(pairs, "; "), nil
  }
  
@@ -1425,7 +1428,7 @@ index 74df391..401482e 100644
  	p, slotOK, slotErr := acquireSlot(conv.proxyID)
  	if !slotOK {
  		return &StreamResult{}, slotErr
-@@ -369,12 +369,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -371,12 +371,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  	t0 := time.Now()
  	var lastErr error
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
@@ -1446,7 +1449,7 @@ index 74df391..401482e 100644
  		// 降级：同一个号重试还是降级，直接交给上层（见 gemini.go 同一处）。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -383,6 +390,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -385,6 +392,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
  		}
  		if err != nil || statusCode != 200 || !hasContentFrame(string(raw)) {
@@ -1456,7 +1459,7 @@ index 74df391..401482e 100644
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -397,7 +407,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -399,7 +409,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1467,7 +1470,7 @@ index 74df391..401482e 100644
  			}
  			continue
  		}
-@@ -438,7 +450,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -440,7 +452,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -1476,7 +1479,7 @@ index 74df391..401482e 100644
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -488,7 +500,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+@@ -491,7 +503,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
  				}
  			}
  		}
@@ -1486,10 +1489,10 @@ index 74df391..401482e 100644
  			break
  		}
 diff --git a/internal/app/cookie_pool.go b/internal/app/cookie_pool.go
-index 6a88ac2..dc828d6 100644
+index 60fe35f..14e5a44 100644
 --- a/internal/app/cookie_pool.go
 +++ b/internal/app/cookie_pool.go
-@@ -546,6 +546,9 @@ func checkAccountCookie(a CookieAccount) CookieCheck {
+@@ -565,6 +565,9 @@ func checkAccountCookie(a CookieAccount) CookieCheck {
  		return CookieCheck{Detail: explainCookieFailure(err), ProxyName: name, TookMs: took}
  	}
  	markAccountResult(a.ID, true, "")
@@ -1500,7 +1503,7 @@ index 6a88ac2..dc828d6 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 7c9186f..c04b69c 100644
+index 7572da2..55ab2ee 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -1511,15 +1514,15 @@ index 7c9186f..c04b69c 100644
  	"encoding/json"
  	"errors"
  	"fmt"
-@@ -11,6 +12,7 @@ import (
- 	"net/url"
+@@ -12,6 +13,7 @@ import (
  	"regexp"
+ 	"strconv"
  	"strings"
 +	"sync/atomic"
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -373,7 +375,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
+@@ -376,7 +378,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -1528,7 +1531,7 @@ index 7c9186f..c04b69c 100644
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -388,15 +390,23 @@ type fileRef struct {
+@@ -391,15 +393,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -1555,7 +1558,7 @@ index 7c9186f..c04b69c 100644
  		var exhausted *ModelDowngradedError
  		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
  			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
-@@ -414,8 +424,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -417,8 +427,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return res, err
  }
  
@@ -1566,7 +1569,7 @@ index 7c9186f..c04b69c 100644
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -425,6 +435,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -428,6 +438,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -1576,7 +1579,7 @@ index 7c9186f..c04b69c 100644
  	var acct *CookieAccount
  	skip := exclude
  	if mc.PinAccountID > 0 {
-@@ -489,6 +502,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -485,6 +498,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -1586,31 +1589,31 @@ index 7c9186f..c04b69c 100644
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -569,7 +585,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -581,7 +597,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
--			ref, uerr := uploadBytes(cookieStr, proxyURL, u.Data, u.Name)
-+			ref, uerr := uploadBytesCtx(ctx, cookieStr, proxyURL, u.Data, u.Name)
+-			ref, uerr := uploadBytes(cookieStr, authUser, proxyURL, u.Data, u.Name)
++			ref, uerr := uploadBytesCtx(ctx, cookieStr, authUser, proxyURL, u.Data, u.Name)
 +			if err := ctx.Err(); err != nil {
 +				return attrib(err)
 +			}
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -586,7 +605,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -598,7 +617,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
--	if p, f, used, ferr := prepareContextFile(prompt, latest, budget, cookieStr, proxyURL); ferr != nil {
-+	if p, f, used, ferr := prepareContextFile(ctx, prompt, pc, budget, cookieStr, proxyURL); ferr != nil {
+-	if p, f, used, ferr := prepareContextFile(prompt, latest, budget, cookieStr, authUser, proxyURL); ferr != nil {
++	if p, f, used, ferr := prepareContextFile(ctx, prompt, pc, budget, cookieStr, authUser, proxyURL); ferr != nil {
 +		if err := ctx.Err(); err != nil {
 +			return attrib(err)
 +		}
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -713,45 +735,29 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -726,45 +748,29 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1650,15 +1653,39 @@ index 7c9186f..c04b69c 100644
 +		return sleepCtx(ctx, time.Duration(rtCfg().RetryDelaySec)*time.Second)
  	}
  
+-	// 新协议（#43）：同一个 inner，只换传输层；返回的 raw 已包成老格式，下面的判断原样适用。
+-	useWC := rtCfg().WebChannel
++	// 新协议（#43）尚未接入按沉默计时（#33）、请求取消传播、工具提前收尾与扩展思考，
++	// 当前版本锁死走 StreamGenerate。
++	if rtCfg().WebChannel {
++		logf("[gemini] web_channel 已在配置中开启，但当前版本固定走 StreamGenerate（保留按沉默计时、请求取消、工具提前收尾与扩展思考）")
++	}
++	useWC := false
+ 	wcReq := wcRequest{
+ 		Inner: wcInnerWithoutPrompt(inner), Prompt: prompt,
+ 		HexID: mc.HexID, Mode: mc.Mode, Think: mc.thinkWire(),
+ 		Cookie: cookieStr, SAPISID: sapisid, AuthUser: authUser,
+ 	}
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
--		statusCode, raw, ttfb, setCookie, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
 +		if err := ctx.Err(); err != nil {
 +			return attrib(err)
 +		}
-+		statusCode, raw, ttfb, setCookie, err := doGeminiRequestStop(ctx, endpoint, body, geminiHeaders, proxyURL, lh.cb, &lh.stop)
+ 		var statusCode int
+ 		var raw []byte
+ 		var ttfb int64
+@@ -772,9 +778,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+ 		var err error
+ 		if useWC {
+ 			wcReq.Cookie = cookieStr
+-			statusCode, raw, ttfb, setCookie, err = doWebChannelRequest(wcReq, proxyURL, lineCB)
++			statusCode, raw, ttfb, setCookie, err = doWebChannelRequest(wcReq, proxyURL, lh.cb)
+ 		} else {
+-			statusCode, raw, ttfb, setCookie, err = doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
++			statusCode, raw, ttfb, setCookie, err = doGeminiRequestStop(ctx, endpoint, body, geminiHeaders, proxyURL, lh.cb, &lh.stop)
+ 		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
- 				cookieStr = merged
+@@ -782,6 +788,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
@@ -1669,7 +1696,7 @@ index 7c9186f..c04b69c 100644
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -763,6 +769,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -793,6 +803,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1679,7 +1706,7 @@ index 7c9186f..c04b69c 100644
  			lastErr = err
  			if pickedOK {
  				recordProxyResult(picked.ID, false, err.Error())
-@@ -773,7 +782,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -803,7 +816,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1690,7 +1717,7 @@ index 7c9186f..c04b69c 100644
  			}
  			continue
  		}
-@@ -801,7 +812,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -832,7 +847,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1701,7 +1728,7 @@ index 7c9186f..c04b69c 100644
  			}
  			continue
  		}
-@@ -829,7 +842,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -860,7 +877,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1712,7 +1739,7 @@ index 7c9186f..c04b69c 100644
  			}
  			continue
  		}
-@@ -895,6 +910,60 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -926,6 +945,60 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1773,7 +1800,7 @@ index 7c9186f..c04b69c 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -964,10 +1033,122 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
+@@ -1006,10 +1079,122 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -1897,7 +1924,7 @@ index 7c9186f..c04b69c 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -975,36 +1156,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1017,36 +1202,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -1944,7 +1971,7 @@ index 7c9186f..c04b69c 100644
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1313,6 +1495,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1355,6 +1541,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2122,10 +2149,10 @@ index 0000000..ef9b476
 +}
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
-index 0000000..236a51d
+index 0000000..fbbae69
 --- /dev/null
 +++ b/internal/app/latency_test.go
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,312 @@
 +package app
 +
 +import (
@@ -2156,14 +2183,14 @@ index 0000000..236a51d
 +		t.Fatal("没有身份项时应退回按整串区分")
 +	}
 +
-+	key := cookieKey(cookie)
++	key := xsrfKey(cookie, 0)
 +	xsrfMu.Lock()
 +	xsrfCache[key] = xsrfEntry{token: "tok", fetched: time.Now()}
 +	xsrfMu.Unlock()
 +	t.Cleanup(func() { invalidateXSRF(cookie) })
 +
 +	// 命中缓存时不发网络请求；这里 proxyURL 指向不可达地址，真去抓会报错。
-+	tok, err := getXSRF(refreshed, "http://127.0.0.1:1")
++	tok, err := getXSRF(refreshed, 0, "http://127.0.0.1:1")
 +	if err != nil || tok != "tok" {
 +		t.Fatalf("刷新后的 cookie 没命中缓存: tok=%q err=%v", tok, err)
 +	}
@@ -2252,7 +2279,8 @@ index 0000000..236a51d
 +		{"```tool_call\n{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}\n```", true},
 +		{"好的\n```tool_call {\"name\":\"bash\",\"arguments\":{}}```", true},
 +		{"```tool_call\n{\"name\": \"rm_rf\", \"arguments\": {}}\n```", false},                         // 不认识的函数
-+		{"```tool_call\n{\"name\": \"bash\", \"arguments\": {\"command\": \"echo ```\"}}\n```", false}, // 参数里有围栏，解析不完整
++		{"```tool_call\n{\"name\": \"bash\", \"arguments\": {\"command\": \"echo ```\"}}\n```", true},  // 参数里有围栏，外层已闭合
++		{"```tool_call\n{\"name\": \"bash\", \"arguments\": {\"command\": \"echo ```\"}}", false},      // 参数里有围栏，外层未闭合
 +	}
 +	for _, c := range cases {
 +		if got := done(c.text); got != c.want {
@@ -2364,14 +2392,15 @@ index 0000000..236a51d
 +// 后台重取失败时必须作废缓存，否则失效的号会一直拿着旧 token 被当成可用。
 +func TestRefreshAppTokensFailureDropsCache(t *testing.T) {
 +	cookie := "SAPISID=sap2; __Secure-1PSID=psid2"
++	key := xsrfKey(cookie, 0)
 +	xsrfMu.Lock()
-+	xsrfCache[cookieKey(cookie)] = xsrfEntry{token: "stale", fetched: time.Now()}
++	xsrfCache[key] = xsrfEntry{token: "stale", fetched: time.Now()}
 +	xsrfMu.Unlock()
 +	t.Cleanup(func() { invalidateXSRF(cookie) })
 +
-+	refreshAppTokens(cookieKey(cookie), cookie, "http://127.0.0.1:1")
++	refreshAppTokens(key, cookie, 0, "http://127.0.0.1:1")
 +	xsrfMu.Lock()
-+	_, ok := xsrfCache[cookieKey(cookie)]
++	_, ok := xsrfCache[key]
 +	xsrfMu.Unlock()
 +	if ok {
 +		t.Fatal("重取失败后缓存仍在")
@@ -2517,10 +2546,10 @@ index acb1131..a8bab02 100644
  		return nil, err
  	}
 diff --git a/internal/app/media.go b/internal/app/media.go
-index 23d09b8..060df77 100644
+index ec3b6e4..07f3164 100644
 --- a/internal/app/media.go
 +++ b/internal/app/media.go
-@@ -748,6 +748,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
+@@ -762,6 +762,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
  	if err != nil {
  		return 0, nil, nil, err
  	}
@@ -2529,10 +2558,10 @@ index 23d09b8..060df77 100644
  		req.Header.Set(k, v)
  	}
 diff --git a/internal/app/messages.go b/internal/app/messages.go
-index 376171f..87b91fe 100644
+index 81b8900..9d1702d 100644
 --- a/internal/app/messages.go
 +++ b/internal/app/messages.go
-@@ -46,8 +46,50 @@ type ToolCallFunction struct {
+@@ -48,8 +48,50 @@ type ToolCallFunction struct {
  // 出口才知道能不能做，所以判断放在 streamGenerate 里。最新那条消息单独返回，
  // 转附件时用来内联，好让模型不必去文件里找问题。
  func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{},
@@ -2585,7 +2614,7 @@ index 376171f..87b91fe 100644
  }
  
  // latestUserMessage 取最后一条 user 消息的正文，没有则返回空串。
-@@ -65,6 +107,12 @@ func latestUserMessage(messages []map[string]interface{}) string {
+@@ -67,6 +109,12 @@ func latestUserMessage(messages []map[string]interface{}) string {
  
  func buildPrompt(messages []map[string]interface{}, tools []map[string]interface{},
  	toolChoice interface{}) string {
@@ -2598,7 +2627,7 @@ index 376171f..87b91fe 100644
  	var parts []string
  
  	toolsInjected := false
-@@ -89,7 +137,7 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
+@@ -91,7 +139,7 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
  			})
  		}
  		if len(defs) > 0 {
@@ -2607,7 +2636,7 @@ index 376171f..87b91fe 100644
  			rule := "Only use tool_call blocks when needed."
  			switch {
  			case forced != "":
-@@ -102,13 +150,13 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
+@@ -104,13 +152,13 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
  					"and nothing else — do not answer the question yourself, even if you " +
  					"know the answer."
  			}
@@ -2624,7 +2653,7 @@ index 376171f..87b91fe 100644
  			toolsInjected = true
  		}
  	}
-@@ -165,33 +213,27 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
+@@ -167,33 +215,27 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
  	// 工具名（shell_command）0/4 抄假名 —— 示例教的是「动作」不是名字，故不必按客户端
  	// 动态生成 schema。
  	if toolsInjected {
@@ -2677,8 +2706,8 @@ index 376171f..87b91fe 100644
  }
  
  func contentToString(content interface{}) string {
-@@ -392,6 +434,47 @@ func parseToolCalls(text string) (string, []ToolCall) {
- 	return strings.TrimSpace(clean), toolCalls
+@@ -440,6 +482,48 @@ func parseToolCalls(text string) (string, []ToolCall) {
+ 	return strings.TrimSpace(clean.String()), toolCalls
  }
  
 +// toolCallComplete 返回一个判定函数：累积正文里出现了**闭合且能解析**、函数名在
@@ -2707,15 +2736,16 @@ index 376171f..87b91fe 100644
 +		if i < 0 {
 +			return false
 +		}
-+		m := toolCallRe.FindStringSubmatch(text[i:])
-+		if m == nil {
++		after := text[i+len(toolFenceOpen):]
++		body, _, ok := toolFenceEnd(after, false)
++		if !ok {
 +			return false
 +		}
 +		var data struct {
 +			Name      string                 `json:"name"`
 +			Arguments map[string]interface{} `json:"arguments"`
 +		}
-+		if json.Unmarshal([]byte(strings.TrimSpace(m[1])), &data) != nil {
++		if json.Unmarshal([]byte(strings.TrimSpace(after[:body])), &data) != nil {
 +			return false
 +		}
 +		return names[data.Name]
@@ -2726,7 +2756,7 @@ index 376171f..87b91fe 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index b451d12..5d3cf5b 100644
+index 830fa6a..93963d7 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2741,8 +2771,8 @@ index b451d12..5d3cf5b 100644
  	"time"
  )
  
--const Version = "4.26.0"
-+const Version = "4.26.0-magpie.2"
+-const Version = "4.27.0"
++const Version = "4.27.0-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
@@ -3195,7 +3225,7 @@ index 634f3b7..399057e 100644
  		if err != nil {
  			fmt.Fprintf(os.Stderr, "[tokenizer] init failed (will fall back to chars/4): %v\n", err)
 diff --git a/internal/app/upload.go b/internal/app/upload.go
-index 7747a72..2753f93 100644
+index 4feb5d9..a21e8d1 100644
 --- a/internal/app/upload.go
 +++ b/internal/app/upload.go
 @@ -2,6 +2,7 @@ package app
@@ -3209,25 +3239,25 @@ index 7747a72..2753f93 100644
 @@ -20,6 +21,11 @@ const uploadHost = "https://push.clients6.google.com/upload/"
  // 匿名也能传成功，但传上去的文件在对话里引用会被回 1100，所以调用方要自己确保有 cookie。
  // proxyURL 必须跟正式请求同一出口，否则在 Google 眼里是两个会话共用文件。
- func uploadBytes(cookie, proxyURL string, data []byte, filename string) (string, error) {
-+	return uploadBytesCtx(context.Background(), cookie, proxyURL, data, filename)
+ func uploadBytes(cookie string, authuser int, proxyURL string, data []byte, filename string) (string, error) {
++	return uploadBytesCtx(context.Background(), cookie, authuser, proxyURL, data, filename)
 +}
 +
 +// uploadBytesCtx 同 uploadBytes，ctx 取消（客户端断开）时中止上传。
-+func uploadBytesCtx(ctx context.Context, cookie, proxyURL string, data []byte, filename string) (string, error) {
- 	pushID, pctx, err := getUploadTokens(cookie, proxyURL)
++func uploadBytesCtx(ctx context.Context, cookie string, authuser int, proxyURL string, data []byte, filename string) (string, error) {
+ 	pushID, pctx, err := getUploadTokens(cookie, authuser, proxyURL)
  	if err != nil {
  		return "", fmt.Errorf("取上传页面参数失败: %w", err)
-@@ -63,7 +69,7 @@ func uploadBytes(cookie, proxyURL string, data []byte, filename string) (string,
+@@ -63,7 +69,7 @@ func uploadBytes(cookie string, authuser int, proxyURL string, data []byte, file
  		"X-Goog-Upload-Protocol":              "resumable",
  		"X-Goog-Upload-Header-Content-Length": strconv.Itoa(len(data)),
  	})
--	status, respHead, body, err := uploadPost(uploadHost, startHeaders,
-+	status, respHead, body, err := uploadPostCtx(ctx, uploadHost, startHeaders,
+-	status, respHead, body, err := uploadPost(uploadStartURL(authuser), startHeaders,
++	status, respHead, body, err := uploadPostCtx(ctx, uploadStartURL(authuser), startHeaders,
  		[]byte("File name: "+sanitizeUploadName(filename)), proxyURL)
  	if err != nil {
  		return "", fmt.Errorf("上传 start 失败: %w", err)
-@@ -82,7 +88,7 @@ func uploadBytes(cookie, proxyURL string, data []byte, filename string) (string,
+@@ -82,7 +88,7 @@ func uploadBytes(cookie string, authuser int, proxyURL string, data []byte, file
  		"X-Goog-Upload-Command": "upload, finalize",
  		"X-Goog-Upload-Offset":  "0",
  	})
@@ -3329,10 +3359,10 @@ index b0c9724..b1ca7cb 100644
  		if err != nil {
  			return pendingUpload{}, fmt.Errorf("image %d: fetch failed: %w", idx, err)
 diff --git a/internal/app/xsrf.go b/internal/app/xsrf.go
-index c43b104..d3d7145 100644
+index 254d686..e008abb 100644
 --- a/internal/app/xsrf.go
 +++ b/internal/app/xsrf.go
-@@ -27,15 +27,23 @@ var (
+@@ -29,15 +29,23 @@ var (
  )
  
  type xsrfEntry struct {
@@ -3360,7 +3390,7 @@ index c43b104..d3d7145 100644
  var snlm0eRe = regexp.MustCompile(`"SNlM0e":"([^"]{10,200})"`)
  
  // 上传要的两个页面参数，跟 XSRF token 同页取，省一次页面请求。
-@@ -44,8 +52,18 @@ var pushIDRe = regexp.MustCompile(`"qKIAYe":"([^"]{4,400})"`)
+@@ -46,8 +54,18 @@ var pushIDRe = regexp.MustCompile(`"qKIAYe":"([^"]{4,400})"`)
  var pctxRe = regexp.MustCompile(`"Ylro7b":"([^"]{4,400})"`)
  
  // cookieKey 用 cookie 的短摘要当缓存键，避免把整串凭证塞进 map key。
@@ -3380,26 +3410,26 @@ index c43b104..d3d7145 100644
  	return hex.EncodeToString(sum[:8])
  }
  
-@@ -67,12 +85,9 @@ func getXSRF(cookie, proxyURL string) (string, error) {
+@@ -91,12 +109,9 @@ func getXSRF(cookie string, authuser int, proxyURL string) (string, error) {
  	}
- 	key := cookieKey(cookie)
+ 	key := xsrfKey(cookie, authuser)
  
 -	xsrfMu.Lock()
 -	if e, ok := xsrfCache[key]; ok && time.Since(e.fetched) < xsrfTTL {
 -		xsrfMu.Unlock()
-+	if e, ok := cachedAppTokens(key, cookie, proxyURL); ok {
++	if e, ok := cachedAppTokens(key, cookie, authuser, proxyURL); ok {
  		return e.token, nil
  	}
 -	xsrfMu.Unlock()
  
- 	e, err := fetchAppTokens(cookie, proxyURL)
+ 	e, err := fetchAppTokens(cookie, authuser, proxyURL)
  	if err != nil {
-@@ -84,16 +99,48 @@ func getXSRF(cookie, proxyURL string) (string, error) {
+@@ -108,16 +123,48 @@ func getXSRF(cookie string, authuser int, proxyURL string) (string, error) {
  	return e.token, nil
  }
  
 +// cachedAppTokens 返回未过期的缓存项；过了 xsrfRefreshAfter 时顺带踢一次后台刷新。
-+func cachedAppTokens(key, cookie, proxyURL string) (xsrfEntry, bool) {
++func cachedAppTokens(key, cookie string, authuser int, proxyURL string) (xsrfEntry, bool) {
 +	xsrfMu.Lock()
 +	defer xsrfMu.Unlock()
 +	e, ok := xsrfCache[key]
@@ -3409,20 +3439,20 @@ index c43b104..d3d7145 100644
 +	if !e.refreshing && time.Since(e.fetched) >= xsrfRefreshAfter {
 +		e.refreshing = true
 +		xsrfCache[key] = e
-+		go refreshAppTokens(key, cookie, proxyURL)
++		go refreshAppTokens(key, cookie, authuser, proxyURL)
 +	}
 +	return e, true
 +}
 +
 +// refreshAppTokens 后台重抓页面。失败就丢掉缓存，让下一个请求同步重取并报出失效。
-+func refreshAppTokens(key, cookie, proxyURL string) {
-+	if err := storeAppTokens(key, cookie, proxyURL); err != nil {
++func refreshAppTokens(key, cookie string, authuser int, proxyURL string) {
++	if err := storeAppTokens(key, cookie, authuser, proxyURL); err != nil {
 +		logf("[xsrf] 后台刷新失败，已作废缓存: %v", err)
 +	}
 +}
 +
-+func storeAppTokens(key, cookie, proxyURL string) error {
-+	e, err := fetchAppTokens(cookie, proxyURL)
++func storeAppTokens(key, cookie string, authuser int, proxyURL string) error {
++	e, err := fetchAppTokens(cookie, authuser, proxyURL)
 +	xsrfMu.Lock()
 +	defer xsrfMu.Unlock()
 +	if err != nil {
@@ -3434,20 +3464,20 @@ index c43b104..d3d7145 100644
 +}
 +
  // getUploadTokens 取上传要用的 Push-ID / X-Client-Pctx，跟 XSRF token 同一份缓存。
- func getUploadTokens(cookie, proxyURL string) (pushID, pctx string, err error) {
- 	key := cookieKey(cookie)
+ func getUploadTokens(cookie string, authuser int, proxyURL string) (pushID, pctx string, err error) {
+ 	key := xsrfKey(cookie, authuser)
  
 -	xsrfMu.Lock()
 -	if e, ok := xsrfCache[key]; ok && time.Since(e.fetched) < xsrfTTL {
 -		xsrfMu.Unlock()
-+	if e, ok := cachedAppTokens(key, cookie, proxyURL); ok {
++	if e, ok := cachedAppTokens(key, cookie, authuser, proxyURL); ok {
  		return e.pushID, e.pctx, nil
  	}
 -	xsrfMu.Unlock()
  
- 	e, err := fetchAppTokens(cookie, proxyURL)
+ 	e, err := fetchAppTokens(cookie, authuser, proxyURL)
  	if err != nil {
-@@ -146,6 +193,7 @@ func fetchAppPage(cookie, proxyURL string) ([]byte, error) {
+@@ -171,6 +218,7 @@ func fetchAppPage(cookie string, authuser int, proxyURL string) ([]byte, error)
  		if err != nil {
  			return nil, err
  		}
