@@ -35,7 +35,7 @@ function fakeFetch(byCookie, calls = [], emails = {}) {
     const cookie = init.headers.Cookie;
     const r = byCookie[cookie];
     if (typeof r === 'number') return new Response('', { status: r });
-    if (url === 'https://gemini.google.com/app') {
+    if (/^https:\/\/gemini\.google\.com(\/u\/\d+)?\/app$/.test(url)) {
       const page = emails[cookie] ? `<script>window.WIZ_global_data = {"oPEP7c":"${emails[cookie]}","qwAQke":"BardChatUi"};</script>` : '<html></html>';
       return new Response(page, { status: 200 });
     }
@@ -332,7 +332,19 @@ describe('28. Gemini usage limits', () => {
     assert.deepEqual((await rows()).map(r => [r.id, r.proxyEnabled, r.pooled]), [[5, 0, 1], [7, 0, 1]]);
     db.exec('DELETE FROM proxies');
     assert.deepEqual((await rows()).map(r => [r.id, r.proxy, r.pooled]), [[5, null, 0], [7, null, 0]]);
+    db.exec('ALTER TABLE accounts ADD COLUMN authuser INTEGER NOT NULL DEFAULT 0');
+    db.exec('UPDATE accounts SET authuser = 2 WHERE id = 7');
+    assert.deepEqual((await rows()).map(r => [r.id, r.authuser]), [[5, 0], [7, 2]]);
     db.close();
+
+    const calls = [];
+    const fetchFn = fakeFetch({ c7: reply(0.25, 0.1) }, calls, { c7: 'u2@gmail.com' });
+    await accountUsage({ id: 7, cookie: 'c7', authuser: 2, pooled: 0 }, { fetchFn });
+    assert.equal(await accountEmail({ id: 707, cookie: 'c7', authuser: 2, pooled: 0 }, { fetchFn }), 'u2@gmail.com');
+    assert.equal(new URL(calls[0].url).pathname, '/u/2/_/BardChatUi/graphql/schemas/GEMINI_WEB_GRAPHQL/executeQuery');
+    assert.equal(calls[0].init.headers.Referer, 'https://gemini.google.com/u/2/usage');
+    assert.equal(calls[0].init.headers['X-Goog-AuthUser'], '2');
+    assert.equal(calls[1].url, 'https://gemini.google.com/u/2/app');
   });
 
   it('reads no usage for a backend the plugin does not manage', async () => {
