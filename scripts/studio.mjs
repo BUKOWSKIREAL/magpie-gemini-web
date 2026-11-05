@@ -10,6 +10,7 @@ import {
   studioAdmin,
   studioAccounts,
   stopStudio,
+  cleanStudio,
   studioStatus,
   studioProxy,
   saveStudioProxy,
@@ -31,6 +32,7 @@ Commands:
   start [--proxy <url>]                        Start local AIStudio2API service in the background
   status                                       Check service and accounts status
   stop                                         Stop local AIStudio2API service
+  clean                                        Stop service and remove downloaded binaries & Camoufox (keeps accounts & config)
   login                                        Open isolated browser login for a new Google account
   relogin [<account>]                          Sign an account that needs it in again (its label or id)
   import <auth-directory>                      Import accounts from an existing auth directory (service must be stopped)
@@ -198,6 +200,12 @@ async function main() {
         throw new Error(res.reported || 'Failed to stop AI Studio service');
       }
       console.log(`AIStudio2API service stopped.`);
+      break;
+    }
+    case 'clean': {
+      console.log(`Cleaning downloaded AI Studio assets in ${dataDir}...`);
+      const res = await cleanStudio({ dataDir });
+      console.log(`Cleaned AI Studio assets (preserved accounts & config): ${res.removed.length ? res.removed.join(', ') : 'nothing to remove'}`);
       break;
     }
     case 'login': {

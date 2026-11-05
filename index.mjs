@@ -1,5 +1,6 @@
 import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER, PLUGIN_ICON } from './lib/backend.mjs';
-import { ensureBackend, localBackend } from './lib/native.mjs';
+import { ensureBackend, localBackend, localSetup } from './lib/native.mjs';
+import { registerMagpieCleanup, isPluginRemovedInActiveMagpie } from './lib/cleanup.mjs';
 import { parseCookieInput, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
 import { taskSupported, taskMethod, taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
@@ -40,9 +41,10 @@ async function signInFor(local, account) {
 }
 
 // managedBackend is the local backend this plugin set up, when baseURL points at it.
-function managedBackend(baseURL) {
-  const local = localBackend();
-  return local && local.baseURL === baseURL ? local : null;
+function managedBackend(baseURL, key) {
+  if (isPluginRemovedInActiveMagpie()) return null;
+  const local = localBackend() || (key ? localSetup() : null);
+  return local && local.baseURL === baseURL && (!key || local.apiKey === key) ? local : null;
 }
 
 // forwardManaged is forward(), but when the backend this plugin manages can't be reached it
@@ -57,7 +59,7 @@ async function forwardManaged(input, init, getAuth, opts) {
   } catch {
     return res;
   }
-  if (!managedBackend(c.baseURL)) return res;
+  if (!managedBackend(c.baseURL, c.key)) return res;
   try {
     await ensureBackend({ proxy: opts.proxy });
   } catch {
@@ -72,6 +74,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
   }
   const { studio: _studio, ...webOptions } = options;
   const opts = settings(webOptions);
+  registerMagpieCleanup(_input);
   const proxyPrompt = {
     type: 'text',
     key: 'proxy',
@@ -226,7 +229,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
         } catch (err) {
           return { error: err.message, windows: [], signIn: 'kept' };
         }
-        if (!managedBackend(c.baseURL)) {
+        if (!managedBackend(c.baseURL, c.key)) {
           return { error: '只能读取插件自己管理的本地后端的额度（连接已有后端时读不到）', windows: [], signIn: 'kept' };
         }
         const { account, email, authuser } = auth.metadata || {};
@@ -242,7 +245,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
         try {
           return await listModels(c, opts);
         } catch (err) {
-          if (!err.unreachable || !managedBackend(c.baseURL)) throw err;
+          if (!err.unreachable || !managedBackend(c.baseURL, c.key)) throw err;
           await ensureBackend({ proxy: opts.proxy });
           return listModels(c, opts);
         }

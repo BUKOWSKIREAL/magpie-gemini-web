@@ -152,6 +152,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 | :--- | :--- |
 | `npm run studio:status` | Show local service and account status |
 | `npm run studio:start` / `studio:stop` | Start / stop the local service |
+| `npm run studio:clean` | Stop the service and remove downloaded binaries & Camoufox (keeps accounts & config) |
 | `npm run studio:login` | Add a Google account |
 | `npm run studio:relogin -- [<account>]` | Re-authenticate an expired account (argument optional if only one) |
 | `npm run studio:install -- --archive <file>` | Offline install from a pre-downloaded archive |
@@ -169,6 +170,9 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Both backends listen on `127.0.0.1` only. Cookies and sessions remain on your machine; Magpie stores only a locally generated API key.
 - **Gemini Web data directory:** `~/.local/share/magpie-gemini-web` (override with `GEMINI_WEB_DATA_DIR`), logs at `backend.log`. Supports macOS, Linux, and Windows (x64 / arm64).
 - **AI Studio data directory:** `~/.local/share/magpie-ai-studio` (override with `AI_STUDIO_DATA_DIR`), logs at `backend.log` (rotated on next start after exceeding 10 MB). Uses port 2048 by default (or picks a free port and saves it in `config.json`). Supports macOS, Linux (x64 / arm64), and Windows x64.
+- **Uninstalling & cleaning downloaded assets:** Removing the plugin in Magpie (or running `npm run studio:clean` / `npm run backend:clean`) stops the local services and deletes the downloaded `AIStudio2API`, `Camoufox`, and `gemini-web2api-go` binaries and archives.
+  - `auth/`, `gemini.db`, `config.json`, `.env`, and `secrets.json` are kept so reinstalling the plugin or sending a new request restores the backend on demand without signing in or importing cookies again; to prevent automatic reinstallation permanently, remove the sign-in in Magpie or delete `config.json` / `secrets.json`.
+  - Default data directories are shared per OS user; set separate `AI_STUDIO_DATA_DIR` and `GEMINI_WEB_DATA_DIR` when running multiple isolated Magpie config directories so removing the plugin in one does not clean another's shared binaries.
 - Gemini Web takes at most 2 requests at once per sign-in (AI Studio 1), adjustable in Magpie's provider settings. Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
