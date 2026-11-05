@@ -136,7 +136,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(envContent.includes('UPSTREAM_CHANNELS=playground'), 'UPSTREAM_CHANNELS must be playground');
     assert.ok(envContent.includes('BUILD_NATIVE_NONSTREAM=false'));
     assert.ok(envContent.includes('NONSTREAM_KEEPALIVE=false'));
-    assert.ok(envContent.includes('TEMPORARY_CHAT=true'));
+    assert.equal(envContent.includes('TEMPORARY_CHAT='), false);
     assert.ok(envContent.includes('PER_ACCOUNT_CONCURRENCY=1'));
     assert.ok(envContent.includes('WARM_WORKER_LIMIT=1'));
     assert.ok(envContent.includes('MAX_ACTIVE_WORKERS=1'));
@@ -167,6 +167,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     Object.assign(saved, {
       PROXY: 'socks5://127.0.0.1:7890',
       REQUEST_TIMEOUT: '45m',
+      STRIP_THOUGHT_SIGNATURES: 'true',
       FIRST_EVENT_HEDGE: 'auto',
       FIRST_EVENT_HEDGE_MODELS: 'gemini-4-argon,gemini-3.8-flash',
       API_KEY_ACCOUNTS: `${config.apiKey}:test@example.com`,
@@ -180,6 +181,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const after = readStudioEnv(dataDir);
     assert.equal(after.PROXY, 'socks5://127.0.0.1:7890', 'the saved proxy is kept over one given');
     assert.equal(after.REQUEST_TIMEOUT, '45m');
+    assert.equal(after.STRIP_THOUGHT_SIGNATURES, 'true');
     assert.equal(after.FIRST_EVENT_HEDGE, 'auto');
     assert.equal(after.FIRST_EVENT_HEDGE_MODELS, saved.FIRST_EVENT_HEDGE_MODELS);
     assert.equal(after.API_KEY_ACCOUNTS, saved.API_KEY_ACCOUNTS);
@@ -191,6 +193,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     saveStudioProxy(dataDir, 'http://127.0.0.1:1082');
     assert.equal(readStudioEnv(dataDir).PROXY, 'http://127.0.0.1:1082');
     assert.equal(readStudioEnv(dataDir).REQUEST_TIMEOUT, '45m');
+    assert.equal(readStudioEnv(dataDir).STRIP_THOUGHT_SIGNATURES, 'true');
     assert.equal(readStudioEnv(dataDir).FIRST_EVENT_HEDGE, 'auto');
     assert.equal(readStudioEnv(dataDir).FIRST_EVENT_HEDGE_MODELS, saved.FIRST_EVENT_HEDGE_MODELS);
     assert.equal(readStudioEnv(dataDir).API_KEY_ACCOUNTS, saved.API_KEY_ACCOUNTS);
@@ -543,7 +546,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const { dataDir } = installedStandIn('managed-version-upgrade');
     const local = localStudio({ dataDir });
     // An earlier plugin's managed build is replaced like an official one, not reported as custom
-    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.18', 'v0.2.19', 'v0.2.18-magpie.1', 'v0.2.18-magpie.2', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.17-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
+    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.18', 'v0.2.19', 'v0.2.20', 'v0.3.0', 'v0.2.19-magpie.1', 'v0.2.19-magpie.2', 'v0.2.18-magpie.1', 'v0.2.18-magpie.2', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.17-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
       const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
       assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
     }
@@ -557,7 +560,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    for (const version of ['v0.2.20', 'v1.0.0', 'v0.2.19-magpie.2', 'v0.2.20-magpie.1', 'v0.2.15-custom', 'unknown']) {
+    for (const version of ['v0.3.1', 'v1.0.0', 'v0.3.0-magpie.2', 'v0.3.1-magpie.1', 'v0.2.15-custom', 'unknown']) {
       const fetchFn = async (url, init) => {
         if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
@@ -1639,7 +1642,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
   it('31. the service is started with no proxy of its starter\'s, and empty ones the plugin host keeps', async t => {
     const { dataDir } = installedStandIn('proxy-env-test');
     // What Magpie's plugin host or a shell may have
-    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', FIRST_EVENT_HEDGE: '1', FIRST_EVENT_HEDGE_MODELS: 'gemini-3.8-flash', API_KEY_ACCOUNTS: 'host-key:host@example.com', SEARCH_MODEL_ALIASES: 'true', AI_STUDIO_PROXY: undefined })) {
+    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', FIRST_EVENT_HEDGE: '1', FIRST_EVENT_HEDGE_MODELS: 'gemini-3.8-flash', API_KEY_ACCOUNTS: 'host-key:host@example.com', SEARCH_MODEL_ALIASES: 'true', STRIP_THOUGHT_SIGNATURES: 'true', AI_STUDIO_PROXY: undefined })) {
       const saved = process.env[k];
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -1658,6 +1661,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal('PROXY' in env, false, 'the saved proxy is left to .env');
     assert.equal('FIRST_EVENT_HEDGE' in env, false, 'host environment cannot override the saved hedge setting');
     assert.equal('SEARCH_MODEL_ALIASES' in env, false, 'nor the saved search aliases setting');
+    assert.equal('STRIP_THOUGHT_SIGNATURES' in env, false);
     assert.equal('FIRST_EVENT_HEDGE_MODELS' in env, false);
     assert.equal('API_KEY_ACCOUNTS' in env, false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'backend.launch.json'), 'utf8')).proxyEnv, 'none');

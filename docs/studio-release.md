@@ -1,6 +1,13 @@
 # AI Studio 托管后端构建
 
-插件使用 `0.2.19-magpie.1`，基于 AIStudio2API `v0.2.19` 的固定 commit。上游版本、commit、Go 版本、C/C++ 工具链与 SpiderMonkey 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
+插件使用 `0.3.0-magpie.1`，基于 AIStudio2API `v0.3.0` 及其后续修复 commit `48f75fa722b25d22a493e75f6d4e5f9d5035d7e3`。上游版本、commit、Go 版本、C/C++ 工具链与 SpiderMonkey 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
+
+## 0.3.0 升级兼容
+
+- 基线为上游 `v0.3.0` 加 PR #109（`48f75fa722b25d22a493e75f6d4e5f9d5035d7e3`）。包含账号异步任务流、本机 Chrome / Cookie / CDP 浏览器账号导入、超过 63 字符的工具函数名自动压缩还原、`STRIP_THOUGHT_SIGNATURES`、Responses / Interactions / 音频状态持久化（`runtime/states.db`）、`gemini-live-2.5-flash` 与 `gemini-2.5-pro-tts` 等模型更新，以及上游默认 `WAA_BACKEND=spidermonkey`。Camoufox、SpiderMonkey 静态库和固定工具链沿用上一版。
+- 后台账户任务适配：上游 `POST /api/accounts` 与 `POST /api/accounts/{id}/login` 改为启动不随 HTTP 请求取消的后台任务（返回 `202 Accepted` 与 `{ task }`）。插件与 CLI 通过 `studioLogin` 轮询 `GET /api/accounts/tasks` 等待完成，再从 `GET /api/accounts` 读取账号，并在结束或超时退出时调用 `DELETE /api/accounts/tasks/{id}` 清理或取消后台任务（超时会自动关闭弹出的 Camoufox 登录窗口）。
+- 配置项变更：上游移除了废弃的 `TEMPORARY_CHAT`，新增 `STRIP_THOUGHT_SIGNATURES`（默认 `false`）。插件移除 `TEMPORARY_CHAT` 默认项，保留管理页保存的 `STRIP_THOUGHT_SIGNATURES`，并隔离宿主环境的同名变量。
+- `patches/studio-0.2.19-managed-config.patch` 同步适配上游 `v0.3.0` 新增的 `workerDefaultKeys`（`WARM_WORKER_LIMIT`、`MAX_ACTIVE_WORKERS`）分支：托管构建（`internal/config.managedBy=magpie-gemini-web`）继续完整写出全部非环境变量控制项，避免插件默认并发设置覆盖管理页保存的上游默认值。
 
 ## 0.2.19 升级兼容
 
@@ -29,7 +36,7 @@
 
 上游从 v0.2.14 起原生支持分发方管理更新。构建时通过 `-ldflags` 写入以下值：
 
-- `internal/app.version=v0.2.19-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
+- `internal/app.version=v0.3.0-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
 - `internal/app.managedBy=magpie-gemini-web`：`GET /api/update`（包括 `?refresh=1`）只返回本地版本、`mode: managed` 和 `managed_by`，不访问 GitHub；`POST /api/update` 返回 HTTP 409，不下载、不替换文件、不重启。管理页显示“更新由 magpie-gemini-web 管理”。
 
 `internal/config.managedBy=magpie-gemini-web` 同时启用上面的配置兼容补丁。
@@ -106,7 +113,12 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 0.2.19 升级验证（2026-11-02）
+## 0.3.0 升级验证（2026-11-05）
+
+- 五个平台的候选构建（[run 41976798432](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41976798432)）一次性通过上游测试、真实安装冒烟验证（含 `strip_thought_signatures=false`、`/api/accounts/tasks` 接口与管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
+- 随后的严格验证构建（[run 41977975873](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41977975873)）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，真实安装冒烟验证与插件测试全部通过。
+
+## 0.2.19 升级验证（2026-11-02，历史记录）
 
 - 五个平台的候选构建（[run 41378024737](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41378024737)）通过上游测试、真实安装冒烟验证及插件测试；安装包和二进制 pin 来自该次构建。Windows 首次在安装前的 PowerShell 进程查询超时，失败作业重跑通过，未修改测试或放宽超时。提交 pin 后仍需由严格验证工作流在新 runner 上重建并逐一比对哈希，结果见升级 PR。
 - 本地使用 CI 的 darwin-arm64 安装包运行完整插件测试：212 项通过、无跳过；Python bridge 测试 41 项通过。打包检查包含配置补丁，不包含本地构建和账号数据。
@@ -137,14 +149,14 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 - 新版 Google 登录/生成端到端验证尚未完成。
 - 此分支未发布后端 release 或 npm 包。本机日常后端仍使用 `0.2.16-magpie.1`，新版仅在临时数据目录运行。
 
-发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.2.19-magpie.1` release。该 release 的安装包可公开下载后，才能发布 npm `0.9.0`，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
+发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.0-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
 
 本地试用建议使用独立数据目录：
 
 ```bash
-node scripts/studio.mjs install --data-dir /path/to/studio-019-trial --archive /absolute/path/to/archive
-node scripts/studio.mjs start --data-dir /path/to/studio-019-trial
-node scripts/studio.mjs stop --data-dir /path/to/studio-019-trial
+node scripts/studio.mjs install --data-dir /path/to/studio-030-trial --archive /absolute/path/to/archive
+node scripts/studio.mjs start --data-dir /path/to/studio-030-trial
+node scripts/studio.mjs stop --data-dir /path/to/studio-030-trial
 ```
 
 使用现有账号数据测试前，先停止旧服务并备份；不要让两个进程同时写同一个数据目录。
