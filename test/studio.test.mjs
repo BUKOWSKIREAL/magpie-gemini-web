@@ -274,7 +274,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(nonthinking.capabilities.reasoning, false);
   });
 
-  it('3b. real v0.2.12 catalog yields the text chat models and image models the account can call', async () => {
+  it('3b. real v0.2.12 catalog yields the text chat models, Deep Research models, and image models the account can call', async () => {
     // AIStudio2API v0.2.12 /v1/models, captured 2026-10-17; opaque capability_code_* flags removed.
     const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/studio-catalog-v0.2.12.json', import.meta.url), 'utf8'));
     const c = { baseURL: serverURL, key: 'test-key' };
@@ -291,6 +291,10 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       'gemini-flash-lite-latest',
       'gemini-pro-latest'
     ];
+    const researchIds = [
+      'deep-research-max-preview-04-2026',
+      'deep-research-preview-04-2026'
+    ];
     const imageIds = [
       'gemini-2.5-flash-image',
       'gemini-3-pro-image',
@@ -302,18 +306,35 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(catalog) };
     try {
       const models = await listStudioModels(c, opts);
-      assert.deepEqual(Object.keys(models).sort(), [...textIds, ...imageIds].sort());
-      // Marked chat_model but made for images (aspect_ratio, interactions_api)
+      assert.deepEqual(Object.keys(models).sort(), [...textIds, ...researchIds, ...imageIds].sort());
+      // Marked chat_model but made for images or non-Deep-Research interactions (aspect_ratio, interactions_api)
       assert.equal(models['gemini-omni-1.1-flash'], undefined);
       assert.equal(models['gemini-omni-flash-preview'], undefined);
+      assert.equal(models['antigravity-preview-09-2026'], undefined);
       for (const id of textIds) {
         const model = models[id];
         assert.equal(model.capabilities.toolcall, true, `${model.id} declares function calling`);
+        assert.equal(model.capabilities.temperature, true);
         assert.deepEqual(model.variants, { minimal: {}, low: {}, medium: {}, high: {} });
         assert.deepEqual(model.capabilities.output, { text: true, image: false });
         assert.equal(model.capabilities.input.image, true, `${model.id} reads a chat's images by default (media_resolution)`);
         assert.equal(model.capabilities.attachment, true);
         assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
+      }
+      // Deep Research agents run on /chat/completions via AIStudio2API's interaction route without
+      // client tool calls, temperature, or thinking_level variants.
+      for (const id of researchIds) {
+        const model = models[id];
+        assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
+        assert.equal(model.api.url, serverURL);
+        assert.equal(model.capabilities.toolcall, false);
+        assert.equal(model.capabilities.reasoning, true);
+        assert.equal(model.capabilities.temperature, false);
+        assert.equal(model.capabilities.attachment, false);
+        assert.deepEqual(model.capabilities.input, { text: true, image: false });
+        assert.deepEqual(model.capabilities.output, { text: true, image: false });
+        assert.deepEqual(model.variants, {});
+        assert.deepEqual(model.limit, { context: 131072, output: 65536 });
       }
       // An image model draws, on Gemini's API, where Magpie draws with a plugin's Gemini image
       // model, and takes images to edit or draw from without allowImages
@@ -332,9 +353,9 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.deepEqual(banana.variants, { minimal: {}, low: {}, medium: {}, high: {} });
       assert.deepEqual(models['gemini-3-pro-image'].variants, {});
 
-      // Turned off, only the text models are listed
+      // Turned off, only the text and Deep Research models are listed
       const textOnly = await listStudioModels(c, studioSettings({ studio: { imageModels: false } }));
-      assert.deepEqual(Object.keys(textOnly).sort(), textIds);
+      assert.deepEqual(Object.keys(textOnly).sort(), [...textIds, ...researchIds].sort());
 
       // Image input turned off, for both providers or for AI Studio alone: the text models take
       // no images, while an image model still takes them to edit or draw from
@@ -366,7 +387,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // A backend that lists no channels at all keeps its models
       const noChannels = { ...catalog, data: catalog.data.map(({ channels, ...m }) => m) };
       serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(noChannels) };
-      assert.equal(Object.keys(await listStudioModels(c, opts)).length, 15);
+      assert.equal(Object.keys(await listStudioModels(c, opts)).length, 17);
     } finally {
       delete serverResponses['/v1/models'];
     }
@@ -777,6 +798,74 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       });
       assert.equal(await res.text(), stream);
       assert.equal(requests, 1);
+    } finally {
+      delete serverResponses['/v1/chat/completions'];
+    }
+  });
+
+  it('Deep Research streaming forwards reasoning_content, content, [DONE], client tools/temperature, and async task errors', async () => {
+    let lastBody = null;
+    let mode = 'success';
+    const okStream = [
+      'data: {"id":"chatcmpl_dr1","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"Planning search queries..."},"finish_reason":null}]}',
+      'data: {"id":"chatcmpl_dr1","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{"content":"# Research Report\\nFindings [cite: 1]."},"finish_reason":null}]}',
+      'data: {"id":"chatcmpl_dr1","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+      'data: [DONE]'
+    ].join('\n\n') + '\n\n';
+    const errStream = [
+      'data: {"id":"chatcmpl_dr2","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"Starting interaction..."},"finish_reason":null}]}',
+      'data: {"error":{"message":"Interaction failed: upstream research task aborted","type":"server_error","code":null}}'
+    ].join('\n\n') + '\n\n';
+
+    serverResponses['/v1/chat/completions'] = (_req, res, bodyStr) => {
+      lastBody = JSON.parse(bodyStr);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(mode === 'success' ? okStream : errStream);
+    };
+
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const loader = await plugin.auth.loader(async () => ({ type: 'api', key: 'test-key', metadata: { mode: 'studio', baseURL: serverURL } }));
+
+      // 1. Streaming reasoning_content + content + [DONE] with client tools & temperature present
+      const reqPayload = {
+        model: 'deep-research-preview-04-2026',
+        stream: true,
+        temperature: 0.7,
+        tools: [{ type: 'function', function: { name: 'local_tool', parameters: { type: 'object' } } }],
+        messages: [{ role: 'user', content: 'Research quantum error correction' }]
+      };
+      const resOk = await loader.fetch(`${serverURL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqPayload)
+      });
+      assert.equal(resOk.status, 200);
+      const textOk = await resOk.text();
+      assert.equal(textOk, okStream);
+      assert.equal(lastBody.model, 'deep-research-preview-04-2026');
+      assert.equal(lastBody.stream, true);
+      assert.equal(lastBody.temperature, 0.7);
+      assert.equal(lastBody.tools.length, 1);
+
+      const events = textOk.trim().split('\n\n').map(line => line.slice(6));
+      assert.equal(events[events.length - 1], '[DONE]');
+      const chunks = events.slice(0, -1).map(JSON.parse);
+      assert.equal(chunks[0].choices[0].delta.reasoning_content, 'Planning search queries...');
+      assert.equal(chunks[1].choices[0].delta.content, '# Research Report\nFindings [cite: 1].');
+      assert.equal(chunks[2].choices[0].finish_reason, 'stop');
+
+      // 2. Async interaction failure / stream interruption passes through without [DONE]
+      mode = 'error';
+      const resErr = await loader.fetch(`${serverURL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'deep-research-preview-04-2026', stream: true, messages: [{ role: 'user', content: 'fail' }] })
+      });
+      assert.equal(resErr.status, 200);
+      const textErr = await resErr.text();
+      assert.equal(textErr, errStream);
+      assert.ok(!textErr.includes('[DONE]'));
     } finally {
       delete serverResponses['/v1/chat/completions'];
     }
