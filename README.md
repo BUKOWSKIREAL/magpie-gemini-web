@@ -152,6 +152,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | :--- | :--- |
 | `npm run studio:status` | 查看本地服务与账号状态 |
 | `npm run studio:start` / `studio:stop` | 启动 / 停止本地服务 |
+| `npm run studio:clean` | 停止服务并清理已下载的后端与 Camoufox 浏览器（保留账号与配置） |
 | `npm run studio:login` | 添加 Google 账号 |
 | `npm run studio:relogin -- [<账号>]` | 重新登录过期账号（仅一个账号时可省略参数） |
 | `npm run studio:install -- --archive <文件>` | 使用已下载的安装包离线安装 |
@@ -169,6 +170,9 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 两个后端均只监听 `127.0.0.1`，Cookie 与登录态仅保存在本机，Magpie 仅保存本地生成的随机 API Key。
 - **Gemini Web 数据目录**：`~/.local/share/magpie-gemini-web`（可通过 `GEMINI_WEB_DATA_DIR` 修改），日志位于 `backend.log`。支持 macOS、Linux、Windows（x64 / arm64）。
 - **AI Studio 数据目录**：`~/.local/share/magpie-ai-studio`（可通过 `AI_STUDIO_DATA_DIR` 修改），日志位于 `backend.log`（超 10 MB 下次启动自动轮转）。默认使用 2048 端口，被占用时自动顺延并记录在 `config.json`。支持 macOS、Linux（x64 / arm64）与 Windows x64。
+- **卸载与清理下载资产**：在 Magpie 中删除插件（或运行 `npm run studio:clean`、`npm run backend:clean`）会停止本地服务并删除 `AIStudio2API`、`Camoufox` 与 `gemini-web2api-go` 二进制及安装包。
+  - 清理会保留 `auth/`、`gemini.db`、`config.json`、`.env` 与 `secrets.json`，以便重装插件或下次发起请求时自动按需重装后端、免去重新登录或导 Cookie；若要彻底停用自动重装，请在 Magpie 中删除对应登录卡片或一并删除数据目录中的配置文件。
+  - 默认数据目录按当前系统用户共享；若在同一账号下隔离运行多个 Magpie 配置目录，请分别设置 `AI_STUDIO_DATA_DIR` 与 `GEMINI_WEB_DATA_DIR`，避免卸载其一时清理共享资产。
 - Gemini Web 每个登录同时最多 2 个请求（AI Studio 为 1），可在 Magpie 的 provider 设置里调整；仍无法完全排除 Google 账号风控风险，请自行评估使用。
 
 **AI Studio 升级与模型范围：**

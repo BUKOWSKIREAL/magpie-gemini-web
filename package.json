@@ -68,6 +68,8 @@
     "backend:release:build": "node scripts/backend-release.mjs --verify",
     "backend:start": "node scripts/backend.mjs start",
     "backend:status": "node scripts/backend.mjs status",
+    "backend:stop": "node scripts/backend.mjs stop",
+    "backend:clean": "node scripts/backend.mjs clean",
     "backend:build:argon": "node scripts/backend-argon.mjs build",
     "backend:install:argon": "node scripts/backend-argon.mjs install",
     "backend:start:argon": "node scripts/backend-argon.mjs start",
@@ -77,6 +79,7 @@
     "studio:start": "node scripts/studio.mjs start",
     "studio:status": "node scripts/studio.mjs status",
     "studio:stop": "node scripts/studio.mjs stop",
+    "studio:clean": "node scripts/studio.mjs clean",
     "studio:login": "node scripts/studio.mjs login",
     "studio:relogin": "node scripts/studio.mjs relogin",
     "studio:smoke": "node scripts/studio-smoke.mjs"

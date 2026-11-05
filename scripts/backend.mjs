@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import http from 'node:http';
 import path from 'node:path';
-import { installBackend, startBackend, statusBackend } from '../lib/native.mjs';
+import { installBackend, startBackend, statusBackend, stopBackend, cleanBackend } from '../lib/native.mjs';
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -29,8 +29,21 @@ async function main() {
     case 'status':
       await statusBackend(options);
       break;
+    case 'stop': {
+      const res = await stopBackend(options);
+      if (!res.stopped) {
+        throw new Error(res.reported || 'Failed to stop Gemini Web backend');
+      }
+      console.log('Backend stopped.');
+      break;
+    }
+    case 'clean': {
+      const res = await cleanBackend(options);
+      console.log(`Cleaned Gemini Web backend assets (preserved accounts & config): ${res.removed.length ? res.removed.join(', ') : 'nothing to remove'}`);
+      break;
+    }
     default:
-      console.error('Usage: node scripts/backend.mjs <install|install-upstream|start|status> [--data-dir=<path>]');
+      console.error('Usage: node scripts/backend.mjs <install|install-upstream|start|status|stop|clean> [--data-dir=<path>]');
       process.exit(1);
   }
 }
