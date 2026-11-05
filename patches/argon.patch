@@ -1503,7 +1503,7 @@ index 60fe35f..14e5a44 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 7572da2..55ab2ee 100644
+index 7572da2..d52d582 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -1613,7 +1613,7 @@ index 7572da2..55ab2ee 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -726,45 +748,29 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -726,45 +748,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1657,9 +1657,7 @@ index 7572da2..55ab2ee 100644
 -	useWC := rtCfg().WebChannel
 +	// 新协议（#43）尚未接入按沉默计时（#33）、请求取消传播、工具提前收尾与扩展思考，
 +	// 当前版本锁死走 StreamGenerate。
-+	if rtCfg().WebChannel {
-+		logf("[gemini] web_channel 已在配置中开启，但当前版本固定走 StreamGenerate（保留按沉默计时、请求取消、工具提前收尾与扩展思考）")
-+	}
++	noteWebChannelIgnored(rtCfg().WebChannel)
 +	useWC := false
  	wcReq := wcRequest{
  		Inner: wcInnerWithoutPrompt(inner), Prompt: prompt,
@@ -1673,7 +1671,7 @@ index 7572da2..55ab2ee 100644
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -772,9 +778,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -772,9 +776,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1685,7 +1683,7 @@ index 7572da2..55ab2ee 100644
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -782,6 +788,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -782,6 +786,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
@@ -1696,7 +1694,7 @@ index 7572da2..55ab2ee 100644
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -793,6 +803,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -793,6 +801,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1706,7 +1704,7 @@ index 7572da2..55ab2ee 100644
  			lastErr = err
  			if pickedOK {
  				recordProxyResult(picked.ID, false, err.Error())
-@@ -803,7 +816,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -803,7 +814,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1717,7 +1715,7 @@ index 7572da2..55ab2ee 100644
  			}
  			continue
  		}
-@@ -832,7 +847,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -832,7 +845,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1728,7 +1726,7 @@ index 7572da2..55ab2ee 100644
  			}
  			continue
  		}
-@@ -860,7 +877,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -860,7 +875,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1739,7 +1737,7 @@ index 7572da2..55ab2ee 100644
  			}
  			continue
  		}
-@@ -926,6 +945,60 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -926,6 +943,78 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1797,10 +1795,28 @@ index 7572da2..55ab2ee 100644
 +	return lh
 +}
 +
++// webChannelIgnoredLogged 记下「web_channel 开着但被忽略」是否已经提示过；开关关掉时清零，
++// 再打开会再提示一次。
++var webChannelIgnoredLogged atomic.Bool
++
++// noteWebChannelIgnored 在 web_channel 开着时提示它被忽略：开关每打开一次只提示一次，
++// 免得每个请求都刷一行日志。返回这次是否提示了。
++func noteWebChannelIgnored(on bool) bool {
++	if !on {
++		webChannelIgnoredLogged.Store(false)
++		return false
++	}
++	if !webChannelIgnoredLogged.CompareAndSwap(false, true) {
++		return false
++	}
++	logf("[gemini] web_channel 已在配置中开启，但当前版本固定走 StreamGenerate（保留按沉默计时、请求取消、工具提前收尾与扩展思考）")
++	return true
++}
++
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1006,10 +1079,122 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1006,10 +1095,122 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -1924,7 +1940,7 @@ index 7572da2..55ab2ee 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1017,36 +1202,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1017,36 +1218,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -1971,7 +1987,7 @@ index 7572da2..55ab2ee 100644
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1355,6 +1541,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1355,6 +1557,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2149,10 +2165,10 @@ index 0000000..ef9b476
 +}
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
-index 0000000..fbbae69
+index 0000000..fb778f5
 --- /dev/null
 +++ b/internal/app/latency_test.go
-@@ -0,0 +1,312 @@
+@@ -0,0 +1,333 @@
 +package app
 +
 +import (
@@ -2465,6 +2481,27 @@ index 0000000..fbbae69
 +		t.Fatalf("非流式: stop=%v reads=%d tracker=%q", lh.stop.Load(), src.reads, lh.tracker.emitted)
 +	}
 +}
++
++// web_channel 被忽略的提示：开关每打开一次只提示一次，不能每个请求都刷一行日志。
++func TestWebChannelIgnoredLoggedOncePerEnable(t *testing.T) {
++	webChannelIgnoredLogged.Store(false)
++	t.Cleanup(func() { webChannelIgnoredLogged.Store(false) })
++
++	got := []bool{
++		noteWebChannelIgnored(true),  // 第一次看到开着：提示
++		noteWebChannelIgnored(true),  // 后续请求：不再提示
++		noteWebChannelIgnored(true),
++		noteWebChannelIgnored(false), // 关掉：清零
++		noteWebChannelIgnored(true),  // 再打开：再提示一次
++		noteWebChannelIgnored(true),
++	}
++	want := []bool{true, false, false, false, true, false}
++	for i := range want {
++		if got[i] != want[i] {
++			t.Fatalf("第 %d 次: got %v, want %v（全部 %v）", i, got[i], want[i], got)
++		}
++	}
++}
 diff --git a/internal/app/main_test.go b/internal/app/main_test.go
 index 38e1a44..e3f7636 100644
 --- a/internal/app/main_test.go
@@ -2756,7 +2793,7 @@ index 81b8900..9d1702d 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index 830fa6a..93963d7 100644
+index 830fa6a..03f9b4b 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2772,7 +2809,7 @@ index 830fa6a..93963d7 100644
  )
  
 -const Version = "4.27.0"
-+const Version = "4.27.0-magpie.1"
++const Version = "4.27.0-magpie.2"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)

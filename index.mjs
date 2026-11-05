@@ -31,7 +31,11 @@ async function signInFor(local, account) {
   return {
     type: 'success',
     key: local.apiKey,
-    metadata: { baseURL: local.baseURL, account: account.id, ...(email ? { email } : {}) }
+    metadata: {
+      baseURL: local.baseURL, account: account.id, ...(email ? { email } : {}),
+      // The account index (/u/N) the email is for; usage takes the email only while it holds.
+      ...(email && account.authuser > 0 ? { authuser: account.authuser } : {})
+    }
   };
 }
 
@@ -225,8 +229,8 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
         if (!managedBackend(c.baseURL)) {
           return { error: '只能读取插件自己管理的本地后端的额度（连接已有后端时读不到）', windows: [], signIn: 'kept' };
         }
-        const { account, email } = auth.metadata || {};
-        return { ...(await usage(Number.isInteger(account) ? { account, email } : {})), signIn: 'kept' };
+        const { account, email, authuser } = auth.metadata || {};
+        return { ...(await usage(Number.isInteger(account) ? { account, email, authuser } : {})), signIn: 'kept' };
       }
     },
     provider: {

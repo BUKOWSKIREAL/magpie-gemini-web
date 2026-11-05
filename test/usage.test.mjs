@@ -261,6 +261,43 @@ describe('28. Gemini usage limits', () => {
     assert.equal(noEmail.length, 2);
   });
 
+  it('reads an account again, email and usage, once its account index (authuser) changes', async () => {
+    // One browser cookie with two Google accounts: /u/0 and /u/1 are different people.
+    const calls = [];
+    const byIndex = { 0: ['zero@gmail.com', 0.1], 1: ['one@gmail.com', 0.6] };
+    const fetchFn = async (url, init) => {
+      calls.push({ url, init });
+      const [email, used] = byIndex[/\/u\/(\d+)\//.exec(new URL(url).pathname)?.[1] ?? 0];
+      if (new URL(url).pathname.endsWith('/app')) {
+        return new Response(`<script>window.WIZ_global_data = {"oPEP7c":"${email}"};</script>`, { status: 200 });
+      }
+      return new Response(reply(used, 0), { status: 200 });
+    };
+    let authuser = 0;
+    const poolAccounts = async () => [{ id: 61, cookie: 'c61', authuser, pooled: 0 }];
+    const read = () => usage({ poolAccounts, fetchFn, freshMs: 60000 });
+
+    assert.deepEqual(await read(), { user: 'zero@gmail.com', windows: windowsOf(parseUsage(reply(0.1, 0)).pools) });
+    authuser = 1; // changed in the backend's panel
+    const out = await read();
+    assert.equal(out.user, 'one@gmail.com');
+    assert.equal(out.windows[0].used, 60);
+    assert.equal(calls.length, 4);
+
+    // A sign-in's email is for the index it was made at: it names the card only while that holds.
+    calls.length = 0;
+    authuser = 2;
+    byIndex[2] = ['two@gmail.com', 0];
+    const stale = await usage({ poolAccounts, fetchFn, account: 61, email: 'zero@gmail.com' });
+    assert.equal(stale.user, 'two@gmail.com');
+    assert.equal(calls.filter(c => c.url.endsWith('/u/2/app')).length, 1);
+    authuser = 3;
+    byIndex[3] = ['three@gmail.com', 0];
+    const kept = await usage({ poolAccounts, fetchFn, account: 61, email: 'three@gmail.com', authuser: 3 });
+    assert.equal(kept.user, 'three@gmail.com');
+    assert.equal(calls.filter(c => c.url.endsWith('/u/3/app')).length, 0);
+  });
+
   it('shows several accounts as one card at its tightest account, each account in the tooltip', async () => {
     const accounts = [{ id: 5, cookie: 'c5', pooled: 0 }, { id: 6, cookie: 'c6', pooled: 0 }, { id: 7, cookie: 'c7', pooled: 0 }];
     const out = await usage({
