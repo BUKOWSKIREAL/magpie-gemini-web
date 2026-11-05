@@ -113,7 +113,11 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 0.2.19 升级验证（2026-11-02）
+## 0.3.0 升级验证（2026-11-05）
+
+- 五个平台的候选构建（[run 41976798432](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41976798432)）一次性通过上游测试、真实安装冒烟验证（含 `strip_thought_signatures=false`、`/api/accounts/tasks` 接口与管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
+
+## 0.2.19 升级验证（2026-11-02，历史记录）
 
 - 五个平台的候选构建（[run 41378024737](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41378024737)）通过上游测试、真实安装冒烟验证及插件测试；安装包和二进制 pin 来自该次构建。Windows 首次在安装前的 PowerShell 进程查询超时，失败作业重跑通过，未修改测试或放宽超时。提交 pin 后仍需由严格验证工作流在新 runner 上重建并逐一比对哈希，结果见升级 PR。
 - 本地使用 CI 的 darwin-arm64 安装包运行完整插件测试：212 项通过、无跳过；Python bridge 测试 41 项通过。打包检查包含配置补丁，不包含本地构建和账号数据。
