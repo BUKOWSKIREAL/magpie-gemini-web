@@ -274,7 +274,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(nonthinking.capabilities.reasoning, false);
   });
 
-  it('3b. real v0.2.12 catalog yields the text chat models and image models the account can call', async () => {
+  it('3b. real v0.2.12 catalog yields the text chat models, Deep Research models, and image models the account can call', async () => {
     // AIStudio2API v0.2.12 /v1/models, captured 2026-10-17; opaque capability_code_* flags removed.
     const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/studio-catalog-v0.2.12.json', import.meta.url), 'utf8'));
     const c = { baseURL: serverURL, key: 'test-key' };
@@ -291,6 +291,10 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       'gemini-flash-lite-latest',
       'gemini-pro-latest'
     ];
+    const researchIds = [
+      'deep-research-max-preview-04-2026',
+      'deep-research-preview-04-2026'
+    ];
     const imageIds = [
       'gemini-2.5-flash-image',
       'gemini-3-pro-image',
@@ -302,18 +306,35 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(catalog) };
     try {
       const models = await listStudioModels(c, opts);
-      assert.deepEqual(Object.keys(models).sort(), [...textIds, ...imageIds].sort());
-      // Marked chat_model but made for images (aspect_ratio, interactions_api)
+      assert.deepEqual(Object.keys(models).sort(), [...textIds, ...researchIds, ...imageIds].sort());
+      // Marked chat_model but made for images or non-Deep-Research interactions (aspect_ratio, interactions_api)
       assert.equal(models['gemini-omni-1.1-flash'], undefined);
       assert.equal(models['gemini-omni-flash-preview'], undefined);
+      assert.equal(models['antigravity-preview-09-2026'], undefined);
       for (const id of textIds) {
         const model = models[id];
         assert.equal(model.capabilities.toolcall, true, `${model.id} declares function calling`);
+        assert.equal(model.capabilities.temperature, true);
         assert.deepEqual(model.variants, { minimal: {}, low: {}, medium: {}, high: {} });
         assert.deepEqual(model.capabilities.output, { text: true, image: false });
         assert.equal(model.capabilities.input.image, true, `${model.id} reads a chat's images by default (media_resolution)`);
         assert.equal(model.capabilities.attachment, true);
         assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
+      }
+      // Deep Research agents run on /chat/completions via AIStudio2API's interaction route without
+      // client tool calls, temperature, or thinking_level variants.
+      for (const id of researchIds) {
+        const model = models[id];
+        assert.equal(model.api.npm, '@ai-sdk/openai-compatible');
+        assert.equal(model.api.url, serverURL);
+        assert.equal(model.capabilities.toolcall, false);
+        assert.equal(model.capabilities.reasoning, true);
+        assert.equal(model.capabilities.temperature, false);
+        assert.equal(model.capabilities.attachment, false);
+        assert.deepEqual(model.capabilities.input, { text: true, image: false });
+        assert.deepEqual(model.capabilities.output, { text: true, image: false });
+        assert.deepEqual(model.variants, {});
+        assert.deepEqual(model.limit, { context: 131072, output: 65536 });
       }
       // An image model draws, on Gemini's API, where Magpie draws with a plugin's Gemini image
       // model, and takes images to edit or draw from without allowImages
@@ -332,9 +353,9 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.deepEqual(banana.variants, { minimal: {}, low: {}, medium: {}, high: {} });
       assert.deepEqual(models['gemini-3-pro-image'].variants, {});
 
-      // Turned off, only the text models are listed
+      // Turned off, only the text and Deep Research models are listed
       const textOnly = await listStudioModels(c, studioSettings({ studio: { imageModels: false } }));
-      assert.deepEqual(Object.keys(textOnly).sort(), textIds);
+      assert.deepEqual(Object.keys(textOnly).sort(), [...textIds, ...researchIds].sort());
 
       // Image input turned off, for both providers or for AI Studio alone: the text models take
       // no images, while an image model still takes them to edit or draw from
@@ -366,7 +387,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // A backend that lists no channels at all keeps its models
       const noChannels = { ...catalog, data: catalog.data.map(({ channels, ...m }) => m) };
       serverResponses['/v1/models'] = { status: 200, body: JSON.stringify(noChannels) };
-      assert.equal(Object.keys(await listStudioModels(c, opts)).length, 15);
+      assert.equal(Object.keys(await listStudioModels(c, opts)).length, 17);
     } finally {
       delete serverResponses['/v1/models'];
     }

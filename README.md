@@ -185,6 +185,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 已停止但文件被替换的后端会从校验通过的固定版本安装包恢复；校验失败不会启动替换文件。安装会保留账号和运行数据文件，但**不保证旧版本能读取新版迁移过的数据**。手动降级前先停止服务并备份整个数据目录（包括 `auth/`、`runtime/requests.db` 等）；已知发生数据迁移时应升级插件以匹配新版后端。
 - AI Studio 后端基础请求期限为 30 分钟；插件默认单次响应等待／流空闲超时也是 30 分钟（仍可用 `studio.requestTimeoutMs` 调整）。这允许非流式长回复在服务端完整收集；后端卡死时也可能等满 30 分钟，且单 worker 会拖住后续请求。可主动取消请求或设置更短的等待时间，但较短期限可能中断正常长回复。上游自动续写的期限按其规则计算。
 - 已核对本机 Magpie `v0.1.1285`（`d783df46`）源码：插件请求走 `Provider.Do → plugin.Fetch → loader.fetch`，绕过普通 HTTP transport 的 10 分钟响应头限制；此插件生成路径没有发现更短的固定总超时。网关 5 分钟 `IdleTimeout` 仅针对请求之间的空闲连接。客户端或反向代理仍可设置更短期限；这不是一次实等 30 分钟的端到端验证。
+- 支持 Deep Research 模型（`deep-research-preview-04-2026`、`deep-research-max-preview-04-2026`）：需要登录 Google AI Pro / Ultra 账号才会在列表中出现；由后端将异步 Interactions 任务适配到 `/v1/chat/completions` 流式返回（含思考过程与服务端内置联网搜索），不支持客户端 `tool_call`（Function Calling）或 `temperature`。
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
