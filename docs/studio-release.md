@@ -116,6 +116,7 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 ## 0.3.0 升级验证（2026-11-05）
 
 - 五个平台的候选构建（[run 41976798432](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41976798432)）一次性通过上游测试、真实安装冒烟验证（含 `strip_thought_signatures=false`、`/api/accounts/tasks` 接口与管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
+- 随后的严格验证构建（[run 41977975873](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41977975873)）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，真实安装冒烟验证与插件测试全部通过。
 
 ## 0.2.19 升级验证（2026-11-02，历史记录）
 
