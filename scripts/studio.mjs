@@ -7,7 +7,7 @@ import {
   localStudio,
   installStudio,
   ensureStudio,
-  studioAdmin,
+  studioLogin,
   studioAccounts,
   stopStudio,
   cleanStudio,
@@ -212,8 +212,10 @@ async function main() {
       console.log(`Preparing login...`);
       const local = await ensureStudio({ dataDir, managementOnly: true });
       console.log(`Opening isolated browser window for Google AI Studio login...`);
-      const res = await studioAdmin(local, 'POST', '/api/accounts', {}, { timeoutMs: LOGIN_TIMEOUT_MS, fetchFn: nodeFetch });
-      const account = res?.account || res;
+      const account = await studioLogin(local, null, { timeoutMs: LOGIN_TIMEOUT_MS, fetchFn: nodeFetch });
+      if (!account || typeof account.id !== 'string' || !account.id || account.enabled === false) {
+        throw new Error('AIStudio2API did not return an enabled account');
+      }
       console.log(`Login completed successfully.`);
       console.log(`Account: ${account.label || account.id || 'new'}`);
       break;
@@ -236,8 +238,10 @@ async function main() {
           : `Several accounts need to sign in again; name one: ${studioCommand('relogin <account>', { dataDir })} (${names})`);
       }
       console.log(`Opening isolated browser window to sign ${chosen.label || chosen.id} in again...`);
-      const res = await studioAdmin(local, 'POST', `/api/accounts/${encodeURIComponent(chosen.id)}/login`, {}, { timeoutMs: LOGIN_TIMEOUT_MS, fetchFn: nodeFetch });
-      const account = res?.account || chosen;
+      const account = (await studioLogin(local, chosen.id, { timeoutMs: LOGIN_TIMEOUT_MS, fetchFn: nodeFetch })) || chosen;
+      if (account.state === 'auth_required') {
+        throw new Error(account.message || 'Account still requires sign-in');
+      }
       console.log(`Signed in again: ${account.label || account.id} (${account.state || 'unknown'})`);
       break;
     }

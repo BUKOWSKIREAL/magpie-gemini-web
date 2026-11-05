@@ -46,10 +46,12 @@ try {
   // Generation's WAA runs in the service itself, on SpiderMonkey, with no copies of the models
   assert.equal(config.waa_backend, 'spidermonkey');
   assert.equal(config.search_model_aliases, false);
+  assert.equal(config.strip_thought_signatures, false);
+  assert.deepEqual(await studioAdmin(local, 'GET', '/api/accounts/tasks'), { tasks: [] });
   // Save upstream defaults that differ from this plugin's defaults. They must stay explicit
   // through the backend's Save and the plugin's next config sync, not get silently re-seeded.
   const choices = {
-    search_model_aliases: true, routing_strategy: 'round-robin', per_account_concurrency: 2,
+    search_model_aliases: true, strip_thought_signatures: true, routing_strategy: 'round-robin', per_account_concurrency: 2,
     first_event_hedge: 'auto', first_event_hedge_models: 'gemini-3.8-flash',
     api_key_accounts: `${local.apiKey}:smoke@example.com`
   };

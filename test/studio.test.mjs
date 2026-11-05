@@ -7,7 +7,7 @@ import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
 import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
-import { serviceEnv, saveStudioProxy, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
+import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
   let mockServer;
@@ -980,7 +980,21 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const oneClick = plugin.auth.methods[0];
       assert.match(oneClick.label, /（推荐）/);
 
-      serverResponses['/api/accounts'] = { status: 500, headers: jsonHeaders, body: JSON.stringify({ error: { message: 'login window closed' } }) };
+      serverResponses['/api/accounts'] = (req, res) => {
+        if (req.method === 'POST') {
+          res.writeHead(202, jsonHeaders);
+          res.end(JSON.stringify({ task: { id: 't-fail', kind: 'login', state: 'running', items: [{ label: '', state: 'running' }] } }));
+          return;
+        }
+        res.writeHead(200, jsonHeaders);
+        res.end(JSON.stringify({ accounts: [] }));
+      };
+      serverResponses['/api/accounts/tasks'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ tasks: [{ id: 't-fail', kind: 'login', state: 'failed', items: [{ label: '', state: 'failed', error: 'login window closed' }] }] })
+      };
+      serverResponses['/api/accounts/tasks/t-fail'] = { status: 204 };
       // Before an account is signed in, only the sign-in can show the proxy the login window goes through
       serverResponses['/api/config'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ proxy: '', active_proxy: 'http://127.0.0.1:9393', service_restart_required: false }) };
       // Camoufox not downloaded yet: the sign-in opens a page that shows how that goes
@@ -993,6 +1007,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const failed = await failing.callback();
       assert.equal(failed.type, 'failed');
       assert.match(failed.error, /login window closed[^]*本地服务的代理出口：http:\/\/127\.0\.0\.1:9393/);
+      assert.ok(serverRequests.some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-fail'));
       const shown = await (await fetch(`${failing.url}/status`)).json();
       assert.deepEqual(shown.steps.map(s => s.state), ['done', 'failed', 'pending'], 'it failed while Camoufox was missing');
       assert.equal(shown.error, failed.error);
@@ -1009,11 +1024,21 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
           ? { version: STUDIO_VERSION, state: 'LAUNCHING', running: false, ready: false, accounts: { total: 1, ready: 0, busy: 0, cooldown: 0, auth_required: 0 } }
           : { version: STUDIO_VERSION, state: 'RUNNING', running: true, ready: true, accounts: { total: 1, ready: 1, busy: 0, cooldown: 0, auth_required: 0 } }));
       };
-      serverResponses['/api/accounts'] = {
-        status: 201,
-        headers: jsonHeaders,
-        body: JSON.stringify({ account: { id: 'user@example.com', label: 'user@example.com', enabled: true, state: 'ready' } })
+      serverResponses['/api/accounts'] = (req, res) => {
+        if (req.method === 'POST') {
+          res.writeHead(202, jsonHeaders);
+          res.end(JSON.stringify({ task: { id: 't-ok', kind: 'login', state: 'running', items: [{ label: '', state: 'running' }] } }));
+          return;
+        }
+        res.writeHead(200, jsonHeaders);
+        res.end(JSON.stringify({ accounts: [{ id: 'user@example.com', label: 'user@example.com', enabled: true, state: 'ready' }] }));
       };
+      serverResponses['/api/accounts/tasks'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ tasks: [{ id: 't-ok', kind: 'login', state: 'done', items: [{ label: 'user@example.com', state: 'done' }] }] })
+      };
+      serverResponses['/api/accounts/tasks/t-ok'] = { status: 204 };
       const pending = await oneClick.authorize();
       assert.equal(pending.url, '');
       assert.match(pending.instructions, /^第一次登录要先下载登录用的浏览器 Camoufox/);
@@ -1023,12 +1048,16 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(result.key, 'managed-key');
       // Each Google account is a sign-in of its own, named by its email
       assert.deepEqual(result.metadata, { mode: 'studio', managed: true, baseURL: serverURL, account: 'user@example.com', email: 'user@example.com' });
+      assert.ok(serverRequests.some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-ok'));
 
       // Let the start the sign-in left running see generation come up
       launching = false;
       await new Promise(r => setTimeout(r, 400));
     } finally {
       delete serverResponses['/api/accounts'];
+      delete serverResponses['/api/accounts/tasks'];
+      delete serverResponses['/api/accounts/tasks/t-fail'];
+      delete serverResponses['/api/accounts/tasks/t-ok'];
       delete serverResponses['/api/status'];
       delete serverResponses['/api/config'];
       fs.rmSync(path.join(tempStudioDataDir, 'runtime'), { recursive: true, force: true });
@@ -1144,24 +1173,55 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const pending = await google.authorize({ account: 'b@example.com' });
       assert.match(pending.instructions, /Camoufox/);
 
-      serverResponses[loginURL] = { status: 500, headers: jsonHeaders, body: JSON.stringify({ error: { message: 'login window closed' } }) };
+      serverResponses[loginURL] = {
+        status: 202,
+        headers: jsonHeaders,
+        body: JSON.stringify({ task: { id: 't-relogin', kind: 'relogin', state: 'running', items: [{ label: 'b@example.com', state: 'running' }] } })
+      };
+      serverResponses['/api/accounts/tasks/t-relogin'] = { status: 204 };
+      serverResponses['/api/accounts/tasks'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ tasks: [{ id: 't-relogin', kind: 'relogin', state: 'failed', items: [{ label: 'b@example.com', state: 'failed', error: 'login window closed' }] }] })
+      };
       const failed = await pending.callback();
       assert.equal(failed.type, 'failed');
       assert.match(failed.error, /b@example\.com 没有重新登录：.*login window closed/);
 
-      serverResponses[loginURL] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ account: { ...POOL[1], state: 'auth_required', message: 'still revoked' } }) };
+      serverResponses['/api/accounts/tasks'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ tasks: [{ id: 't-relogin', kind: 'relogin', state: 'done', items: [{ label: 'b@example.com', state: 'done' }] }] })
+      };
+      serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'auth_required', message: 'still revoked' }, POOL[2]]);
       const stillExpired = await pending.callback();
       assert.equal(stillExpired.type, 'failed');
       assert.match(stillExpired.error, /still revoked/);
 
-      serverResponses[loginURL] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ account: { ...POOL[1], state: 'ready', message: '' } }) };
+      serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'ready', message: '' }, POOL[2]]);
       const before = serverRequests.length;
       const result = await pending.callback();
       assert.deepEqual(result, signInFor('b@example.com'), 'the account signed in again keeps its own card');
       assert.ok(serverRequests.slice(before).some(r => r.method === 'POST' && r.url === loginURL));
+      assert.ok(serverRequests.slice(before).some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-relogin'));
+
+      // A timed-out login task is cancelled via DELETE /api/accounts/tasks/{id} so the backend closes its browser window
+      serverResponses['/api/accounts/tasks'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ tasks: [{ id: 't-relogin', kind: 'relogin', state: 'running', items: [{ label: 'b@example.com', state: 'running' }] }] })
+      };
+      const beforeTimeout = serverRequests.length;
+      await assert.rejects(
+        studioLogin(localStudio(), 'b@example.com', { deadline: Date.now() + 80, pollMs: 30 }),
+        err => err.timedOut === true
+      );
+      assert.ok(serverRequests.slice(beforeTimeout).some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-relogin'));
       await new Promise(r => setTimeout(r, 300));
     } finally {
       delete serverResponses['/api/accounts'];
+      delete serverResponses['/api/accounts/tasks'];
+      delete serverResponses['/api/accounts/tasks/t-relogin'];
       delete serverResponses[loginURL];
       setup.remove();
     }

@@ -1,8 +1,8 @@
 diff --git a/internal/config/config.go b/internal/config/config.go
-index e5cae0a..1c1f18e 100644
+index de280dd..2843043 100644
 --- a/internal/config/config.go
 +++ b/internal/config/config.go
-@@ -66,6 +66,11 @@ var configKeys = [...]string{
+@@ -67,6 +67,11 @@ var configKeys = [...]string{
  	"CONTINUATION_PROMPT",
  }
  
@@ -14,7 +14,7 @@ index e5cae0a..1c1f18e 100644
  // LogFileMB 是单个日志文件的轮转大小
  const LogFileMB = 10
  
-@@ -398,7 +403,7 @@ func Load(path string) (Config, error) {
+@@ -412,7 +417,7 @@ func Load(path string) (Config, error) {
  	if err != nil {
  		return Config{}, err
  	}
@@ -23,18 +23,20 @@ index e5cae0a..1c1f18e 100644
  		if err := writeEnv(path, values); err != nil {
  			return Config{}, err
  		}
-@@ -550,7 +555,7 @@ func (c Config) Save(path string) error {
- 			if value, ok := saved[key]; ok {
- 				file[key] = value
+@@ -576,8 +581,8 @@ func (c Config) Save(path string) error {
+ 			if inFile {
+ 				file[key] = saved[key]
  			}
--		} else if values[key] != defaults[key] {
-+		} else if managedBy != "" || values[key] != defaults[key] {
+-		case slices.Contains(workerDefaultKeys, key) && !inFile && values[key] == previousDefaults[key]:
+-		case values[key] != defaults[key]:
++		case managedBy == "" && slices.Contains(workerDefaultKeys, key) && !inFile && values[key] == previousDefaults[key]:
++		case managedBy != "" || values[key] != defaults[key]:
  			file[key] = values[key]
  		}
  	}
 diff --git a/internal/config/managed_test.go b/internal/config/managed_test.go
 new file mode 100644
-index 0000000..69d581d
+index 0000000..c5d9991
 --- /dev/null
 +++ b/internal/config/managed_test.go
 @@ -0,0 +1,70 @@
@@ -95,7 +97,7 @@ index 0000000..69d581d
 +		t.Fatal(err)
 +	}
 +	text := readTestEnv(t, path)
-+	for _, want := range []string{"SEARCH_MODEL_ALIASES=true\n", "PER_ACCOUNT_CONCURRENCY=2\n", "ROUTING_STRATEGY=round-robin\n", "FIRST_EVENT_HEDGE=auto\n", "LISTEN_ADDR=127.0.0.1:2049\n"} {
++	for _, want := range []string{"WARM_WORKER_LIMIT=10\n", "MAX_ACTIVE_WORKERS=20\n", "SEARCH_MODEL_ALIASES=true\n", "PER_ACCOUNT_CONCURRENCY=2\n", "ROUTING_STRATEGY=round-robin\n", "FIRST_EVENT_HEDGE=auto\n", "STRIP_THOUGHT_SIGNATURES=false\n", "LISTEN_ADDR=127.0.0.1:2049\n"} {
 +		if !strings.Contains(text, want) {
 +			t.Fatalf("saved config is missing %q", want)
 +		}
@@ -108,3 +110,4 @@ index 0000000..69d581d
 +		t.Fatal("managed settings changed across save/load")
 +	}
 +}
+
