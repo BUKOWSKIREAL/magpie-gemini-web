@@ -21,7 +21,7 @@
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API (`v0.2.19`) | gemini-web2api-go (`4.27.0-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API (`v0.2.19`) | gemini-web2api-go (`4.27.0-magpie.2` 优化版) |
 
 ---
 
@@ -184,7 +184,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
-- 插件默认使用本仓库发布的 [4.27.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.27.0-magpie.1)（基于上游 v4.27.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
+- 插件默认使用本仓库发布的 [4.27.0-magpie.2](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.27.0-magpie.2)（基于上游 v4.27.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：
   ```bash
