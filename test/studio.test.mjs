@@ -803,6 +803,74 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  it('Deep Research streaming forwards reasoning_content, content, [DONE], client tools/temperature, and async task errors', async () => {
+    let lastBody = null;
+    let mode = 'success';
+    const okStream = [
+      'data: {"id":"chatcmpl_dr1","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"Planning search queries..."},"finish_reason":null}]}',
+      'data: {"id":"chatcmpl_dr1","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{"content":"# Research Report\\nFindings [cite: 1]."},"finish_reason":null}]}',
+      'data: {"id":"chatcmpl_dr1","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+      'data: [DONE]'
+    ].join('\n\n') + '\n\n';
+    const errStream = [
+      'data: {"id":"chatcmpl_dr2","object":"chat.completion.chunk","model":"deep-research-preview-04-2026","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"Starting interaction..."},"finish_reason":null}]}',
+      'data: {"error":{"message":"Interaction failed: upstream research task aborted","type":"server_error","code":null}}'
+    ].join('\n\n') + '\n\n';
+
+    serverResponses['/v1/chat/completions'] = (_req, res, bodyStr) => {
+      lastBody = JSON.parse(bodyStr);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(mode === 'success' ? okStream : errStream);
+    };
+
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const loader = await plugin.auth.loader(async () => ({ type: 'api', key: 'test-key', metadata: { mode: 'studio', baseURL: serverURL } }));
+
+      // 1. Streaming reasoning_content + content + [DONE] with client tools & temperature present
+      const reqPayload = {
+        model: 'deep-research-preview-04-2026',
+        stream: true,
+        temperature: 0.7,
+        tools: [{ type: 'function', function: { name: 'local_tool', parameters: { type: 'object' } } }],
+        messages: [{ role: 'user', content: 'Research quantum error correction' }]
+      };
+      const resOk = await loader.fetch(`${serverURL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reqPayload)
+      });
+      assert.equal(resOk.status, 200);
+      const textOk = await resOk.text();
+      assert.equal(textOk, okStream);
+      assert.equal(lastBody.model, 'deep-research-preview-04-2026');
+      assert.equal(lastBody.stream, true);
+      assert.equal(lastBody.temperature, 0.7);
+      assert.equal(lastBody.tools.length, 1);
+
+      const events = textOk.trim().split('\n\n').map(line => line.slice(6));
+      assert.equal(events[events.length - 1], '[DONE]');
+      const chunks = events.slice(0, -1).map(JSON.parse);
+      assert.equal(chunks[0].choices[0].delta.reasoning_content, 'Planning search queries...');
+      assert.equal(chunks[1].choices[0].delta.content, '# Research Report\nFindings [cite: 1].');
+      assert.equal(chunks[2].choices[0].finish_reason, 'stop');
+
+      // 2. Async interaction failure / stream interruption passes through without [DONE]
+      mode = 'error';
+      const resErr = await loader.fetch(`${serverURL}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'deep-research-preview-04-2026', stream: true, messages: [{ role: 'user', content: 'fail' }] })
+      });
+      assert.equal(resErr.status, 200);
+      const textErr = await resErr.text();
+      assert.equal(textErr, errStream);
+      assert.ok(!textErr.includes('[DONE]'));
+    } finally {
+      delete serverResponses['/v1/chat/completions'];
+    }
+  });
+
   it('7. medium reasoning does not fetch thinking twins or rewrite model ID', async () => {
     let receivedModel = null;
     serverResponses['/v1/chat/completions'] = (req, res, bodyStr) => {
