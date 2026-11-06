@@ -120,7 +120,12 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 0.3.0 升级验证（2026-11-05）
+## 0.3.1 升级验证（2026-11-07）
+
+- 五个平台的候选构建（[run 42255835006](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42255835006)）通过上游测试、真实安装冒烟验证（含旧版 `bodies` 表迁移、SpiderMonkey 与 libwebp 静态链接、管理页配置持久化）及插件测试；安装包和二进制 pin（含在固定 Xcode 26.3 `17C529` 下生成的 macOS 产物）来自该次构建。
+- 随后的严格验证构建（[run 42258671953](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42258671953)）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，真实安装冒烟验证与插件测试全部通过。
+
+## 0.3.0 升级验证（2026-11-05，历史记录）
 
 - 五个平台的候选构建（[run 41976798432](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41976798432)）一次性通过上游测试、真实安装冒烟验证（含 `strip_thought_signatures=false`、`/api/accounts/tasks` 接口与管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
 - 随后的严格验证构建（[run 41977975873](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41977975873)）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，真实安装冒烟验证与插件测试全部通过。
