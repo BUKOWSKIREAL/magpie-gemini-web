@@ -21,7 +21,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.3.0`) | gemini-web2api-go (`4.27.0-magpie.2` optimized build) |
+| **Local backend** | AIStudio2API (`v0.3.1`) | gemini-web2api-go (`4.27.0-magpie.2` optimized build) |
 
 ---
 
