@@ -55,10 +55,10 @@ index 0000000..5569c03
 +}
 diff --git a/internal/requestdb/legacy_bodies_test.go b/internal/requestdb/legacy_bodies_test.go
 new file mode 100644
-index 0000000..2761c06
+index 0000000..f815636
 --- /dev/null
 +++ b/internal/requestdb/legacy_bodies_test.go
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,73 @@
 +package requestdb
 +
 +import (
@@ -71,11 +71,7 @@ index 0000000..2761c06
 +
 +func TestLegacyBodiesMigration(t *testing.T) {
 +	file := filepath.Join(t.TempDir(), "requests.db")
-+	db, err := sqlitedb.Open(file)
-+	if err != nil {
-+		t.Fatal(err)
-+	}
-+	_, err = db.Exec(`CREATE TABLE bodies (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, time INTEGER NOT NULL, request TEXT NOT NULL, request_size INTEGER NOT NULL, response TEXT NOT NULL, response_size INTEGER NOT NULL);
++	db, err := sqlitedb.Open(file, `CREATE TABLE bodies (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, time INTEGER NOT NULL, request TEXT NOT NULL, request_size INTEGER NOT NULL, response TEXT NOT NULL, response_size INTEGER NOT NULL);
 +INSERT INTO bodies (id,time,request,request_size,response,response_size) VALUES ('old',1234,'旧请求',100,'reply',200);`)
 +	if err != nil {
 +		t.Fatal(err)
@@ -113,12 +109,12 @@ index 0000000..2761c06
 +}
 +
 +func TestLegacyBodiesMigrationRollback(t *testing.T) {
-+	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "requests.db"))
++	db, err := sqlitedb.Open(filepath.Join(t.TempDir(), "requests.db"), schema)
 +	if err != nil {
 +		t.Fatal(err)
 +	}
 +	defer db.Close()
-+	if _, err := db.Exec(schema + `CREATE TABLE bodies (seq INTEGER, id TEXT, time INTEGER, request TEXT, request_size INTEGER, response TEXT, response_size INTEGER);
++	if _, err := db.Exec(`CREATE TABLE bodies (seq INTEGER, id TEXT, time INTEGER, request TEXT, request_size INTEGER, response TEXT, response_size INTEGER);
 +INSERT INTO bodies VALUES (1,'good',1234,'request',1,'reply',1),(2,'bad',1234,NULL,1,'reply',1);`); err != nil {
 +		t.Fatal(err)
 +	}
@@ -137,24 +133,58 @@ index 0000000..2761c06
 +	}
 +}
 diff --git a/internal/requestdb/requestdb.go b/internal/requestdb/requestdb.go
-index bff3477..ae92661 100644
+index 0854684..c83be9a 100644
 --- a/internal/requestdb/requestdb.go
 +++ b/internal/requestdb/requestdb.go
-@@ -58,7 +58,6 @@ CREATE INDEX IF NOT EXISTS requests_account_time ON requests(account, time);
- CREATE INDEX IF NOT EXISTS requests_state_time ON requests(state, time);
- CREATE TABLE IF NOT EXISTS hours (` + rollupColumns + `) WITHOUT ROWID;
- CREATE TABLE IF NOT EXISTS days (` + rollupColumns + `) WITHOUT ROWID;
--DROP TABLE IF EXISTS bodies;
- CREATE TABLE IF NOT EXISTS request_bodies (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, time INTEGER NOT NULL,
-  request BLOB NOT NULL, request_size INTEGER NOT NULL, response BLOB NOT NULL, response_size INTEGER NOT NULL);`
-@@ -121,6 +120,9 @@ func Open(path string, log Logger) (*Store, error) {
+@@ -112,7 +112,7 @@ func Open(path string, log Logger) (*Store, error) {
+ 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+ 		return nil, err
+ 	}
+-	db, err := sqlitedb.Open(path, schema)
++	db, err := sqlitedb.Open(path, schema, migrateLegacyBodies)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("初始化请求账本: %w", err)
+ 	}
+diff --git a/internal/sqlitedb/sqlitedb.go b/internal/sqlitedb/sqlitedb.go
+index d65e9fb..ec78bf3 100644
+--- a/internal/sqlitedb/sqlitedb.go
++++ b/internal/sqlitedb/sqlitedb.go
+@@ -33,7 +33,7 @@ func init() {
+ }
+ 
+ // Open 打开或创建数据库，为已有表补上缺少的列、执行 schema 并删除 schema 没有定义的对象，非增量收缩的已有库先整理为增量收缩，最后交还空闲页
+-func Open(path string, schema string) (*sql.DB, error) {
++func Open(path string, schema string, migrations ...func(*sql.DB) error) (*sql.DB, error) {
+ 	db, err := sql.Open(driverName, "file:"+filepath.ToSlash(path))
+ 	if err != nil {
+ 		return nil, err
+@@ -47,7 +47,7 @@ func Open(path string, schema string) (*sql.DB, error) {
+ 			return nil, errors.Join(fmt.Errorf("整理数据库: %w", err), db.Close())
+ 		}
+ 	}
+-	if err := applySchema(db, schema); err != nil {
++	if err := applySchema(db, schema, migrations...); err != nil {
+ 		return nil, errors.Join(fmt.Errorf("同步表结构: %w", err), db.Close())
+ 	}
+ 	if err := Reclaim(context.Background(), db); err != nil {
+@@ -57,7 +57,7 @@ func Open(path string, schema string) (*sql.DB, error) {
+ }
+ 
+ // applySchema 为已有表补上 schema 定义而缺少的列，执行 schema，再删除 schema 没有定义的表、索引、视图与触发器
+-func applySchema(db *sql.DB, schema string) error {
++func applySchema(db *sql.DB, schema string, migrations ...func(*sql.DB) error) error {
+ 	defined, err := sql.Open(driverName, ":memory:")
+ 	if err != nil {
+ 		return err
+@@ -84,6 +84,11 @@ func applySchema(db *sql.DB, schema string) error {
  	if _, err := db.Exec(schema); err != nil {
- 		return nil, errors.Join(fmt.Errorf("初始化请求账本: %w", err), db.Close())
+ 		return err
  	}
-+	if err := migrateLegacyBodies(db); err != nil {
-+		return nil, errors.Join(fmt.Errorf("迁移请求正文: %w", err), db.Close())
++	for _, migrate := range migrations {
++		if err := migrate(db); err != nil {
++			return err
++		}
 +	}
- 	if err := addCachedTokens(db); err != nil {
- 		return nil, errors.Join(fmt.Errorf("初始化请求账本: %w", err), db.Close())
- 	}
+ 	for name, kind := range have {
+ 		if _, ok := want[name]; !ok {
+ 			if _, err := db.Exec(`DROP ` + strings.ToUpper(kind) + ` IF EXISTS ` + quoteIdentifier(name)); err != nil {

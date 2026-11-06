@@ -1,8 +1,8 @@
 diff --git a/internal/config/config.go b/internal/config/config.go
-index de280dd..2843043 100644
+index d65e9fb..2843043 100644
 --- a/internal/config/config.go
 +++ b/internal/config/config.go
-@@ -67,6 +67,11 @@ var configKeys = [...]string{
+@@ -68,6 +68,11 @@ var configKeys = [...]string{
  	"CONTINUATION_PROMPT",
  }
  
@@ -14,7 +14,7 @@ index de280dd..2843043 100644
  // LogFileMB 是单个日志文件的轮转大小
  const LogFileMB = 10
  
-@@ -412,7 +417,7 @@ func Load(path string) (Config, error) {
+@@ -424,7 +429,7 @@ func Load(path string) (Config, error) {
  	if err != nil {
  		return Config{}, err
  	}
@@ -23,10 +23,19 @@ index de280dd..2843043 100644
  		if err := writeEnv(path, values); err != nil {
  			return Config{}, err
  		}
-@@ -576,8 +581,8 @@ func (c Config) Save(path string) error {
- 			if inFile {
- 				file[key] = saved[key]
+@@ -443,7 +448,7 @@ func Load(path string) (Config, error) {
  			}
+ 		}
+ 	}
+-	if _, ok := values["WAA_BACKEND"]; !ok {
++	if _, ok := values["WAA_BACKEND"]; managedBy == "" && !ok {
+ 		if camoufoxOnlyAccounts(cfg.AuthStates) {
+ 			cfg.WAABackend = WAABackendCamoufox
+ 		}
+@@ -612,8 +617,8 @@ func (c Config) Save(path string) error {
+ 			}
+ 		case key == "WAA_BACKEND":
+ 			file[key] = values[key]
 -		case slices.Contains(workerDefaultKeys, key) && !inFile && values[key] == previousDefaults[key]:
 -		case values[key] != defaults[key]:
 +		case managedBy == "" && slices.Contains(workerDefaultKeys, key) && !inFile && values[key] == previousDefaults[key]:
@@ -110,4 +119,3 @@ index 0000000..c5d9991
 +		t.Fatal("managed settings changed across save/load")
 +	}
 +}
-

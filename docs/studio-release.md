@@ -1,8 +1,15 @@
 # AI Studio 托管后端构建
 
-插件使用 `0.3.0-magpie.1`，基于 AIStudio2API `v0.3.0` 及其后续修复 commit `48f75fa722b25d22a493e75f6d4e5f9d5035d7e3`。上游版本、commit、Go 版本、C/C++ 工具链与 SpiderMonkey 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
+插件使用 `0.3.1-magpie.1`，基于 AIStudio2API `v0.3.1`（`80847a7665c442a238918c957963217773f36291`）。上游版本、commit、Go 版本、C/C++ 工具链、SpiderMonkey 与 libwebp 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
 
-## 0.3.0 升级兼容
+## 0.3.1 升级兼容
+
+- 基线为上游 `v0.3.1`（`80847a7665c442a238918c957963217773f36291`）。包含 AVX2/NEON 汇编图片与音频编码加速、libwebp 1.6.0 有损 WebP 编码、多 choice／图片生成／Gemini 生成结果复制指向已释放栈的崩溃修复、预热登录续签与模型目录同步互等修复、10 秒流式心跳与 `X-Accel-Buffering: no`、YouTube 链接误识别与代码文本附件修复、账户时区不可见字符清理，以及到期资源与媒体目录上限回收。Camoufox、SpiderMonkey 静态库和固定编译器工具链沿用上一版。
+- 新增 `toolchains.libwebp`（`Mag1cFall/libwebp` 的 `v1.6.0-aistudio2api.1` release），与 SpiderMonkey 一样按目标下载到 `studio-build/toolchains/` 并校验 SHA-256；头文件统一经 `CGO_CPPFLAGS` 传入以保留 `-O2`，与上游 `.github/actions/static-libraries` 一致。
+- `patches/studio-0.2.17-preserve-request-bodies.patch` 适配上游 `sqlitedb.Open(path, schema)` 的表结构同步：在建表后、清理未定义旧表前执行 `migrateLegacyBodies`，确保从 0.2.16 及更早版本升级时先完成 `bodies` 事务迁移再删除旧表，迁移失败仍原子回滚。
+- `patches/studio-0.2.19-managed-config.patch` 适配上游 `v0.3.1` 的 `WAA_BACKEND` 回写与回退分支：托管构建（`internal/config.managedBy=magpie-gemini-web`）在 `Load` 时不根据旧账户目录自动切换为 `camoufox` 或向 `.env` 追加键，在 `Save` 时继续完整写出全部非环境变量控制项。
+
+## 0.3.0 升级兼容（历史记录）
 
 - 基线为上游 `v0.3.0` 加 PR #109（`48f75fa722b25d22a493e75f6d4e5f9d5035d7e3`）。包含账号异步任务流、本机 Chrome / Cookie / CDP 浏览器账号导入、超过 63 字符的工具函数名自动压缩还原、`STRIP_THOUGHT_SIGNATURES`、Responses / Interactions / 音频状态持久化（`runtime/states.db`）、`gemini-live-2.5-flash` 与 `gemini-2.5-pro-tts` 等模型更新，以及上游默认 `WAA_BACKEND=spidermonkey`。Camoufox、SpiderMonkey 静态库和固定工具链沿用上一版。
 - 后台账户任务适配：上游 `POST /api/accounts` 与 `POST /api/accounts/{id}/login` 改为启动不随 HTTP 请求取消的后台任务（返回 `202 Accepted` 与 `{ task }`）。插件与 CLI 通过 `studioLogin` 轮询 `GET /api/accounts/tasks` 等待完成，再从 `GET /api/accounts` 读取账号，并在结束或超时退出时调用 `DELETE /api/accounts/tasks/{id}` 清理或取消后台任务（超时会自动关闭弹出的 Camoufox 登录窗口）。
@@ -36,7 +43,7 @@
 
 上游从 v0.2.14 起原生支持分发方管理更新。构建时通过 `-ldflags` 写入以下值：
 
-- `internal/app.version=v0.3.0-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
+- `internal/app.version=v0.3.1-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
 - `internal/app.managedBy=magpie-gemini-web`：`GET /api/update`（包括 `?refresh=1`）只返回本地版本、`mode: managed` 和 `managed_by`，不访问 GitHub；`POST /api/update` 返回 HTTP 409，不下载、不替换文件、不重启。管理页显示“更新由 magpie-gemini-web 管理”。
 
 `internal/config.managedBy=magpie-gemini-web` 同时启用上面的配置兼容补丁。
@@ -113,7 +120,12 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
-## 0.3.0 升级验证（2026-11-05）
+## 0.3.1 升级验证（2026-11-07）
+
+- 五个平台的候选构建（[run 42255835006](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42255835006)）通过上游测试、真实安装冒烟验证（含旧版 `bodies` 表迁移、SpiderMonkey 与 libwebp 静态链接、管理页配置持久化）及插件测试；安装包和二进制 pin（含在固定 Xcode 26.3 `17C529` 下生成的 macOS 产物）来自该次构建。
+- 随后的严格验证构建（[run 42258671953](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42258671953)）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，真实安装冒烟验证与插件测试全部通过。
+
+## 0.3.0 升级验证（2026-11-05，历史记录）
 
 - 五个平台的候选构建（[run 41976798432](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41976798432)）一次性通过上游测试、真实安装冒烟验证（含 `strip_thought_signatures=false`、`/api/accounts/tasks` 接口与管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
 - 随后的严格验证构建（[run 41977975873](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/41977975873)）在五个平台的全新 runner 上重新构建，哈希与 pin 完全一致，真实安装冒烟验证与插件测试全部通过。
@@ -149,14 +161,14 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 - 新版 Google 登录/生成端到端验证尚未完成。
 - 此分支未发布后端 release 或 npm 包。本机日常后端仍使用 `0.2.16-magpie.1`，新版仅在临时数据目录运行。
 
-发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.0-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
+发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.1-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
 
 本地试用建议使用独立数据目录：
 
 ```bash
-node scripts/studio.mjs install --data-dir /path/to/studio-030-trial --archive /absolute/path/to/archive
-node scripts/studio.mjs start --data-dir /path/to/studio-030-trial
-node scripts/studio.mjs stop --data-dir /path/to/studio-030-trial
+node scripts/studio.mjs install --data-dir /path/to/studio-031-trial --archive /absolute/path/to/archive
+node scripts/studio.mjs start --data-dir /path/to/studio-031-trial
+node scripts/studio.mjs stop --data-dir /path/to/studio-031-trial
 ```
 
 使用现有账号数据测试前，先停止旧服务并备份；不要让两个进程同时写同一个数据目录。

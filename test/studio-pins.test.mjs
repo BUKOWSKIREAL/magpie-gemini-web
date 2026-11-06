@@ -66,14 +66,16 @@ it('pins the C toolchains, including a checked llvm-mingw for each builder host'
   }
 });
 
-it('pins upstream\'s SpiderMonkey libraries for every target', () => {
-  const { release: tag, repository, targets: libs } = release.toolchains.spidermonkey;
-  assert.match(repository, /^[\w.-]+\/[\w.-]+$/);
-  assert.deepEqual(Object.keys(libs), Object.keys(release.binaries));
+it('pins upstream\'s SpiderMonkey and libwebp libraries for every target', () => {
   const upstreamTargets = { 'darwin-arm64': 'darwin-arm64', 'darwin-x64': 'darwin-amd64', 'linux-x64': 'linux-amd64',
     'linux-arm64': 'linux-arm64', 'win32-x64': 'windows-amd64' };
-  for (const [key, { asset, sha256 }] of Object.entries(libs)) {
-    assert.equal(asset, `spidermonkey-${tag}-${upstreamTargets[key]}.tar.gz`);
-    assert.match(sha256, /^[0-9a-f]{64}$/);
+  for (const name of ['spidermonkey', 'libwebp']) {
+    const { release: tag, repository, targets: libs } = release.toolchains[name];
+    assert.match(repository, /^[\w.-]+\/[\w.-]+$/);
+    assert.deepEqual(Object.keys(libs), Object.keys(release.binaries));
+    for (const [key, { asset, sha256 }] of Object.entries(libs)) {
+      assert.equal(asset, `${name}-${tag}-${upstreamTargets[key]}.tar.gz`);
+      assert.match(sha256, /^[0-9a-f]{64}$/);
+    }
   }
 });

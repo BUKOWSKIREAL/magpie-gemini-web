@@ -133,6 +133,15 @@ function spidermonkey(key) {
   return fetchPinned('SpiderMonkey', `https://github.com/${pin.repository}/releases/download/${pin.release}/${archive.asset}`,
     archive, archive.asset.replace(/\.tar\.gz$/, linux ? '-without-env-interposers' : ''), null, linux ? dropEnvInterposers : null);
 }
+// libwebp returns the folder with a target's pinned libwebp headers (include) and static
+// libraries (lib), the ones upstream builds its own releases with.
+function libwebp(key) {
+  const pin = toolchains.libwebp;
+  const archive = pin.targets[key];
+  if (!archive) throw new Error(`No pinned libwebp for ${key}`);
+  return fetchPinned('libwebp', `https://github.com/${pin.repository}/releases/download/${pin.release}/${archive.asset}`,
+    archive, archive.asset.replace(/\.tar\.gz$/, ''), null, null);
+}
 function xcode() {
   try {
     const [version, build] = execFileSync('xcodebuild', ['-version'], { encoding: 'utf8' }).trim().split('\n');
@@ -143,15 +152,16 @@ function xcode() {
 }
 // cToolchain returns the C and C++ settings for a target and what they were made with. Only the
 // targets being built and pinned must use the pinned toolchain; the host's is also used for upstream
-// tests. SpiderMonkey's headers and libraries are found through CGO_CXXFLAGS and CGO_LDFLAGS, as
-// upstream's own build finds them (.github/actions/spidermonkey); its mozjs package names the libraries.
+// tests. SpiderMonkey's and libwebp's headers and libraries are found through CGO_CPPFLAGS and
+// CGO_LDFLAGS, as upstream's own build finds them (.github/actions/static-libraries).
 function cToolchain(key, { pin = false } = {}) {
   const check = pin ? pinned : () => {};
   const [goos, goarch] = platforms[key];
   const mozjs = spidermonkey(key);
+  const webp = libwebp(key);
   // Quoted whole, as cgo splits these flags, so a folder with spaces stays one argument.
-  const include = `"-I${path.join(mozjs, 'include')}"`;
-  const lib = `"-L${path.join(mozjs, 'lib')}"`;
+  const include = `"-I${path.join(mozjs, 'include')}" "-I${path.join(webp, 'include')}"`;
+  const lib = `"-L${path.join(mozjs, 'lib')}" "-L${path.join(webp, 'lib')}"`;
   if (goos === 'darwin') {
     if (process.platform !== 'darwin') throw new Error('Build macOS archives on macOS with Xcode');
     const expected = `${toolchains.xcode.version} (${toolchains.xcode.build})`;
@@ -162,7 +172,7 @@ function cToolchain(key, { pin = false } = {}) {
       clang: execFileSync('clang', ['--version'], { encoding: 'utf8' }).split('\n')[0] };
     const flags = '-O2 -g -mmacosx-version-min=13.0';
     return { compiler, env: { CC: 'clang', CXX: 'clang++', MACOSX_DEPLOYMENT_TARGET: '13.0',
-      CGO_CFLAGS: flags, CGO_CXXFLAGS: `${flags} ${include}`, CGO_LDFLAGS: `${flags} ${lib}` } };
+      CGO_CPPFLAGS: include, CGO_CFLAGS: flags, CGO_CXXFLAGS: flags, CGO_LDFLAGS: `${flags} ${lib}` } };
   }
   if (goos === 'windows') {
     const { cc, cxx, libs } = llvmMingw();
@@ -172,7 +182,7 @@ function cToolchain(key, { pin = false } = {}) {
     check('Windows C compiler', clang, toolchains.llvmMingw.clang,
       `Unset STUDIO_MINGW_CC to use the pinned llvm-mingw ${toolchains.llvmMingw.version}.`);
     return { compiler: { llvmMingw: toolchains.llvmMingw.version, clang },
-      env: { CC: `"${cc}"`, CXX: `"${cxx}"`, CGO_CFLAGS: '-O2 -g', CGO_CXXFLAGS: `-O2 -g ${include}`,
+      env: { CC: `"${cc}"`, CXX: `"${cxx}"`, CGO_CPPFLAGS: include, CGO_CFLAGS: '-O2 -g', CGO_CXXFLAGS: '-O2 -g',
         CGO_LDFLAGS: `-O2 -g "-L${libs}" ${lib}` } };
   }
   const version = execFileSync(zig, ['version'], { encoding: 'utf8' }).trim();
@@ -180,7 +190,7 @@ function cToolchain(key, { pin = false } = {}) {
   const triple = `${goarch === 'amd64' ? 'x86_64' : 'aarch64'}-linux-musl`;
   return { compiler: { zig: version, target: triple },
     env: { CC: `"${zig}" cc -target ${triple}`, CXX: `"${zig}" c++ -target ${triple}`,
-      CGO_CFLAGS: '-O2 -g', CGO_CXXFLAGS: `-O2 -g ${include}`, CGO_LDFLAGS: `-O2 -g ${lib}` } };
+      CGO_CPPFLAGS: include, CGO_CFLAGS: '-O2 -g', CGO_CXXFLAGS: '-O2 -g', CGO_LDFLAGS: `-O2 -g ${lib}` } };
 }
 const go = (argv, extra = {}) => execFileSync('go', argv, { cwd: source, env: { ...env, ...extra }, stdio: 'inherit' });
 const npm = argv => execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', argv,
