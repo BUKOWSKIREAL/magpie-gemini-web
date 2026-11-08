@@ -1,8 +1,14 @@
 # AI Studio 托管后端构建
 
-插件使用 `0.3.1-magpie.1`，基于 AIStudio2API `v0.3.1`（`80847a7665c442a238918c957963217773f36291`）。上游版本、commit、Go 版本、C/C++ 工具链、SpiderMonkey 与 libwebp 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
+插件使用 `0.3.2-magpie.1`，基于 AIStudio2API `v0.3.2`（`4c44cb9765aa9fd497b91db1f5c1573504b9b85f`）。上游版本、commit、Go 版本、C/C++ 工具链、SpiderMonkey 与 libwebp 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
 
-## 0.3.1 升级兼容
+## 0.3.2 升级兼容
+
+- 基线为上游 `v0.3.2`（`4c44cb9765aa9fd497b91db1f5c1573504b9b85f`）。包含安全／拒答原因透传与重试、Build 模型工具调用续读、每日额度冷却回退、Omni 内联图片与视频、附件预览和视频抽帧设置，以及长文本、Worker 冷启动和 Camoufox 界面运行性能修复。Camoufox、SpiderMonkey、libwebp 和固定编译器工具链沿用上一版。
+- 新增 `HIDE_DOCK_ICON`：插件保留管理页保存的值，并隔离宿主环境同名变量；该设置只影响上游桌面版，托管构建仍不带 `desktop` 标签。
+- 请求正文迁移补丁与托管配置补丁均原样适用于 `v0.3.2`；真实安装冒烟增加 Dock 图标设置保存与重启持久化检查。
+
+## 0.3.1 升级兼容（历史记录）
 
 - 基线为上游 `v0.3.1`（`80847a7665c442a238918c957963217773f36291`）。包含 AVX2/NEON 汇编图片与音频编码加速、libwebp 1.6.0 有损 WebP 编码、多 choice／图片生成／Gemini 生成结果复制指向已释放栈的崩溃修复、预热登录续签与模型目录同步互等修复、10 秒流式心跳与 `X-Accel-Buffering: no`、YouTube 链接误识别与代码文本附件修复、账户时区不可见字符清理，以及到期资源与媒体目录上限回收。Camoufox、SpiderMonkey 静态库和固定编译器工具链沿用上一版。
 - 新增 `toolchains.libwebp`（`Mag1cFall/libwebp` 的 `v1.6.0-aistudio2api.1` release），与 SpiderMonkey 一样按目标下载到 `studio-build/toolchains/` 并校验 SHA-256；头文件统一经 `CGO_CPPFLAGS` 传入以保留 `-O2`，与上游 `.github/actions/static-libraries` 一致。
@@ -43,7 +49,7 @@
 
 上游从 v0.2.14 起原生支持分发方管理更新。构建时通过 `-ldflags` 写入以下值：
 
-- `internal/app.version=v0.3.1-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
+- `internal/app.version=v0.3.2-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
 - `internal/app.managedBy=magpie-gemini-web`：`GET /api/update`（包括 `?refresh=1`）只返回本地版本、`mode: managed` 和 `managed_by`，不访问 GitHub；`POST /api/update` 返回 HTTP 409，不下载、不替换文件、不重启。管理页显示“更新由 magpie-gemini-web 管理”。
 
 `internal/config.managedBy=magpie-gemini-web` 同时启用上面的配置兼容补丁。
@@ -161,7 +167,7 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 - 新版 Google 登录/生成端到端验证尚未完成。
 - 此分支未发布后端 release 或 npm 包。本机日常后端仍使用 `0.2.16-magpie.1`，新版仅在临时数据目录运行。
 
-发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.1-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
+发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.2-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
 
 本地试用建议使用独立数据目录：
 
