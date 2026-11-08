@@ -47,11 +47,12 @@ try {
   assert.equal(config.waa_backend, 'spidermonkey');
   assert.equal(config.search_model_aliases, false);
   assert.equal(config.strip_thought_signatures, false);
+  assert.equal(config.hide_dock_icon, false);
   assert.deepEqual(await studioAdmin(local, 'GET', '/api/accounts/tasks'), { tasks: [] });
   // Save upstream defaults that differ from this plugin's defaults. They must stay explicit
   // through the backend's Save and the plugin's next config sync, not get silently re-seeded.
   const choices = {
-    search_model_aliases: true, strip_thought_signatures: true, routing_strategy: 'round-robin', per_account_concurrency: 2,
+    search_model_aliases: true, strip_thought_signatures: true, hide_dock_icon: true, routing_strategy: 'round-robin', per_account_concurrency: 2,
     first_event_hedge: 'auto', first_event_hedge_models: 'gemini-3.8-flash',
     api_key_accounts: `${local.apiKey}:smoke@example.com`
   };
@@ -105,7 +106,7 @@ try {
   assert.equal(restarted.request_timeout, '5m0s');
   assert.equal(restarted.waa_backend, 'spidermonkey');
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
-  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved defaults/hedge/models/key bindings across restart, locked plugin settings, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
+  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved defaults/Dock visibility/hedge/models/key bindings across restart, locked plugin settings, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
 } finally {
   let stopped = !local;
   if (local) stopped = (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;

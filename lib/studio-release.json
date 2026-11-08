@@ -1,7 +1,7 @@
 {
-  "version": "0.3.1-magpie.1",
+  "version": "0.3.2-magpie.1",
   "repository": "BUKOWSKIREAL/magpie-gemini-web",
-  "tag": "studio-v0.3.1-magpie.1",
+  "tag": "studio-v0.3.2-magpie.1",
   "goVersion": "1.27.1",
   "toolchains": {
     "zig": "0.16.0",
@@ -81,9 +81,9 @@
     }
   },
   "upstream": {
-    "version": "0.3.1",
+    "version": "0.3.2",
     "repository": "https://github.com/Mag1cFall/AIStudio2API.git",
-    "commit": "80847a7665c442a238918c957963217773f36291",
+    "commit": "4c44cb9765aa9fd497b91db1f5c1573504b9b85f",
     "camoufox": "152.0.4-beta.29"
   },
   "patches": [
@@ -92,29 +92,29 @@
   ],
   "binaries": {
     "darwin-arm64": {
-      "asset": "aistudio2api-v0.3.1-magpie.1-darwin-arm64.tar.gz",
-      "sha256": "9ac63a82ede2e17bdfc2ed2166836c6c834f72a92707829c21c316cd6d3ede48",
-      "binarySha256": "c2afec87fa82700a1dcded4c6fa2159ef5650666a964611f467bdeb118bf63dd"
+      "asset": "aistudio2api-v0.3.2-magpie.1-darwin-arm64.tar.gz",
+      "sha256": "a3b10971d3b30d6c2621fc0ca179a041efd0b9992ed2fdb4117a689012dc86f3",
+      "binarySha256": "f0f2234862b4955a2adc4f24940db631aed3b62148e3732f4a9cb614e4d0c507"
     },
     "darwin-x64": {
-      "asset": "aistudio2api-v0.3.1-magpie.1-darwin-amd64.tar.gz",
-      "sha256": "832909a82de9310b12f6328f418e450aed49492ebb10366303ce6b85016cfaf1",
-      "binarySha256": "efc76452b9e4b341fe0b8ad70b96905b2aefc1be89bcebb0739c11fbba3f9592"
+      "asset": "aistudio2api-v0.3.2-magpie.1-darwin-amd64.tar.gz",
+      "sha256": "1b613b228054417904a8f8cebcb50446bbdd438ce19e104ae293053673b0816a",
+      "binarySha256": "a8b56b4f411929742482ef18538ce5b5cc4a0e690d50f049b8c8aa95d3513b3a"
     },
     "linux-x64": {
-      "asset": "aistudio2api-v0.3.1-magpie.1-linux-amd64.tar.gz",
-      "sha256": "b5b7840be590049617a125f56aca5a186739015a5d41bf989d5e6ca6718170e1",
-      "binarySha256": "df714ec66c69edeac9b2013c9d9a0edaf32595939d5ce6bce35cbdf84aa3355f"
+      "asset": "aistudio2api-v0.3.2-magpie.1-linux-amd64.tar.gz",
+      "sha256": "fe1c2c65a3dd4a2971b40432070c438b372cd1680724f96c07638e1855a4cbfd",
+      "binarySha256": "01e78fd13fd5ff12c30f71e24501b9aa01faa6a5c67ecae526f8e52d34d8c7f3"
     },
     "linux-arm64": {
-      "asset": "aistudio2api-v0.3.1-magpie.1-linux-arm64.tar.gz",
-      "sha256": "edf2924dea99e6cea9339729a47eb2fb572a9f3bbe2db7270acd05a766dba82c",
-      "binarySha256": "bdab038890b740667bdb806898b0c7cd3685de6f52abcea9b27225e527620975"
+      "asset": "aistudio2api-v0.3.2-magpie.1-linux-arm64.tar.gz",
+      "sha256": "155fbae81c8e188d5770d4ad31e9feb74dc8e87aec92367d8d8069000441f99c",
+      "binarySha256": "3dbc76102beffe9a97dda612b9684f08b114176fae127763d5d1379cb3c08cdd"
     },
     "win32-x64": {
-      "asset": "aistudio2api-v0.3.1-magpie.1-windows-amd64.zip",
-      "sha256": "0df69379d158a2ac37ab4ca981c956ae3bbc98c4a8607af206f5f8ca73db2236",
-      "binarySha256": "2e3566ed1e034c0dab3d44719cf8699f09f053f4894f7089b2c150b6301bf6d4"
+      "asset": "aistudio2api-v0.3.2-magpie.1-windows-amd64.zip",
+      "sha256": "054e9aac804a7116b626750a5a2adbcb8ad8d465e428b292530fdebc4f2b2cd5",
+      "binarySha256": "e7720ced68f82a2aa5afa16c17614c067a57ef2afa59399b720e9d215e7eb42a"
     }
   }
 }
