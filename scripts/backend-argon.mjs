@@ -9,7 +9,7 @@ import { installBackend, startBackend, getDataDir } from '../lib/native.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const source = path.join(root, 'backend-source');
 const build = path.join(root, 'backend-build');
-const pinned = 'e97cfccc7e68e356ac504ba220e0b004382029a8';
+const pinned = 'c8a4ac25768b668fa94d293fcb97059c4419b602';
 
 const command = process.argv[2];
 
@@ -41,7 +41,7 @@ async function main() {
       const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
 
       const manifest = {
-        version: '4.27.0-argon.1',
+        version: '4.27.1-argon.1',
         sourceCommit: pinned,
         sha256,
         platform: 'darwin',
