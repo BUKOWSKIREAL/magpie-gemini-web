@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index c6a75e2..db2c8f5 100644
+index c6a75e272d59110a5f83e71bfa89b4588622905d..db2c8f5f60618bad14c38e013b469132d2c0c546 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -9,6 +9,7 @@ require (
@@ -19,7 +19,7 @@ index c6a75e2..db2c8f5 100644
  	golang.org/x/text v0.42.0 // indirect
  	modernc.org/libc v1.72.3 // indirect
 diff --git a/internal/app/admin_cookies.go b/internal/app/admin_cookies.go
-index 78236c6..a5109b0 100644
+index 78236c6760f6509fcdce801ba853d9ecfafe16ca..a5109b0785d71c0ed1081b7316c2b3319223b160 100644
 --- a/internal/app/admin_cookies.go
 +++ b/internal/app/admin_cookies.go
 @@ -87,9 +87,10 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +65,7 @@ index 78236c6..a5109b0 100644
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
 diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
-index 4aedd27..2364e2b 100644
+index 4aedd2788f396f98cb4267baa0b3674e7a8ba7af..2364e2baec4c0c3c7678b78d3bb5f7e118e4beed 100644
 --- a/internal/app/admin_ui/index.html
 +++ b/internal/app/admin_ui/index.html
 @@ -1020,7 +1020,8 @@ const RT_GROUPS = [
@@ -89,7 +89,7 @@ index 4aedd27..2364e2b 100644
    {
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
-index 0000000..a2a5e77
+index 0000000000000000000000000000000000000000..a2a5e774e8547afb125de6161c624bbfe572fe7e
 --- /dev/null
 +++ b/internal/app/argon.go
 @@ -0,0 +1,172 @@
@@ -267,7 +267,7 @@ index 0000000..a2a5e77
 +}
 diff --git a/internal/app/argon_probe_test.go b/internal/app/argon_probe_test.go
 new file mode 100644
-index 0000000..bbc0041
+index 0000000000000000000000000000000000000000..bbc0041bb2d8769657d195f9b2b997f4c49da181
 --- /dev/null
 +++ b/internal/app/argon_probe_test.go
 @@ -0,0 +1,53 @@
@@ -326,7 +326,7 @@ index 0000000..bbc0041
 +}
 diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
 new file mode 100644
-index 0000000..2f0b8cd
+index 0000000000000000000000000000000000000000..2f0b8cdc8f97bd303aa35bac1dda9d60611428a9
 --- /dev/null
 +++ b/internal/app/argon_test.go
 @@ -0,0 +1,453 @@
@@ -785,7 +785,7 @@ index 0000000..2f0b8cd
 +}
 diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
 new file mode 100644
-index 0000000..fb1ccec
+index 0000000000000000000000000000000000000000..fb1ccec78a19896b0bf4ec1ffc3f97e957beb4f4
 --- /dev/null
 +++ b/internal/app/argon_timing_probe_test.go
 @@ -0,0 +1,74 @@
@@ -865,7 +865,7 @@ index 0000000..fb1ccec
 +}
 diff --git a/internal/app/cancel_test.go b/internal/app/cancel_test.go
 new file mode 100644
-index 0000000..f36c700
+index 0000000000000000000000000000000000000000..f36c70005e6da66df26dd934271c0d9646faa9f2
 --- /dev/null
 +++ b/internal/app/cancel_test.go
 @@ -0,0 +1,106 @@
@@ -976,7 +976,7 @@ index 0000000..f36c700
 +	t.Fatal("没有记录这次请求")
 +}
 diff --git a/internal/app/client.go b/internal/app/client.go
-index c63b3a9..da8ccb8 100644
+index c63b3a9fabbf1fe2f141a05def3f9947dff32ca3..da8ccb8ff683903907e7159bea42268c299e2793 100644
 --- a/internal/app/client.go
 +++ b/internal/app/client.go
 @@ -1,9 +1,11 @@
@@ -1196,7 +1196,7 @@ index c63b3a9..da8ccb8 100644
 +	setChromeHeaders(req.Header)
  }
 diff --git a/internal/app/client_timeout_test.go b/internal/app/client_timeout_test.go
-index 94c0b70..2a4b697 100644
+index 94c0b7097137d057c85cc98df7fbebbf16207b46..2a4b697e943f58c55c33e2af48033853cbcc516a 100644
 --- a/internal/app/client_timeout_test.go
 +++ b/internal/app/client_timeout_test.go
 @@ -1,6 +1,12 @@
@@ -1309,7 +1309,7 @@ index 94c0b70..2a4b697 100644
 +	}
 +}
 diff --git a/internal/app/context_file.go b/internal/app/context_file.go
-index 97995a2..ba03140 100644
+index 97995a2f0ebb7626512590a23da1bc3f6fc97e3b..ba031401e77e479ebb33cc3a7868c904c7cb42ea 100644
 --- a/internal/app/context_file.go
 +++ b/internal/app/context_file.go
 @@ -1,6 +1,7 @@
@@ -1388,7 +1388,7 @@ index 97995a2..ba03140 100644
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index 529cfad..c48b692 100644
+index e961a1b6af302999fe46d017feb3e4ed2c3301c1..39adf8893fab0abf1e999e73f3a9d604c72cf40e 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -1428,7 +1428,7 @@ index 529cfad..c48b692 100644
  	p, slotOK, slotErr := acquireSlot(conv.proxyID)
  	if !slotOK {
  		return &StreamResult{}, slotErr
-@@ -371,12 +371,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -375,12 +375,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  	t0 := time.Now()
  	var lastErr error
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
@@ -1449,7 +1449,7 @@ index 529cfad..c48b692 100644
  		// 降级：同一个号重试还是降级，直接交给上层（见 gemini.go 同一处）。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -385,6 +392,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -389,6 +396,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
  		}
  		if err != nil || statusCode != 200 || !hasContentFrame(string(raw)) {
@@ -1459,10 +1459,10 @@ index 529cfad..c48b692 100644
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -399,7 +409,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
- 				break
- 			}
- 			if attempt < rtCfg().RetryAttempts-1 {
+@@ -407,7 +417,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 				if errors.Is(err, errUpstreamFailureReply) {
+ 					logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
+ 				}
 -				time.Sleep(time.Duration(rtCfg().RetryDelaySec) * time.Second)
 +				if werr := sleepCtx(ctx, time.Duration(rtCfg().RetryDelaySec)*time.Second); werr != nil {
 +					return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID}, werr
@@ -1470,7 +1470,18 @@ index 529cfad..c48b692 100644
  			}
  			continue
  		}
-@@ -440,7 +452,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -419,7 +431,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 			}
+ 			if attempt < rtCfg().RetryAttempts-1 {
+ 				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
+-				time.Sleep(time.Duration(rtCfg().RetryDelaySec) * time.Second)
++				if werr := sleepCtx(ctx, time.Duration(rtCfg().RetryDelaySec)*time.Second); werr != nil {
++					return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID}, werr
++				}
+ 			}
+ 			continue
+ 		}
+@@ -460,7 +474,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -1479,7 +1490,7 @@ index 529cfad..c48b692 100644
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -491,7 +503,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+@@ -511,7 +525,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
  				}
  			}
  		}
@@ -1489,7 +1500,7 @@ index 529cfad..c48b692 100644
  			break
  		}
 diff --git a/internal/app/cookie_pool.go b/internal/app/cookie_pool.go
-index 60fe35f..14e5a44 100644
+index 60fe35fe0664c2feeb9d9d811be01c6d3323799c..14e5a44734cdd50be933af1cf8387a65500ab3aa 100644
 --- a/internal/app/cookie_pool.go
 +++ b/internal/app/cookie_pool.go
 @@ -565,6 +565,9 @@ func checkAccountCookie(a CookieAccount) CookieCheck {
@@ -1503,7 +1514,7 @@ index 60fe35f..14e5a44 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 7572da2..d52d582 100644
+index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee98d110d0 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -3,6 +3,7 @@ package app
@@ -1613,7 +1624,7 @@ index 7572da2..d52d582 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -726,45 +748,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -726,49 +748,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1628,6 +1639,10 @@ index 7572da2..d52d582 100644
 -					return err
 -				}
 -			}
+-			// 出错话术在吐给客户端之前拦下，中断读取走下面的重试。
+-			if failureReplyInLine(line) {
+-				return errUpstreamFailureReply
+-			}
 -			// 思考链先推完才轮到正文，所以先处理它，客户端拿到的顺序才对。
 -			if onReasoning != nil {
 -				if r := reasoningInLine(line); r != "" {
@@ -1639,7 +1654,7 @@ index 7572da2..d52d582 100644
 -			if onDelta == nil {
 -				return nil
 -			}
--			for _, t := range textsInLine(line) {
+-			for _, t := range renderedTextsInLine(line, false) {
 -				if d := tracker.Push(t); d != "" {
 -					onDelta(d)
 -				}
@@ -1671,7 +1686,7 @@ index 7572da2..d52d582 100644
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -772,9 +776,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -776,9 +776,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1683,7 +1698,7 @@ index 7572da2..d52d582 100644
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -782,6 +786,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -786,6 +786,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
@@ -1694,7 +1709,7 @@ index 7572da2..d52d582 100644
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -793,6 +801,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -797,6 +801,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1702,9 +1717,9 @@ index 7572da2..d52d582 100644
 +				return attrib(cerr) // 客户端断开，不是出口的错
 +			}
  			lastErr = err
- 			if pickedOK {
- 				recordProxyResult(picked.ID, false, err.Error())
-@@ -803,7 +814,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+ 			// 出错话术不记进代理健康度：匿名直连也一样出，跟出口无关，算进去会误熔断。
+ 			if pickedOK && !errors.Is(err, errUpstreamFailureReply) {
+@@ -808,7 +815,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1715,7 +1730,7 @@ index 7572da2..d52d582 100644
  			}
  			continue
  		}
-@@ -832,7 +845,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -837,7 +846,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1726,7 +1741,7 @@ index 7572da2..d52d582 100644
  			}
  			continue
  		}
-@@ -860,7 +875,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -865,7 +876,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1737,7 +1752,18 @@ index 7572da2..d52d582 100644
  			}
  			continue
  		}
-@@ -926,6 +943,78 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -877,7 +890,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+ 			}
+ 			if attempt < rtCfg().RetryAttempts-1 {
+ 				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
+-				time.Sleep(time.Duration(rtCfg().RetryDelaySec) * time.Second)
++				if werr := retryWait(); werr != nil {
++					return attrib(werr)
++				}
+ 			}
+ 			continue
+ 		}
+@@ -943,6 +958,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1767,6 +1793,10 @@ index 7572da2..d52d582 100644
 +				return err
 +			}
 +		}
++		// 出错话术在吐给客户端之前拦下，中断读取走重试。
++		if failureReplyInLine(line) {
++			return errUpstreamFailureReply
++		}
 +		// 思考链先推完才轮到正文，所以先处理它，客户端拿到的顺序才对。
 +		if onReasoning != nil {
 +			if r := reasoningInLine(line); r != "" {
@@ -1779,7 +1809,7 @@ index 7572da2..d52d582 100644
 +			return nil
 +		}
 +		grew := false
-+		for _, t := range textsInLine(line) {
++		for _, t := range renderedTextsInLine(line, false) {
 +			if d := watch.Push(t); d != "" {
 +				grew = true
 +				if onDelta != nil {
@@ -1816,7 +1846,7 @@ index 7572da2..d52d582 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1006,10 +1095,122 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1023,10 +1114,122 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -1940,7 +1970,7 @@ index 7572da2..d52d582 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1017,36 +1218,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1034,36 +1237,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -1987,7 +2017,7 @@ index 7572da2..d52d582 100644
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1355,6 +1557,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1421,6 +1625,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -1996,7 +2026,7 @@ index 7572da2..d52d582 100644
  			req.Header.Set(k, v)
  		}
 diff --git a/internal/app/gemini_api.go b/internal/app/gemini_api.go
-index 3721e44..d5950ab 100644
+index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b9b2783de 100644
 --- a/internal/app/gemini_api.go
 +++ b/internal/app/gemini_api.go
 @@ -1,6 +1,7 @@
@@ -2072,10 +2102,10 @@ index 3721e44..d5950ab 100644
  		if _, ok := err.(*ModelDowngradedError); ok {
  			status = 429
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
-index 00eb305..2b4c6ca 100644
+index b6830a418c78b045c21d39cb690e2b32542c7262..eb4e02114acdecb78531ad91e72b66d274a6467e 100644
 --- a/internal/app/gemini_test.go
 +++ b/internal/app/gemini_test.go
-@@ -15,6 +15,7 @@ func TestModelHeader(t *testing.T) {
+@@ -16,6 +16,7 @@ func TestModelHeader(t *testing.T) {
  		{"gemini-3.6-flash", hexFlash36},
  		{"gemini-3.5-flash-lite", hexFlashLite},
  		{"gemini-3.1-pro", hexPro31},
@@ -2085,7 +2115,7 @@ index 00eb305..2b4c6ca 100644
  		name, mc, err := resolveModel(c.name)
 diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
 new file mode 100644
-index 0000000..ef9b476
+index 0000000000000000000000000000000000000000..ef9b476da72bae3cc53c9cd85510a2f1db224a7d
 --- /dev/null
 +++ b/internal/app/headers_test.go
 @@ -0,0 +1,74 @@
@@ -2165,7 +2195,7 @@ index 0000000..ef9b476
 +}
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
-index 0000000..fb778f5
+index 0000000000000000000000000000000000000000..fb778f55c20fe14ce2bac64c1e97ff4182328023
 --- /dev/null
 +++ b/internal/app/latency_test.go
 @@ -0,0 +1,333 @@
@@ -2503,7 +2533,7 @@ index 0000000..fb778f5
 +	}
 +}
 diff --git a/internal/app/main_test.go b/internal/app/main_test.go
-index 38e1a44..e3f7636 100644
+index 38e1a44d97d73524eafc2e67470d17b98a957c3b..e3f7636fd47514cf505abcb765125e48d4e7237d 100644
 --- a/internal/app/main_test.go
 +++ b/internal/app/main_test.go
 @@ -1,9 +1,12 @@
@@ -2562,7 +2592,7 @@ index 38e1a44..e3f7636 100644
 +	t.Cleanup(func() { rtMu.Lock(); rtVal.RequestTimeout = saved; rtMu.Unlock() })
 +}
 diff --git a/internal/app/mcp_media.go b/internal/app/mcp_media.go
-index acb1131..a8bab02 100644
+index acb113196d65f76745f816e2c1a9579884384774..a8bab02191b7fc8ae47afa59fce3744fe11f875b 100644
 --- a/internal/app/mcp_media.go
 +++ b/internal/app/mcp_media.go
 @@ -1,6 +1,7 @@
@@ -2583,7 +2613,7 @@ index acb1131..a8bab02 100644
  		return nil, err
  	}
 diff --git a/internal/app/media.go b/internal/app/media.go
-index ec3b6e4..07f3164 100644
+index ec3b6e499aab0bbe4adc1e3ad517e2c9296e9c46..07f316410de88d6c3bae7435344e31fdcfc35157 100644
 --- a/internal/app/media.go
 +++ b/internal/app/media.go
 @@ -762,6 +762,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
@@ -2595,10 +2625,10 @@ index ec3b6e4..07f3164 100644
  		req.Header.Set(k, v)
  	}
 diff --git a/internal/app/messages.go b/internal/app/messages.go
-index 81b8900..9d1702d 100644
+index 1bd5bb4ac780da437deb257d8e9f9f1f33852ede..3d473c4f1a88cd1b40b2c9e75889b66a01740dde 100644
 --- a/internal/app/messages.go
 +++ b/internal/app/messages.go
-@@ -48,8 +48,50 @@ type ToolCallFunction struct {
+@@ -49,8 +49,50 @@ type ToolCallFunction struct {
  // 出口才知道能不能做，所以判断放在 streamGenerate 里。最新那条消息单独返回，
  // 转附件时用来内联，好让模型不必去文件里找问题。
  func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{},
@@ -2651,7 +2681,7 @@ index 81b8900..9d1702d 100644
  }
  
  // latestUserMessage 取最后一条 user 消息的正文，没有则返回空串。
-@@ -67,6 +109,12 @@ func latestUserMessage(messages []map[string]interface{}) string {
+@@ -68,6 +110,12 @@ func latestUserMessage(messages []map[string]interface{}) string {
  
  func buildPrompt(messages []map[string]interface{}, tools []map[string]interface{},
  	toolChoice interface{}) string {
@@ -2664,7 +2694,7 @@ index 81b8900..9d1702d 100644
  	var parts []string
  
  	toolsInjected := false
-@@ -91,7 +139,7 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
+@@ -92,7 +140,7 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
  			})
  		}
  		if len(defs) > 0 {
@@ -2673,7 +2703,7 @@ index 81b8900..9d1702d 100644
  			rule := "Only use tool_call blocks when needed."
  			switch {
  			case forced != "":
-@@ -104,13 +152,13 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
+@@ -105,13 +153,13 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
  					"and nothing else — do not answer the question yourself, even if you " +
  					"know the answer."
  			}
@@ -2690,7 +2720,7 @@ index 81b8900..9d1702d 100644
  			toolsInjected = true
  		}
  	}
-@@ -167,33 +215,27 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
+@@ -168,33 +216,27 @@ func buildPrompt(messages []map[string]interface{}, tools []map[string]interface
  	// 工具名（shell_command）0/4 抄假名 —— 示例教的是「动作」不是名字，故不必按客户端
  	// 动态生成 schema。
  	if toolsInjected {
@@ -2743,8 +2773,8 @@ index 81b8900..9d1702d 100644
  }
  
  func contentToString(content interface{}) string {
-@@ -440,6 +482,48 @@ func parseToolCalls(text string) (string, []ToolCall) {
- 	return strings.TrimSpace(clean.String()), toolCalls
+@@ -511,6 +553,45 @@ func argsObject(v interface{}) (string, bool) {
+ 	return string(b), true
  }
  
 +// toolCallComplete 返回一个判定函数：累积正文里出现了**闭合且能解析**、函数名在
@@ -2778,14 +2808,11 @@ index 81b8900..9d1702d 100644
 +		if !ok {
 +			return false
 +		}
-+		var data struct {
-+			Name      string                 `json:"name"`
-+			Arguments map[string]interface{} `json:"arguments"`
-+		}
-+		if json.Unmarshal([]byte(strings.TrimSpace(after[:body])), &data) != nil {
++		var raw map[string]interface{}
++		if json.Unmarshal([]byte(strings.TrimSpace(after[:body])), &raw) != nil || raw == nil {
 +			return false
 +		}
-+		return names[data.Name]
++		return names[toolCallName(raw)]
 +	}
 +}
 +
@@ -2793,7 +2820,7 @@ index 81b8900..9d1702d 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index 830fa6a..03f9b4b 100644
+index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651e7d4d0ac 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2808,15 +2835,21 @@ index 830fa6a..03f9b4b 100644
  	"time"
  )
  
--const Version = "4.27.0"
-+const Version = "4.27.0-magpie.2"
+-const Version = "4.27.1"
++const Version = "4.27.1-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
-@@ -43,6 +44,7 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
- 		"status":  "ok",
- 		"version": Version,
- 		"models":  modelNames,
+@@ -40,9 +41,10 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
+ 		modelNames = append(modelNames, n)
+ 	}
+ 	writeJSON(w, 200, map[string]interface{}{
+-		"status":  "ok",
+-		"version": Version,
+-		"models":  modelNames,
++		"status":       "ok",
++		"version":      Version,
++		"models":       modelNames,
 +		"capabilities": map[string]bool{"account_proxy_binding": true},
  	})
  }
@@ -2909,7 +2942,7 @@ index 830fa6a..03f9b4b 100644
  		if downgraded {
 diff --git a/internal/app/stall_test.go b/internal/app/stall_test.go
 new file mode 100644
-index 0000000..cfdd6cf
+index 0000000000000000000000000000000000000000..cfdd6cf4e739c9fe50992fae42f7892e538916d9
 --- /dev/null
 +++ b/internal/app/stall_test.go
 @@ -0,0 +1,199 @@
@@ -3113,7 +3146,7 @@ index 0000000..cfdd6cf
 +	}
 +}
 diff --git a/internal/app/strict_model.go b/internal/app/strict_model.go
-index ecc17ac..88267c5 100644
+index ecc17aceec6f365649ccb84bc9ca04189b524f03..88267c5b550800765d2b50f474e4ba7670bb6efd 100644
 --- a/internal/app/strict_model.go
 +++ b/internal/app/strict_model.go
 @@ -150,7 +150,8 @@ func strictLineCheck(mc ModelConfig, accountID func() int64) func(line string) e
@@ -3127,7 +3160,7 @@ index ecc17ac..88267c5 100644
  
  // modelDowngraded 判断服务端自报的显示名是不是请求的那个模型。
 diff --git a/internal/app/tokenizer.go b/internal/app/tokenizer.go
-index 634f3b7..399057e 100644
+index 634f3b76c1ceea03f540e4c2fc5e3a9ca53ccd2b..399057e5ab5e62120094454e2e81da6b12c0d8d8 100644
 --- a/internal/app/tokenizer.go
 +++ b/internal/app/tokenizer.go
 @@ -1,9 +1,17 @@
@@ -3262,7 +3295,7 @@ index 634f3b7..399057e 100644
  		if err != nil {
  			fmt.Fprintf(os.Stderr, "[tokenizer] init failed (will fall back to chars/4): %v\n", err)
 diff --git a/internal/app/upload.go b/internal/app/upload.go
-index 4feb5d9..a21e8d1 100644
+index 4feb5d93c088ed058f1f3b57c2e9ca1dc9c6cab1..a21e8d1e671d12d7523648bc3c0948958fe594a3 100644
 --- a/internal/app/upload.go
 +++ b/internal/app/upload.go
 @@ -2,6 +2,7 @@ package app
@@ -3333,7 +3366,7 @@ index 4feb5d9..a21e8d1 100644
  		req.Header.Set(k, v)
  	}
 diff --git a/internal/app/video_cooldown_test.go b/internal/app/video_cooldown_test.go
-index 8eda49e..cf64828 100644
+index 8eda49e5f5318f962445c4b08bb33b342f8e2b8f..cf64828c36dcb190fae2e6315573460a9ba4a711 100644
 --- a/internal/app/video_cooldown_test.go
 +++ b/internal/app/video_cooldown_test.go
 @@ -2,6 +2,7 @@ package app
@@ -3354,7 +3387,7 @@ index 8eda49e..cf64828 100644
  		return "", nil, res, err
  	}
 diff --git a/internal/app/videos.go b/internal/app/videos.go
-index 4ea7ac6..861f72e 100644
+index 4ea7ac64d3854396b8339b0d2240a96d7a8e9331..861f72e355a62e191c875e7ea72dbe28d51b556f 100644
 --- a/internal/app/videos.go
 +++ b/internal/app/videos.go
 @@ -10,6 +10,7 @@ package app
@@ -3384,7 +3417,7 @@ index 4ea7ac6..861f72e 100644
  			return res, nil
  		}
 diff --git a/internal/app/vision.go b/internal/app/vision.go
-index b0c9724..b1ca7cb 100644
+index b0c97245b5e822155b97d5c3b82363dd1cbf27a2..b1ca7cb8d9620d1d295543bd7118f507d32b7980 100644
 --- a/internal/app/vision.go
 +++ b/internal/app/vision.go
 @@ -160,6 +160,7 @@ func fetchImage(src, proxyURL string, idx int) (pendingUpload, error) {
@@ -3396,7 +3429,7 @@ index b0c9724..b1ca7cb 100644
  		if err != nil {
  			return pendingUpload{}, fmt.Errorf("image %d: fetch failed: %w", idx, err)
 diff --git a/internal/app/xsrf.go b/internal/app/xsrf.go
-index 254d686..e008abb 100644
+index 254d686a8f91301427d341f31a08363f4ba6c304..e008abbd2e3e901a8ee7e3b4bde6f1c65833f730 100644
 --- a/internal/app/xsrf.go
 +++ b/internal/app/xsrf.go
 @@ -29,15 +29,23 @@ var (
