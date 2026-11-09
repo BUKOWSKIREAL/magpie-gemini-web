@@ -21,7 +21,7 @@
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API (`v0.3.2`) | gemini-web2api-go (`4.27.1-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API (`v0.3.3`) | gemini-web2api-go (`4.27.1-magpie.1` 优化版) |
 
 ---
 
@@ -56,7 +56,7 @@
 
 - **一账号一卡片**：每个 Google 账号单独生成一张以邮箱命名的额度卡片。
   - *旧版迁移（Gemini Web）*：若后端里已有早期版本添加的账号，在登录时选 **「添加本地后端里已有的 Google 账号」** 即可生成独立卡片，随后可删掉旧的 `API key …` 汇总卡片。
-- **账号池自动调度**：请求实际使用哪个账号由本地后端决定（Gemini Web 在账号池中轮流挑选；AI Studio 先用一个，进入冷却再切下一个）。在 Magpie 界面切换卡片不会改变后端的账号调度。
+- **账号池自动调度**：请求实际使用哪个账号由本地后端决定（Gemini Web 在账号池中轮流挑选；AI Studio 先用一个，进入冷却再切下一个，可在管理页或通过 `studio.accountOrder`、`studio.modelAccounts` 指定账号优先顺序与模型专属账号池）。在 Magpie 界面切换卡片不会改变后端的账号调度。
 - **用量刷新说明**：
   - `gemini-web`：仅一键配置的本地后端可读取用量。Magpie 每次来查都会向 Google 重新读取（同一账号 30 秒内只读一次），点刷新即显示最新额度，包括在 Gemini 官方 App、网页或其他设备上的用量。Magpie 自己来查的频率：用量页或菜单栏的额度面板开着时约每分钟一次；菜单栏显示任何一家额度时随菜单栏更新（默认每 3 分钟）；经 Magpie 转发请求时最多每分钟一次；都没有时不查。读取失败后 10 分钟内不自动重试，这期间点刷新会立即重试，若未生效再点一次。
   - `ai-studio`：AI Studio 不提供剩余总额度，卡片会展示当前账号正在冷却的模型、恢复时间或重新登录提示。
@@ -114,6 +114,8 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `baseURL` | `http://127.0.0.1:8083/v1` | 仅 `gemini-web` | Gemini Web 默认后端地址 |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | 仅 `gemini-web` | 向客户端声明的上下文 / 输出上限 |
 | `studio.proxy` | 无 | 仅 `ai-studio` | 访问 Google 的代理（`http` / `https` / `socks5`），也可用环境变量 `AI_STUDIO_PROXY`；设置后优先于管理页里保存的代理，留空等于不设置 |
+| `studio.accountOrder` | 无 | 仅 `ai-studio` | 账号优先顺序（逗号分隔字符串或字符串数组，如 `["b@gmail.com","a@gmail.com"]`）；当 `.env` 中未保存或为空时作为初始值写入，管理页保存非空值后优先保留管理页设置 |
+| `studio.modelAccounts` | 无 | 仅 `ai-studio` | 模型专属账号绑定（`"model:acc1|acc2"` 字符串或 `{ "gemini-3.1-pro-preview": ["acc1", "acc2"] }` 对象）；当 `.env` 中未保存或为空时作为初始值写入，管理页保存非空值后优先保留管理页设置 |
 | `studio.baseURL` | `http://127.0.0.1:2048/v1` | 仅 `ai-studio` | 连接已有 AIStudio2API 时的默认地址 |
 | `studio.contextLimit` / `studio.outputLimit` | 模型目录默认值 | 仅 `ai-studio` | 向客户端声明的上限（仅支持在目录值基础上调低） |
 | `studio.imageModels` | `true` | 仅 `ai-studio` | 列出 Nano Banana 等图像模型，供 Magpie 的图片生成使用；设为 `false` 时只列文本模型 |
@@ -176,8 +178,8 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - Gemini Web 每个登录同时最多 2 个请求（AI Studio 为 1），可在 Magpie 的 provider 设置里调整；仍无法完全排除 Google 账号风控风险，请自行评估使用。
 
 **AI Studio 升级与模型范围：**
-- 插件固定使用经过 SHA-256 校验的 `v0.3.2-magpie.1`（基于上游 `v0.3.2`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
-- 0.2.19 的账号绑定与备用请求模型设置会保留；管理页保存的默认值不会在重启后被改回插件默认值。备用请求默认关闭，需要时可在管理页开启并选择模型。
+- 插件固定使用经过 SHA-256 校验的 `v0.3.3-magpie.1`（基于上游 `v0.3.3`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
+- 0.3.3 的账号优先顺序（`ACCOUNT_ORDER`）与模型账号绑定（`MODEL_ACCOUNTS`）、以及 0.2.19 的 API Key 账号绑定与备用请求模型设置均会保留；管理页保存的默认值不会在重启后被改回插件默认值。备用请求默认关闭，需要时可在管理页开启并选择模型。
 - 从 0.2.18 升级且已开启 `auto` 时，备用请求从所有模型缩为 `FIRST_EVENT_HEDGE_MODELS` 中的模型，未配置该列表时仅有 Argon。管理页完整保存会固定当时的默认值，后续上游默认值变化需要手动调整。接管官方 0.2.19 的稀疏配置时，缺失项会按插件规则补齐（例如备用请求变为 `off`）；详见[升级兼容说明](docs/studio-release.md#0219-升级兼容)。
 - **托管后端已在 macOS、Linux、Windows 统一禁用在线更新**：管理页提示“更新由 magpie-gemini-web 管理”，更新接口返回 HTTP 409，检查更新也不会访问 GitHub。用户自行连接的外部服务不受影响。托管构建方式和可复现构建流程见 [docs/studio-release.md](docs/studio-release.md)。
 - Unix 的 `package/` 仍尽力设置为 `0555`，作为额外的文件保护；权限设置失败不阻断服务，在线更新的禁用也不依赖该权限。若要手动删除数据目录来重置，请先停止服务，再运行 `chmod -R u+w "<数据目录>/package"` 恢复可写权限，然后删除；将 `<数据目录>` 替换为实际路径。

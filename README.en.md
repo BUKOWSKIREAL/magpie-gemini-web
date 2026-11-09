@@ -21,7 +21,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.3.2`) | gemini-web2api-go (`4.27.1-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (`v0.3.3`) | gemini-web2api-go (`4.27.1-magpie.1` optimized build) |
 
 ---
 
@@ -56,7 +56,7 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 - **One card per account:** Each Google account gets its own usage card titled with its email address.
   - *Migrating older Gemini Web accounts:* For accounts added in earlier versions, add a Gemini Web account in Magpie and choose **「添加本地后端里已有的 Google 账号」** (Add an existing Google account from the local backend) to create individual cards, then remove the old pooled `API key …` card.
-- **Automatic account rotation:** The local backend selects which Google account serves each request (Gemini Web rotates across the pool; AI Studio uses one account until cooldown and switches to the next). Switching cards in Magpie does not change which account the backend picks.
+- **Automatic account rotation:** The local backend selects which Google account serves each request (Gemini Web rotates across the pool; AI Studio uses one account until cooldown and switches to the next, with optional account priority order and per-model account bindings configurable in the admin page or via `studio.accountOrder` and `studio.modelAccounts`). Switching cards in Magpie does not change which account the backend picks.
 - **Usage reporting:**
   - `gemini-web`: Available only with the one-click local backend. Usage is read from Google again whenever Magpie asks for it (at most once every 30 seconds per account), so pressing refresh shows the current allowance, including usage from the Gemini app, the website or other devices. On its own, Magpie asks about once a minute while the Usage page or the menu bar's allowances panel is open, whenever it updates allowances shown in the menu bar (every 3 minutes by default), and at most once a minute while it routes requests among accounts; otherwise it doesn't ask. A failed read isn't retried on its own for 10 minutes; pressing refresh in that time retries it at once (press it again if the first press doesn't).
   - `ai-studio`: AI Studio does not report remaining total quota; cards display models currently on cooldown and their recovery times, or prompt when re-authentication is needed.
@@ -114,6 +114,8 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `baseURL` | `http://127.0.0.1:8083/v1` | `gemini-web` only | Default Gemini Web backend URL |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | `gemini-web` only | Context and output limits reported to clients |
 | `studio.proxy` | none | `ai-studio` only | Proxy for reaching Google (`http` / `https` / `socks5`), or set `AI_STUDIO_PROXY` env var; when set, it takes precedence over the proxy saved in the admin page. An empty value counts as unset |
+| `studio.accountOrder` | none | `ai-studio` only | Account priority order (comma-separated string or string array, e.g. `["b@gmail.com","a@gmail.com"]`); seeds `ACCOUNT_ORDER` in `.env` when unset, while preserving any non-empty value saved in the admin page |
+| `studio.modelAccounts` | none | `ai-studio` only | Per-model account bindings (`"model:acc1|acc2"` string or `{ "gemini-3.1-pro-preview": ["acc1", "acc2"] }` object); seeds `MODEL_ACCOUNTS` in `.env` when unset, while preserving any non-empty value saved in the admin page |
 | `studio.baseURL` | `http://127.0.0.1:2048/v1` | `ai-studio` only | Default URL when connecting an existing AIStudio2API instance |
 | `studio.contextLimit` / `studio.outputLimit` | Model catalog defaults | `ai-studio` only | Limits reported to clients (can only lower the catalog defaults) |
 | `studio.imageModels` | `true` | `ai-studio` only | List the Nano Banana image models, for Magpie's image generation; `false` lists text models only |
@@ -176,8 +178,8 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Gemini Web takes at most 2 requests at once per sign-in (AI Studio 1), adjustable in Magpie's provider settings. Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- The plugin pins SHA-256-verified `v0.3.2-magpie.1`, based on upstream `v0.3.2`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
-- Account bindings and hedge model selections from 0.2.19 are preserved. Settings saved in the admin page, including upstream defaults, survive plugin restarts. Hedge requests remain off by default; enable them and select models in the admin page if needed.
+- The plugin pins SHA-256-verified `v0.3.3-magpie.1`, based on upstream `v0.3.3`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
+- Account priority ordering (`ACCOUNT_ORDER`) and per-model account bindings (`MODEL_ACCOUNTS`) from 0.3.3, as well as API key account bindings and hedge model selections from 0.2.19, are preserved. Settings saved in the admin page, including upstream defaults, survive plugin restarts. Hedge requests remain off by default; enable them and select models in the admin page if needed.
 - For users upgrading from 0.2.18 with `auto` enabled, hedging now applies only to `FIRST_EVENT_HEDGE_MODELS`, defaulting to Argon when that list is absent. Saving in the admin page fixes the current defaults in the file; later upstream default changes require manual adjustment. When taking over an official 0.2.19 sparse configuration, missing settings follow the plugin's initialization rules (for example, hedging becomes `off`). See the [upgrade compatibility notes](docs/studio-release.md#0219-升级兼容).
 - **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page says updates are managed by magpie-gemini-web; the update endpoint returns HTTP 409 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for how the managed build is made and reproduced.
 - Managed Unix installs still attempt to set `package/` to `0555` as additional file protection. Permission failures do not block service, and disabling online updates does not depend on permissions. To reset by manually deleting the data directory, stop the service first, then run `chmod -R u+w "<data-dir>/package"` before deleting it; replace `<data-dir>` with the actual path.

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
-import { studioSettings, listStudioModels, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
+import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
 
@@ -220,7 +220,9 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         contextLimit: 600000,
         outputLimit: 16384,
         allowTools: true,
-        proxy: 'http://127.0.0.1:1082'
+        proxy: 'http://127.0.0.1:1082',
+        accountOrder: ['b@example.com', 'a@example.com'],
+        modelAccounts: { 'gemini-4-argon': ['b@example.com', 'a@example.com'] }
       }
     });
     assert.equal(withNested.baseURL, 'http://127.0.0.1:2049/v1');
@@ -228,6 +230,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(withNested.explicitOutputLimit, 16384);
     assert.equal(withNested.allowTools, true);
     assert.equal(withNested.proxy, 'http://127.0.0.1:1082');
+    assert.equal(withNested.accountOrder, 'b@example.com,a@example.com');
+    assert.equal(withNested.modelAccounts, 'gemini-4-argon:b@example.com|a@example.com');
 
     // Image input is on for both providers unless turned off, for both providers or for it alone
     assert.equal(studioSettings().allowImages, true);
@@ -240,6 +244,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(studioSettings().imageModels, true, 'Image models are listed by default');
     assert.equal(studioSettings({ studio: { imageModels: false } }).imageModels, false);
     assert.throws(() => studioSettings({ studio: { imageModels: 'no' } }), /studio\.imageModels: must be a boolean/);
+    assert.throws(() => studioSettings({ studio: { accountOrder: 123 } }), /Invalid studio\.accountOrder/);
+    assert.throws(() => studioSettings({ studio: { modelAccounts: 'bad' } }), /Invalid studio\.modelAccounts/);
 
     assert.throws(() => studioSettings({ studio: { stripCitations: true } }), /cannot be stripped/);
     assert.throws(() => studioSettings({ studio: { outputLimit: 10000, contextLimit: 5000 } }), /cannot exceed contextLimit/);
@@ -1479,5 +1485,75 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     const unavailable = poolUsage([{ id: 'u', label: 'u@x', state: 'unavailable' }], [], now);
     assert.equal(unavailable.user, 'u@x（1 个暂时不可用）');
     assert.match(unavailable.error, /暂时都不可用/);
+  });
+
+  it('10d. ACCOUNT_ORDER orders pool card and account selector, and MODEL_ACCOUNTS scopes model cooldowns and card lines', async () => {
+    const now = Date.parse('2026-10-17T12:00:00Z');
+    const at = minutes => new Date(now + minutes * 60000).toISOString();
+    const accounts = [
+      { id: 'a@example.com', label: 'a@example.com', enabled: true, state: 'ready', models: ['gemini-4-argon', 'gemini-3-flash'] },
+      { id: 'b@example.com', label: 'b@example.com', enabled: true, state: 'ready', models: ['gemini-4-argon', 'gemini-3-flash'] },
+      { id: 'c@example.com', label: 'c@example.com', enabled: true, state: 'ready', models: ['gemini-4-argon', 'gemini-3-flash'] }
+    ];
+
+    assert.deepEqual(
+      orderAccounts(accounts, 'c@example.com,a@example.com').map(a => a.id),
+      ['c@example.com', 'a@example.com', 'b@example.com']
+    );
+
+    const pooled = poolUsage(accounts, [
+      { account_id: 'c@example.com', model_id: 'gemini-4-argon', until: at(10), reason: 'quota' },
+      { account_id: 'b@example.com', model_id: 'gemini-3-flash', until: at(15), reason: 'quota' }
+    ], now, {
+      accountOrder: 'c@example.com,a@example.com',
+      modelAccounts: 'gemini-4-argon:c@example.com|a@example.com,gemini-3-flash:a@example.com'
+    });
+    assert.equal(pooled.user, 'c@example.com +2');
+    // gemini-4-argon is bound to 2 accounts (c and a), with c cooling -> 1/2 (50%).
+    // gemini-3-flash is bound only to a, so b's cooldown on gemini-3-flash does not affect its bound pool.
+    assert.deepEqual(pooled.windows, [
+      { name: 'gemini-4-argon', used: 50, resetsAt: at(10), display: '1/2 个账号冷却中：quota' }
+    ]);
+    // When a model's bound accounts have no match in the enabled pool, upstream falls back to the full pool (1/3 = 33%)
+    const fallbackPool = poolUsage(accounts, [
+      { account_id: 'c@example.com', model_id: 'gemini-4-argon', until: at(10), reason: 'quota' }
+    ], now, {
+      modelAccounts: 'gemini-4-argon:missing@example.com'
+    });
+    assert.deepEqual(fallbackPool.windows, [
+      { name: 'gemini-4-argon', used: 33, resetsAt: at(10), display: '1/3 个账号冷却中：quota' }
+    ]);
+
+    const setup = standInSetup('managed-key');
+    try {
+      serverResponses['/api/accounts'] = accountsResponse(accounts);
+      serverResponses['/api/cooldowns'] = {
+        status: 200,
+        headers: jsonHeaders,
+        body: JSON.stringify({ cooldowns: [] })
+      };
+      const plugin = await AIStudioPlugin({}, {
+        studio: {
+          baseURL: serverURL,
+          accountOrder: ['c@example.com', 'b@example.com'],
+          modelAccounts: { 'gemini-4-argon': ['c@example.com', 'b@example.com'] }
+        }
+      });
+      const question = await plugin.auth.methods[0].ask({});
+      assert.deepEqual(question.options.map(o => o.value), ['+new', 'c@example.com', 'b@example.com', 'a@example.com']);
+
+      const managedAuth = { type: 'api', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL } };
+      const card = await plugin.auth.usage(async () => managedAuth);
+      assert.equal(card.user, 'c@example.com +2');
+      assert.deepEqual(card.windows.slice(0, 2), [
+        { name: '账号顺序', display: 'c@example.com → b@example.com' },
+        { name: '模型绑定', display: 'gemini-4-argon → c@example.com, b@example.com' }
+      ]);
+      assert.equal(card.windows.some(w => Object.hasOwn(w, 'used')), false);
+    } finally {
+      delete serverResponses['/api/accounts'];
+      delete serverResponses['/api/cooldowns'];
+      setup.remove();
+    }
   });
 });
