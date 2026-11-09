@@ -15,9 +15,12 @@ import {
   studioProxy,
   saveStudioProxy,
   studioCommand,
-  nodeFetch
+  nodeFetch,
+  readStudioEnv,
+  parseAccountOrder,
+  parseModelAccounts
 } from '../lib/studio-native.mjs';
-import { proxyLine } from '../lib/studio.mjs';
+import { proxyLine, orderAccounts } from '../lib/studio.mjs';
 
 const LOGIN_TIMEOUT_MS = 15 * 60 * 1000;
 
@@ -170,7 +173,25 @@ async function main() {
         } catch (err) {
           console.log(`Proxy: could not be read (${err.message})`);
         }
-        const accounts = await studioAccounts({ dataDir });
+        let env = {};
+        try {
+          env = readStudioEnv(dataDir);
+        } catch {}
+        const routingStrategy = (env.ROUTING_STRATEGY || '').trim().toLowerCase();
+        const accountOrder = routingStrategy === 'round-robin' ? '' : (env.ACCOUNT_ORDER || '');
+        const orderList = parseAccountOrder(accountOrder);
+        if (orderList.length > 0) {
+          console.log(`Account order: ${orderList.join(' -> ')}`);
+        }
+        const bindings = parseModelAccounts(env.MODEL_ACCOUNTS || '');
+        if (bindings.size > 0) {
+          const parts = [];
+          for (const [model, ids] of bindings) {
+            parts.push(`${model}: ${ids.join(', ')}`);
+          }
+          console.log(`Model accounts: ${parts.join('; ')}`);
+        }
+        const accounts = orderAccounts(await studioAccounts({ dataDir }), accountOrder);
         if (accounts.length > 0) {
           console.log(`Enabled accounts:`);
           for (const a of accounts) {

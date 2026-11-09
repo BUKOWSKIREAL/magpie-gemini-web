@@ -1,7 +1,7 @@
 {
-  "version": "0.3.2-magpie.1",
+  "version": "0.3.3-magpie.1",
   "repository": "BUKOWSKIREAL/magpie-gemini-web",
-  "tag": "studio-v0.3.2-magpie.1",
+  "tag": "studio-v0.3.3-magpie.1",
   "goVersion": "1.27.1",
   "toolchains": {
     "zig": "0.16.0",
@@ -81,9 +81,9 @@
     }
   },
   "upstream": {
-    "version": "0.3.2",
+    "version": "0.3.3",
     "repository": "https://github.com/Mag1cFall/AIStudio2API.git",
-    "commit": "4c44cb9765aa9fd497b91db1f5c1573504b9b85f",
+    "commit": "718ea76f1c0d5a981c6368f936ec29c1acc5429e",
     "camoufox": "152.0.4-beta.29"
   },
   "patches": [
@@ -92,27 +92,27 @@
   ],
   "binaries": {
     "darwin-arm64": {
-      "asset": "aistudio2api-v0.3.2-magpie.1-darwin-arm64.tar.gz",
+      "asset": "aistudio2api-v0.3.3-magpie.1-darwin-arm64.tar.gz",
       "sha256": "a3b10971d3b30d6c2621fc0ca179a041efd0b9992ed2fdb4117a689012dc86f3",
       "binarySha256": "f0f2234862b4955a2adc4f24940db631aed3b62148e3732f4a9cb614e4d0c507"
     },
     "darwin-x64": {
-      "asset": "aistudio2api-v0.3.2-magpie.1-darwin-amd64.tar.gz",
+      "asset": "aistudio2api-v0.3.3-magpie.1-darwin-amd64.tar.gz",
       "sha256": "1b613b228054417904a8f8cebcb50446bbdd438ce19e104ae293053673b0816a",
       "binarySha256": "a8b56b4f411929742482ef18538ce5b5cc4a0e690d50f049b8c8aa95d3513b3a"
     },
     "linux-x64": {
-      "asset": "aistudio2api-v0.3.2-magpie.1-linux-amd64.tar.gz",
+      "asset": "aistudio2api-v0.3.3-magpie.1-linux-amd64.tar.gz",
       "sha256": "fe1c2c65a3dd4a2971b40432070c438b372cd1680724f96c07638e1855a4cbfd",
       "binarySha256": "01e78fd13fd5ff12c30f71e24501b9aa01faa6a5c67ecae526f8e52d34d8c7f3"
     },
     "linux-arm64": {
-      "asset": "aistudio2api-v0.3.2-magpie.1-linux-arm64.tar.gz",
+      "asset": "aistudio2api-v0.3.3-magpie.1-linux-arm64.tar.gz",
       "sha256": "155fbae81c8e188d5770d4ad31e9feb74dc8e87aec92367d8d8069000441f99c",
       "binarySha256": "3dbc76102beffe9a97dda612b9684f08b114176fae127763d5d1379cb3c08cdd"
     },
     "win32-x64": {
-      "asset": "aistudio2api-v0.3.2-magpie.1-windows-amd64.zip",
+      "asset": "aistudio2api-v0.3.3-magpie.1-windows-amd64.zip",
       "sha256": "054e9aac804a7116b626750a5a2adbcb8ad8d465e428b292530fdebc4f2b2cd5",
       "binarySha256": "e7720ced68f82a2aa5afa16c17614c067a57ef2afa59399b720e9d215e7eb42a"
     }

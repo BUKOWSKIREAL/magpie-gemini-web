@@ -52,9 +52,11 @@ try {
   // Save upstream defaults that differ from this plugin's defaults. They must stay explicit
   // through the backend's Save and the plugin's next config sync, not get silently re-seeded.
   const choices = {
-    search_model_aliases: true, strip_thought_signatures: true, hide_dock_icon: true, routing_strategy: 'round-robin', per_account_concurrency: 2,
+    search_model_aliases: true, strip_thought_signatures: true, hide_dock_icon: true, routing_strategy: 'round-robin',
+    account_order: 'smoke-b@example.com,smoke-a@example.com', per_account_concurrency: 2,
     first_event_hedge: 'auto', first_event_hedge_models: 'gemini-3.8-flash',
-    api_key_accounts: `${local.apiKey}:smoke@example.com`
+    api_key_accounts: `${local.apiKey}:smoke@example.com`,
+    model_accounts: 'gemini-3.1-pro-preview:smoke-b@example.com|smoke-a@example.com'
   };
   const saved = await studioAdmin(local, 'PUT', '/api/config', {
     ...config, ...choices,
