@@ -20,6 +20,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -45,31 +47,73 @@ jobs:
           const release = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
           // The tag endpoint excludes drafts for GitHub App tokens; gh also
           // searches the releases list, which includes writable private drafts.
-          const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft'], { encoding: 'utf8' }));
+          const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft,targetCommitish'], { encoding: 'utf8' }));
           assert.equal(draft.isDraft, true, 'Only a private draft can receive these assets');
+          const expectedSha = /^[0-9a-f]{40}$/.test(draft.targetCommitish) ? draft.targetCommitish : process.env.GITHUB_SHA;
+          assert.equal(run.head_sha, expectedSha, 'Verify the exact release commit');
+          execFileSync('git', ['checkout', '--detach', expectedSha], { stdio: 'inherit' });
           fs.mkdirSync('verified-artifacts', { recursive: true });
           execFileSync('gh', ['run', 'download', id, '--repo', repo, '--pattern', 'backend-*', '--dir', 'verified-artifacts'], { stdio: 'inherit' });
           JS
-      - name: Check pinned hashes and upload missing executables
+      - name: Check pinned hashes and upload missing release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           node --input-type=module <<'JS'
           import fs from 'node:fs';
+          import os from 'node:os';
           import path from 'node:path';
           import crypto from 'node:crypto';
           import assert from 'node:assert/strict';
           import { execFileSync } from 'node:child_process';
+          const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
           const release = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
           const repo = process.env.GITHUB_REPOSITORY;
           const groups = fs.readdirSync('verified-artifacts');
-          const files = Object.values(release.binaries).map(pin => {
+          const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backend-release-upload-'));
+          const binaries = {};
+          for (const [key, pin] of Object.entries(release.binaries)) {
             const matches = groups.map(group => path.join('verified-artifacts', group, pin.asset)).filter(file => fs.existsSync(file));
             assert.equal(matches.length, 1, `Expected exactly one artifact: ${pin.asset}`);
-            const sha256 = crypto.createHash('sha256').update(fs.readFileSync(matches[0])).digest('hex');
+            const sha256 = hash(fs.readFileSync(matches[0]));
             assert.equal(sha256, pin.sha256, `Hash mismatch: ${pin.asset}`);
-            return matches[0];
-          });
+            fs.copyFileSync(matches[0], path.join(outDir, pin.asset));
+            binaries[key] = { asset: pin.asset, sha256 };
+          }
+          // Reconstruct patched source archive, LICENSE-UPSTREAM, build.json, and SHA256SUMS.txt
+          const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'backend-src-'));
+          const upstream = path.join(scratch, 'upstream');
+          const source = path.join(scratch, 'source');
+          fs.mkdirSync(source);
+          execFileSync('git', ['init', '-q', upstream]);
+          execFileSync('git', ['-C', upstream, 'fetch', '--depth=1', release.upstream.repository, release.upstream.commit], { stdio: 'inherit' });
+          const archive = path.join(scratch, 'upstream.tar');
+          execFileSync('git', ['-C', upstream, 'archive', '--format=tar', `--output=${archive}`, release.upstream.commit]);
+          execFileSync('tar', ['-xf', 'upstream.tar', '-C', 'source'], { cwd: scratch });
+          const patchPath = path.resolve('patches/argon.patch');
+          execFileSync('git', ['apply', '--check', patchPath], { cwd: source, stdio: 'inherit' });
+          execFileSync('git', ['apply', patchPath], { cwd: source, stdio: 'inherit' });
+          const versionPath = path.join(source, 'internal/app/server.go');
+          const server = fs.readFileSync(versionPath, 'utf8');
+          const versionLine = /^const Version = "[^"]+"$/m;
+          assert.ok(versionLine.test(server), 'Backend version declaration not found');
+          fs.writeFileSync(versionPath, server.replace(versionLine, `const Version = ${JSON.stringify(release.version)}`));
+          const sourceName = `gemini-web2api-go_v${release.version}_source.tar.gz`;
+          const sourceArchive = fs.openSync(path.join(outDir, sourceName), 'w');
+          try {
+            execFileSync('tar', ['-czf', '-', '.'], { cwd: source, stdio: ['ignore', sourceArchive, 'inherit'] });
+          } finally {
+            fs.closeSync(sourceArchive);
+          }
+          fs.copyFileSync('LICENSE-UPSTREAM', path.join(outDir, 'LICENSE-UPSTREAM'));
+          const flags = ['-trimpath', '-buildvcs=false', '-ldflags=-s -w'];
+          const build = { version: release.version, upstream: release.upstream, goVersion: release.goVersion,
+            patch: 'patches/argon.patch', patchSha256: hash(fs.readFileSync(patchPath)),
+            versionOverride: release.version, cgoEnabled: false, flags, binaries };
+          fs.writeFileSync(path.join(outDir, 'build.json'), `${JSON.stringify(build, null, 2)}\n`);
+          const assetNames = [...Object.values(binaries).map(b => b.asset), sourceName, 'LICENSE-UPSTREAM', 'build.json'].sort();
+          fs.writeFileSync(path.join(outDir, 'SHA256SUMS.txt'), assetNames.map(name => `${hash(fs.readFileSync(path.join(outDir, name)))}  ${name}\n`).join(''));
+          const files = [...assetNames, 'SHA256SUMS.txt'].map(name => path.join(outDir, name));
           // Validate every file before uploading any. Never replace published assets.
           for (const file of files) {
             const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft,assets'], { encoding: 'utf8' }));
@@ -77,14 +121,16 @@ jobs:
             const existing = draft.assets.find(asset => asset.name === path.basename(file));
             if (existing) {
               assert.equal(existing.state, 'uploaded');
-              const dir = fs.mkdtempSync('existing-');
-              try {
-                execFileSync('gh', ['release', 'download', release.tag, '--repo', repo, '--pattern', existing.name, '--dir', dir]);
-                assert.ok(fs.readFileSync(path.join(dir, existing.name)).equals(fs.readFileSync(file)), `Existing asset differs: ${existing.name}`);
-              } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+              if (path.basename(file) !== sourceName && path.basename(file) !== 'SHA256SUMS.txt') {
+                const dir = fs.mkdtempSync('existing-');
+                try {
+                  execFileSync('gh', ['release', 'download', release.tag, '--repo', repo, '--pattern', existing.name, '--dir', dir]);
+                  assert.ok(fs.readFileSync(path.join(dir, existing.name)).equals(fs.readFileSync(file)), `Existing asset differs: ${existing.name}`);
+                } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+              }
               continue;
             }
             execFileSync('gh', ['release', 'upload', release.tag, file, '--repo', repo], { stdio: 'inherit' });
           }
-          console.log(`All ${files.length} pinned executables uploaded to private draft ${release.tag}`);
+          console.log(`All ${files.length} release assets uploaded to private draft ${release.tag}`);
           JS

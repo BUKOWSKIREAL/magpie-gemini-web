@@ -20,6 +20,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -41,22 +43,25 @@ jobs:
           assert.equal(run.repository.full_name, repo);
           assert.equal(run.head_repository.full_name, repo);
           assert.equal(run.event, 'workflow_dispatch');
-          assert.equal(run.head_sha, process.env.GITHUB_SHA, 'Verify the exact release commit');
           assert.equal(run.path, '.github/workflows/studio.yml');
           const release = JSON.parse(fs.readFileSync('lib/studio-release.json', 'utf8'));
           // The tag endpoint excludes drafts for GitHub App tokens; gh also
           // searches the releases list, which includes writable private drafts.
-          const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft'], { encoding: 'utf8' }));
+          const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft,targetCommitish'], { encoding: 'utf8' }));
           assert.equal(draft.isDraft, true, 'Only a private draft can receive these assets');
+          const expectedSha = /^[0-9a-f]{40}$/.test(draft.targetCommitish) ? draft.targetCommitish : process.env.GITHUB_SHA;
+          assert.equal(run.head_sha, expectedSha, 'Verify the exact release commit');
+          execFileSync('git', ['checkout', '--detach', expectedSha], { stdio: 'inherit' });
           fs.mkdirSync('verified-artifacts', { recursive: true });
           execFileSync('gh', ['run', 'download', id, '--repo', repo, '--pattern', 'studio-*', '--dir', 'verified-artifacts'], { stdio: 'inherit' });
           JS
-      - name: Check pinned hashes and upload missing archives
+      - name: Check pinned hashes and upload missing release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           node --input-type=module <<'JS'
           import fs from 'node:fs';
+          import os from 'node:os';
           import path from 'node:path';
           import crypto from 'node:crypto';
           import assert from 'node:assert/strict';
@@ -64,13 +69,40 @@ jobs:
           const release = JSON.parse(fs.readFileSync('lib/studio-release.json', 'utf8'));
           const repo = process.env.GITHUB_REPOSITORY;
           const groups = fs.readdirSync('verified-artifacts');
-          const files = Object.values(release.binaries).map(pin => {
+          const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-release-upload-'));
+          const archiveFiles = Object.values(release.binaries).map(pin => {
             const matches = groups.map(group => path.join('verified-artifacts', group, pin.asset)).filter(file => fs.existsSync(file));
             assert.equal(matches.length, 1, `Expected exactly one artifact: ${pin.asset}`);
             const sha256 = crypto.createHash('sha256').update(fs.readFileSync(matches[0])).digest('hex');
             assert.equal(sha256, pin.sha256, `Hash mismatch: ${pin.asset}`);
             return matches[0];
           });
+          // Merge per-runner build-<target>.json records into build.json and generate SHA256SUMS.txt
+          const builds = {};
+          const compiler = {};
+          let baseRecord = null;
+          for (const key of Object.keys(release.binaries)) {
+            const recordMatches = groups.map(group => path.join('verified-artifacts', group, `build-${key}.json`)).filter(file => fs.existsSync(file));
+            assert.equal(recordMatches.length, 1, `Expected exactly one build record: build-${key}.json`);
+            const rec = JSON.parse(fs.readFileSync(recordMatches[0], 'utf8'));
+            assert.equal(rec.version, release.version);
+            assert.deepEqual(rec.upstream, release.upstream);
+            if (!baseRecord) baseRecord = rec;
+            builds[key] = rec.builds[key];
+            compiler[key] = rec.compiler[key];
+          }
+          const buildJsonPath = path.join(outDir, 'build.json');
+          fs.writeFileSync(buildJsonPath, JSON.stringify({
+            version: release.version, upstream: release.upstream, goVersion: release.goVersion,
+            toolchains: release.toolchains, nodeVersion: baseRecord.nodeVersion,
+            managedBy: baseRecord.managedBy, builds, compiler, patches: baseRecord.patches,
+            binaries: release.binaries
+          }, null, 2) + '\n');
+          const sumsPath = path.join(outDir, 'SHA256SUMS.txt');
+          fs.writeFileSync(sumsPath, Object.values(release.binaries).map(pin => `${pin.sha256}  ${pin.asset}\n`).join(''));
+          const licensePath = path.join(outDir, 'LICENSE-AISTUDIO');
+          fs.copyFileSync('LICENSE-AISTUDIO', licensePath);
+          const files = [...archiveFiles, buildJsonPath, sumsPath, licensePath];
           // Validate every file before uploading any. Never replace published assets.
           for (const file of files) {
             const draft = JSON.parse(execFileSync('gh', ['release', 'view', release.tag, '--repo', repo, '--json', 'isDraft,assets'], { encoding: 'utf8' }));
@@ -87,5 +119,5 @@ jobs:
             }
             execFileSync('gh', ['release', 'upload', release.tag, file, '--repo', repo], { stdio: 'inherit' });
           }
-          console.log(`All ${files.length} pinned archives uploaded to private draft ${release.tag}`);
+          console.log(`All ${files.length} release assets uploaded to private draft ${release.tag}`);
           JS
