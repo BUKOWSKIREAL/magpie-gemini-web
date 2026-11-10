@@ -2,6 +2,16 @@
 
 插件使用 `0.3.4-magpie.1`，基于 AIStudio2API `v0.3.4`（`a4092efcdf358775339aa27cbb4db027fdf8f100`）。上游版本、commit、Go 版本、C/C++ 工具链、SpiderMonkey 与 libwebp 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
 
+## 插件账号管理接入
+
+推荐登录入口通过 `lib/studio-connect.mjs` 打开本机连接页，服务安装仍由插件负责。连接页复用随包后端的 `/?tab=accounts` 管理界面，Chrome / Cookie 多账号导入、浏览器登录、任务进度与取消均由上游处理。用户回到连接页明确选择一个账号后，插件保存原有 `managed: true` 的 `ai-studio` 登录，继续提供模型、图片和用量卡片；不会调用上游 `magpie://import` 创建另一个供应商。后端版本与构建补丁无需改变。
+
+管理会话通过本机 HTTP 响应的 `HttpOnly; SameSite=Strict; Path=/api` Cookie 交给浏览器，沿用后端的 Cookie 名与路径。连接页和后端均限定为 `http://127.0.0.1`；Cookie 按主机共享，不按端口隔离。连接页使用随机路径、严格 Host 检查和写操作 Origin 检查，状态接口只返回账号标识、标签和状态，不返回 API key、管理密码或 Google Cookie。页面结束后不再允许取得管理会话或选择账号，两分钟后关闭临时服务。
+
+连接超时或取消保留已导入的账号，不取消用户在上游管理页启动的任务；任务仍可在管理页取消。原有「直接打开 Google 登录窗口」入口继续使用 `studioLogin`，保留其超时取消任务行为。
+
+验证：连接页与插件测试覆盖多账号明确选择、选择时重新校验、重新登录限制、来源校验、取消及超时；使用校验 SHA-256 的 `0.3.4-magpie.1` macOS arm64 发行包，在隔离的空账号目录验证了管理会话交接、`/api/auth/session`、账号列表和管理页 HTTP 加载。尚未进行 Windows Chrome 真实账号导入或 Google 新登录验证。
+
 ## 0.3.4 升级兼容
 
 - 基线为上游 `v0.3.4`（`a4092efcdf358775339aa27cbb4db027fdf8f100`）。包含 SpiderMonkey Worker 关闭超时崩溃修复、账号启用／禁用即时生效与后台平滑排空、Google AI 欢迎弹窗自动关闭、图片生成 WAA 请求 30 秒超时保护、Responses 流式心跳保活、`-build` 助手配额阶梯式冷却（1/5/15/30/60 分钟），以及管理页界面重构（含接入指南面板新增 Magpie 说明）。Camoufox、SpiderMonkey、libwebp 和固定编译器工具链沿用上一版。

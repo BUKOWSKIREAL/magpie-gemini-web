@@ -1072,8 +1072,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     const setup = standInSetup('managed-key');
     try {
       const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-      const oneClick = plugin.auth.methods[0];
-      assert.match(oneClick.label, /（推荐）/);
+      const oneClick = plugin.auth.methods[1];
+      assert.match(oneClick.label, /直接打开/);
 
       serverResponses['/api/accounts'] = (req, res) => {
         if (req.method === 'POST') {
@@ -1169,10 +1169,48 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   const signInFor = account => ({ type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL, account, email: account } });
 
+  it('connects an upstream-imported account back to the managed plugin without a second provider', async () => {
+    const setup = standInSetup('managed-key');
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const google = plugin.auth.methods[0];
+      serverResponses['/api/accounts'] = accountsResponse([]);
+      const pending = await google.authorize({});
+      assert.match(pending.instructions, /Chrome 导入、粘贴 Cookie 或浏览器登录/);
+      const callback = pending.callback();
+      const post = (path, body = {}) => fetch(`${pending.url}${path}`, {
+        method: 'POST', redirect: 'manual', headers: { Origin: new URL(pending.url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      let status;
+      for (let i = 0; i < 40; i++) {
+        status = await (await fetch(`${pending.url}/status`)).json();
+        if (status.ready) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(status.ready, true);
+      const manage = await post('/manage');
+      assert.equal(manage.status, 200);
+      assert.equal((await manage.json()).url, `${new URL(serverURL).origin}/?tab=accounts`);
+      assert.match(manage.headers.get('set-cookie'), /HttpOnly/);
+      // The upstream UI imported several accounts. The connector selects only the one requested.
+      serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'ready' }]);
+      assert.equal((await post('/select', { id: POOL[1].id })).status, 200);
+      assert.deepEqual(await callback, signInFor(POOL[1].id));
+      assert.equal((await (await fetch(`${pending.url}/status`)).json()).done, true);
+      const ready = await google.authorize({ account: POOL[0].id });
+      assert.equal(ready.url, '');
+      assert.deepEqual(await ready.callback(), signInFor(POOL[0].id));
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } finally {
+      delete serverResponses['/api/accounts'];
+      setup.remove();
+    }
+  });
+
   it('9d. one sign-in way asks nothing the first time, then offers a new account or a local one', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['用 Google 账号登录（推荐）', '连接已有 AIStudio2API（地址 + API key）']);
-    const google = plugin.auth.methods[0];
+    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['用 Google 账号登录（推荐）', '直接打开 Google 登录窗口', '连接已有 AIStudio2API（地址 + API key）']);
+    const google = plugin.auth.methods[1];
 
     // Nothing set up: no question, and asking installs nothing (authorize sets it up)
     assert.equal(await google.ask({}), null);
@@ -1232,7 +1270,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.ok(Date.now() - asked < 5000);
 
       // whose sign-in shows the start still under way on its page
-      const signIn = await plugin.auth.methods[0].authorize({});
+      const signIn = await plugin.auth.methods[1].authorize({});
       assert.match(signIn.instructions, /^本地 AI Studio 服务还没启动/);
       const shown = await (await fetch(`${signIn.url}/status`)).json();
       assert.deepEqual(shown.steps.map(s => s.state), ['active', 'pending', 'pending']);
@@ -1260,7 +1298,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   it('9e. choosing an account that must sign in again opens the login window, and reports a login that failed', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    const google = plugin.auth.methods[0];
+    const google = plugin.auth.methods[1];
     const setup = standInSetup('managed-key');
     const loginURL = '/api/accounts/b%40example.com/login';
     try {

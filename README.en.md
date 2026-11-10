@@ -32,9 +32,10 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 ### Option 1: Google AI Studio (`ai-studio`)
 
 1. Sign in to **Google AI Studio** in Magpie and choose **「用 Google 账号登录（推荐）」** (Sign in with a Google account).
-2. Sign in to your Google account in the separate login window that opens (your regular browser is unaffected), then close the window.
-   > On first run, the local service (~40 MB) and the login browser Camoufox (~300 MB) are downloaded first, so the window may take a few minutes to appear. While they download, Magpie opens a progress page in your browser. Magpie waits at most 10 minutes, downloads included, so finish signing in promptly; if GitHub is unreachable, set `studio.proxy` first (see plugin options and proxy settings below).
-3. **Managing accounts:** Choose "Sign in with a Google account" again at any time to **add a new account**, create a card for an existing local account, or **re-authenticate** an expired account.
+2. Wait for the local service on the connection page, then click **「打开账号管理页」** (Open account manager). The plugin signs you into the bundled AIStudio2API management page automatically; no separate installation or API key copying is needed. Choose **Chrome import, paste cookies, or browser login** under Add account. The upstream UI handles platform restrictions and selecting accounts from a multi-account session.
+3. After importing or signing in, **return to the connection page**, select an account from the automatically refreshed list, and click **「连接到 Magpie」** (Connect to Magpie). It uses the plugin’s existing `ai-studio` provider, including its models, image generation and usage cards.
+   > The local service (~40 MB) is downloaded on first use. Camoufox (~300 MB) is needed only when choosing browser login. Magpie waits up to 10 minutes, downloads included. A timeout or cancellation preserves imported accounts; sign in again to select one. Import tasks in the management page remain owned by that page and can be cancelled there. Set `studio.proxy` first if GitHub is unreachable.
+4. **Managing accounts:** Sign in again to add an account, create a card for an existing account, or re-authenticate through the management page. If you import several accounts, select one per Magpie sign-in. **「直接打开 Google 登录窗口」** (Open Google login window directly) retains the previous isolated browser login flow.
 
 ### Option 2: Gemini Web (`gemini-web`)
 
