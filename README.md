@@ -21,7 +21,7 @@
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API (`v0.3.3`) | gemini-web2api-go (`4.27.1-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API (`v0.3.4`) | gemini-web2api-go (`4.28.0-magpie.1` 优化版) |
 
 ---
 
@@ -178,7 +178,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - Gemini Web 每个登录同时最多 2 个请求（AI Studio 为 1），可在 Magpie 的 provider 设置里调整；仍无法完全排除 Google 账号风控风险，请自行评估使用。
 
 **AI Studio 升级与模型范围：**
-- 插件固定使用经过 SHA-256 校验的 `v0.3.3-magpie.1`（基于上游 `v0.3.3`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
+- 插件固定使用经过 SHA-256 校验的 `v0.3.4-magpie.1`（基于上游 `v0.3.4`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
 - 0.3.3 的账号优先顺序（`ACCOUNT_ORDER`）与模型账号绑定（`MODEL_ACCOUNTS`）、以及 0.2.19 的 API Key 账号绑定与备用请求模型设置均会保留；管理页保存的默认值不会在重启后被改回插件默认值。备用请求默认关闭，需要时可在管理页开启并选择模型。
 - 从 0.2.18 升级且已开启 `auto` 时，备用请求从所有模型缩为 `FIRST_EVENT_HEDGE_MODELS` 中的模型，未配置该列表时仅有 Argon。管理页完整保存会固定当时的默认值，后续上游默认值变化需要手动调整。接管官方 0.2.19 的稀疏配置时，缺失项会按插件规则补齐（例如备用请求变为 `off`）；详见[升级兼容说明](docs/studio-release.md#0219-升级兼容)。
 - **托管后端已在 macOS、Linux、Windows 统一禁用在线更新**：管理页提示“更新由 magpie-gemini-web 管理”，更新接口返回 HTTP 409，检查更新也不会访问 GitHub。用户自行连接的外部服务不受影响。托管构建方式和可复现构建流程见 [docs/studio-release.md](docs/studio-release.md)。
@@ -191,11 +191,11 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
-- 插件默认使用本仓库发布的 [4.27.1-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.27.1-magpie.1)（基于上游 v4.27.1 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
+- 插件默认使用本仓库发布的 [4.28.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.28.0-magpie.1)（基于上游 v4.28.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：
   ```bash
-  npm run backend:install:upstream  # 回退并固定使用官方 v4.27.1
+  npm run backend:install:upstream  # 回退并固定使用官方 v4.28.0
   npm run backend:install           # 恢复默认优化版
   ```
 - 源码复现构建与发布流程见 [docs/backend-release.md](docs/backend-release.md)。

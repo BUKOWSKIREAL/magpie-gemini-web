@@ -65,7 +65,7 @@ index 78236c6760f6509fcdce801ba853d9ecfafe16ca..a5109b0785d71c0ed1081b7316c2b331
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
 diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
-index 4aedd2788f396f98cb4267baa0b3674e7a8ba7af..2364e2baec4c0c3c7678b78d3bb5f7e118e4beed 100644
+index b4acdde93f5f6bab89e7e0cc0e21dc81c9849ccb..77ae3c8e7fce039f22c0b9b633f57402518a4630 100644
 --- a/internal/app/admin_ui/index.html
 +++ b/internal/app/admin_ui/index.html
 @@ -1020,7 +1020,8 @@ const RT_GROUPS = [
@@ -75,10 +75,10 @@ index 4aedd2788f396f98cb4267baa0b3674e7a8ba7af..2364e2baec4c0c3c7678b78d3bb5f7e1
 -      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
 +      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600,
 +        hint: '对话请求按上游沉默计时：这么久一个字节都没来才放弃这一次（没出字前会重试）。排队时上游每 60 秒发一次心跳，回复一直在出也不会截断。其它请求（取页面、上传等）仍是整次请求的上限' },
-     ],
-   },
-   {
-@@ -1038,8 +1039,6 @@ const RT_GROUPS = [
+       { k: 'retry_on_timeout', label: '超时后重试', type: 'bool',
+         hint: '开：上游等满「上游超时」还没回完时，按重试次数再发（默认）。关：超时直接报错——等满一次都没回完，重发多半还是超时，一个请求最坏要等「超时 × 重试次数」，超长输入或慢模型（如 Argon）下能拖十几分钟。其他失败（空响应、出错话术等）照常重试' },
+       { k: 'stream_keepalive_sec', label: '流式保活（秒）', type: 'int', min: 0, max: 300,
+@@ -1042,8 +1043,6 @@ const RT_GROUPS = [
          hint: '上游前端版本号。请求大面积失败时先看这里是不是过期了' },
        { k: 'gemini_bl_auto', label: '自动跟随 bl 版本', type: 'bool',
          hint: '每 6 小时从 /app 页面抓一次最新版本号，抓到就用抓到的。抓不到或格式不对就继续用上面钉的值' },
@@ -1388,7 +1388,7 @@ index 97995a2f0ebb7626512590a23da1bc3f6fc97e3b..ba031401e77e479ebb33cc3a7868c904
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index e961a1b6af302999fe46d017feb3e4ed2c3301c1..39adf8893fab0abf1e999e73f3a9d604c72cf40e 100644
+index 13859ec746b8e49204f63efda517f05453bdec8b..7dcb59c6418a946fbc24d9f926f80d3dc5113cac 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -1459,7 +1459,7 @@ index e961a1b6af302999fe46d017feb3e4ed2c3301c1..39adf8893fab0abf1e999e73f3a9d604
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -407,7 +417,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -411,7 +421,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				if errors.Is(err, errUpstreamFailureReply) {
  					logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
  				}
@@ -1470,7 +1470,7 @@ index e961a1b6af302999fe46d017feb3e4ed2c3301c1..39adf8893fab0abf1e999e73f3a9d604
  			}
  			continue
  		}
-@@ -419,7 +431,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -423,7 +435,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1481,7 +1481,7 @@ index e961a1b6af302999fe46d017feb3e4ed2c3301c1..39adf8893fab0abf1e999e73f3a9d604
  			}
  			continue
  		}
-@@ -460,7 +474,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -464,7 +478,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -1490,7 +1490,7 @@ index e961a1b6af302999fe46d017feb3e4ed2c3301c1..39adf8893fab0abf1e999e73f3a9d604
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -511,7 +525,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+@@ -515,7 +529,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
  				}
  			}
  		}
@@ -1514,18 +1514,10 @@ index 60fe35fe0664c2feeb9d9d811be01c6d3323799c..14e5a44734cdd50be933af1cf8387a65
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee98d110d0 100644
+index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79626f6c30 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
-@@ -3,6 +3,7 @@ package app
- import (
- 	"bufio"
- 	"bytes"
-+	"context"
- 	"encoding/json"
- 	"errors"
- 	"fmt"
-@@ -12,6 +13,7 @@ import (
+@@ -14,6 +14,7 @@ import (
  	"regexp"
  	"strconv"
  	"strings"
@@ -1533,7 +1525,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -376,7 +378,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
+@@ -378,7 +379,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -1542,7 +1534,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -391,15 +393,23 @@ type fileRef struct {
+@@ -393,15 +394,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -1569,7 +1561,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		var exhausted *ModelDowngradedError
  		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
  			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
-@@ -417,8 +427,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -419,8 +428,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return res, err
  }
  
@@ -1580,7 +1572,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -428,6 +438,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -430,6 +439,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -1590,7 +1582,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  	var acct *CookieAccount
  	skip := exclude
  	if mc.PinAccountID > 0 {
-@@ -485,6 +498,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -487,6 +499,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -1600,7 +1592,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -581,7 +597,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -583,7 +598,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -1612,7 +1604,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -598,7 +617,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -600,7 +618,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -1624,7 +1616,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -726,49 +748,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -728,49 +749,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1686,7 +1678,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -776,9 +776,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -778,9 +777,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1698,7 +1690,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -786,6 +786,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -788,6 +787,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
@@ -1709,7 +1701,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -797,6 +801,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -799,6 +802,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1719,7 +1711,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			lastErr = err
  			// 出错话术不记进代理健康度：匿名直连也一样出，跟出口无关，算进去会误熔断。
  			if pickedOK && !errors.Is(err, errUpstreamFailureReply) {
-@@ -808,7 +815,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -814,7 +820,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1730,7 +1722,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			}
  			continue
  		}
-@@ -837,7 +846,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -843,7 +851,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1741,7 +1733,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			}
  			continue
  		}
-@@ -865,7 +876,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -871,7 +881,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1752,7 +1744,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			}
  			continue
  		}
-@@ -877,7 +890,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -883,7 +895,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1763,7 +1755,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			}
  			continue
  		}
-@@ -943,6 +958,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -949,6 +963,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1846,7 +1838,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1023,10 +1114,122 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1029,10 +1119,125 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -1889,6 +1881,9 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
 +func (e *StallError) Error() string {
 +	return fmt.Sprintf("上游 %s 没有任何数据（request_timeout_sec）", e.Limit)
 +}
++
++func (e *StallError) Timeout() bool   { return true }
++func (e *StallError) Temporary() bool { return true }
 +
 +// stallWatch 盯着一次 StreamGenerate：上游 limit 这么久一个字节都没来（连上了却迟迟
 +// 不回、或者回复写到一半停住）就取消这次请求，没出字的照常重试。计的是沉默，不是整次
@@ -1970,7 +1965,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1034,36 +1237,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1040,36 +1245,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -2017,7 +2012,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1421,6 +1625,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1451,6 +1657,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2026,7 +2021,7 @@ index e07759d3b1fa17d6e81afab0e42e355925d6cbc9..8b9ad100a2fcd5e7b53e1a9855f28eee
  			req.Header.Set(k, v)
  		}
 diff --git a/internal/app/gemini_api.go b/internal/app/gemini_api.go
-index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b9b2783de 100644
+index 613cf7f45b20193abfcaadc186414f50b904c82e..b24d891546b42b5bcdeddf332b3a3b7ca4ea850e 100644
 --- a/internal/app/gemini_api.go
 +++ b/internal/app/gemini_api.go
 @@ -1,6 +1,7 @@
@@ -2037,7 +2032,7 @@ index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b
  	"encoding/base64"
  	"encoding/json"
  	"fmt"
-@@ -458,6 +459,7 @@ func geminiCandidate(parts []interface{}, finish string) map[string]interface{}
+@@ -470,6 +471,7 @@ func geminiCandidate(parts []interface{}, finish string) map[string]interface{}
  // prepareGemini 是 generateContent / streamGenerateContent 共用的前半段：
  // 解析、选模型、收图、拼 prompt。出错时已经写好响应。
  type geminiCall struct {
@@ -2045,7 +2040,7 @@ index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b
  	req        *geminiAPIRequest
  	modelName  string
  	modelCfg   ModelConfig
-@@ -466,7 +468,7 @@ type geminiCall struct {
+@@ -478,7 +480,7 @@ type geminiCall struct {
  	toolChoice interface{}
  	images     []pendingUpload
  	prompt     string
@@ -2054,7 +2049,7 @@ index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b
  }
  
  func prepareGemini(w http.ResponseWriter, r *http.Request, model string) (*geminiCall, bool) {
-@@ -492,21 +494,21 @@ func prepareGemini(w http.ResponseWriter, r *http.Request, model string) (*gemin
+@@ -504,21 +506,21 @@ func prepareGemini(w http.ResponseWriter, r *http.Request, model string) (*gemin
  		writeGeminiError(w, 400, err.Error())
  		return nil, false
  	}
@@ -2081,7 +2076,7 @@ index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b
  }
  
  // runGeminiCall 是调上游那一步，测试里替换成桩。
-@@ -521,6 +523,9 @@ func handleGenerateContent(w http.ResponseWriter, r *http.Request, model string)
+@@ -533,6 +535,9 @@ func handleGenerateContent(w http.ResponseWriter, r *http.Request, model string)
  	}
  	text, calls, res, err := runGeminiCall(g, nil, nil)
  	if err != nil {
@@ -2091,9 +2086,9 @@ index 3721e4492d70b1e8647242a4ffb3df15a7f8fba1..d5950ab09511f419dfd39aa7328a397b
  		status := 502
  		if _, ok := err.(*ModelDowngradedError); ok {
  			status = 429
-@@ -656,6 +661,9 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request, model s
- 
+@@ -678,6 +683,9 @@ func handleStreamGenerateContent(w http.ResponseWriter, r *http.Request, model s
  	text, calls, res, err := runGeminiCall(g, onDelta, onReasoning)
+ 	ka.Stop() // 之后的收尾回到单 goroutine 写；Started() 也要在保活停下后再看
  	if err != nil {
 +		if clientGone(r, "gemini.streamGenerateContent", g.modelName, g.prompt, res, true) {
 +			return
@@ -2820,7 +2815,7 @@ index 1bd5bb4ac780da437deb257d8e9f9f1f33852ede..3d473c4f1a88cd1b40b2c9e75889b66a
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651e7d4d0ac 100644
+index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c145017f99977 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2835,8 +2830,8 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
  	"time"
  )
  
--const Version = "4.27.1"
-+const Version = "4.27.1-magpie.1"
+-const Version = "4.28.0"
++const Version = "4.28.0-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
@@ -2875,7 +2870,7 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
  		return
-@@ -305,11 +307,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -308,12 +310,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
  		// 多轮：按历史前缀识别续接，命中就只发新消息、历史留服务端。带 tools 也走这条。
@@ -2885,6 +2880,7 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
 -		text, toolCalls, res, err = callGemini(prompt, latest, modelCfg, tools, images, onDelta, onReasoning)
 +		text, toolCalls, res, err = callGemini(r.Context(), prompt, pc, modelCfg, tools, images, onDelta, onReasoning)
  	}
+ 	ka.Stop() // 之后的收尾回到单 goroutine 写；Started() 也要在保活停下后再看
  	if err != nil {
 +		if clientGone(r, "chat.completions", modelName, prompt, res, stream) {
 +			return
@@ -2892,7 +2888,7 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
  		mde, downgraded := err.(*ModelDowngradedError)
  		status := 502
  		if downgraded {
-@@ -400,6 +405,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -404,6 +409,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	})
  }
  
@@ -2914,7 +2910,7 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
  // usageOf 是 buildUsageWithReasoning 的便捷包装，res 可能为 nil。
  func usageOf(prompt, text string, res *StreamResult) map[string]int {
  	r := ""
-@@ -575,7 +595,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -579,7 +599,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -2923,7 +2919,7 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
  		return
-@@ -669,11 +689,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -682,12 +702,15 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  	var toolCalls []ToolCall
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
@@ -2933,6 +2929,7 @@ index e29ce3e3ac4372ba65a617ca8c4fdd0aba4da642..b3235675a255057abaa83467cc87b651
 -		text, toolCalls, res, err = callGemini(prompt, latest, modelCfg, tools, images, onDelta, nil)
 +		text, toolCalls, res, err = callGemini(r.Context(), prompt, pc, modelCfg, tools, images, onDelta, nil)
  	}
+ 	ka.Stop()
  	if err != nil {
 +		if clientGone(r, "responses", modelName, prompt, res, stream) {
 +			return
@@ -3159,6 +3156,20 @@ index ecc17aceec6f365649ccb84bc9ca04189b524f03..88267c5b550800765d2b50f474e4ba76
  }
  
  // modelDowngraded 判断服务端自报的显示名是不是请求的那个模型。
+diff --git a/internal/app/timeout_retry_test.go b/internal/app/timeout_retry_test.go
+index 77a51151b8c5c17e4fbd23461370ee4bc2507328..b31966a954f0c6c0ca959e0574486e47d8acf9dc 100644
+--- a/internal/app/timeout_retry_test.go
++++ b/internal/app/timeout_retry_test.go
+@@ -63,6 +63,9 @@ func TestIsUpstreamTimeout(t *testing.T) {
+ 	if !isUpstreamTimeout(fmt.Errorf("processSession 超时（3m0s）: %w", errUpstreamTimeout)) {
+ 		t.Error("新协议超时没认出来")
+ 	}
++	if !isUpstreamTimeout(&StallError{Limit: time.Second}) {
++		t.Error("沉默超时（StallError）没认出来")
++	}
+ 	for _, e := range []error{nil, errUpstreamFailureReply, errors.New("EOF"),
+ 		fmt.Errorf("upstream returned no content frame (raw 216 bytes)")} {
+ 		if isUpstreamTimeout(e) {
 diff --git a/internal/app/tokenizer.go b/internal/app/tokenizer.go
 index 634f3b76c1ceea03f540e4c2fc5e3a9ca53ccd2b..399057e5ab5e62120094454e2e81da6b12c0d8d8 100644
 --- a/internal/app/tokenizer.go

@@ -21,7 +21,7 @@ The plugin provides two independent providers that can be used individually or t
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.3.3`) | gemini-web2api-go (`4.27.1-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (`v0.3.4`) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
 
 ---
 
@@ -178,7 +178,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Gemini Web takes at most 2 requests at once per sign-in (AI Studio 1), adjustable in Magpie's provider settings. Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- The plugin pins SHA-256-verified `v0.3.3-magpie.1`, based on upstream `v0.3.3`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
+- The plugin pins SHA-256-verified `v0.3.4-magpie.1`, based on upstream `v0.3.4`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
 - Account priority ordering (`ACCOUNT_ORDER`) and per-model account bindings (`MODEL_ACCOUNTS`) from 0.3.3, as well as API key account bindings and hedge model selections from 0.2.19, are preserved. Settings saved in the admin page, including upstream defaults, survive plugin restarts. Hedge requests remain off by default; enable them and select models in the admin page if needed.
 - For users upgrading from 0.2.18 with `auto` enabled, hedging now applies only to `FIRST_EVENT_HEDGE_MODELS`, defaulting to Argon when that list is absent. Saving in the admin page fixes the current defaults in the file; later upstream default changes require manual adjustment. When taking over an official 0.2.19 sparse configuration, missing settings follow the plugin's initialization rules (for example, hedging becomes `off`). See the [upgrade compatibility notes](docs/studio-release.md#0219-升级兼容).
 - **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page says updates are managed by magpie-gemini-web; the update endpoint returns HTTP 409 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for how the managed build is made and reproduced.
@@ -191,11 +191,11 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Models with `-build` or `assistant_route` are filtered out: they inject the Build coding assistant's own system prompt and are not offered as ordinary Agent models. Refresh with `magpie provider models ai-studio` after upgrading.
 
 **Gemini Web optimized backend upgrades & rollback:**
-- One-click setup uses [4.27.1-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.27.1-magpie.1) by default (built from pinned upstream v4.27.1 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon model verification). Chat requests are timed by silence: while Google queues a request it sends a heartbeat every 60 s, and the backend waits through it for the first words. A try is given up, and retried, only after Google has sent nothing for `request_timeout_sec` (180 s by default), so a long reply that keeps coming is never cut off either.
+- One-click setup uses [4.28.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.28.0-magpie.1) by default (built from pinned upstream v4.28.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon model verification). Chat requests are timed by silence: while Google queues a request it sends a heartbeat every 60 s, and the backend waits through it for the first words. A try is given up, and retried, only after Google has sent nothing for `request_timeout_sec` (180 s by default), so a long reply that keeps coming is never cut off either.
 - **Upgrading:** Running backends are not interrupted automatically. Stop the existing process (PID in `backend.pid` inside the data directory); the next Magpie launch or request will upgrade the binary while preserving config and cookies.
 - **Rollback to upstream / restore optimized build** (run in the plugin directory after stopping the backend):
   ```bash
-  npm run backend:install:upstream  # Roll back and pin to official v4.27.1
+  npm run backend:install:upstream  # Roll back and pin to official v4.28.0
   npm run backend:install           # Restore default optimized build
   ```
 - For reproducible builds and release procedures, see [docs/backend-release.md](docs/backend-release.md).

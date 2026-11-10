@@ -586,7 +586,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const { dataDir } = installedStandIn('managed-version-upgrade');
     const local = localStudio({ dataDir });
     // An earlier plugin's managed build is replaced like an official one, not reported as custom
-    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.18', 'v0.2.19', 'v0.2.20', 'v0.3.0', 'v0.3.1', 'v0.3.2', 'v0.3.3', 'v0.3.2-magpie.1', 'v0.3.0-magpie.1', 'v0.3.0-magpie.2', 'v0.2.19-magpie.1', 'v0.2.19-magpie.2', 'v0.3.1-magpie.1', 'v0.2.18-magpie.1', 'v0.2.18-magpie.2', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.17-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
+    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.18', 'v0.2.19', 'v0.2.20', 'v0.3.0', 'v0.3.1', 'v0.3.2', 'v0.3.3', 'v0.3.4', 'v0.3.3-magpie.1', 'v0.3.2-magpie.1', 'v0.3.0-magpie.1', 'v0.3.0-magpie.2', 'v0.2.19-magpie.1', 'v0.2.19-magpie.2', 'v0.3.1-magpie.1', 'v0.2.18-magpie.1', 'v0.2.18-magpie.2', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.17-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
       const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
       assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
     }
@@ -600,7 +600,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    for (const version of ['v0.3.4', 'v1.0.0', 'v0.3.3-magpie.2', 'v0.3.4-magpie.1', 'v0.2.15-custom', 'unknown']) {
+    for (const version of ['v0.3.5', 'v1.0.0', 'v0.3.4-magpie.2', 'v0.3.5-magpie.1', 'v0.2.15-custom', 'unknown']) {
       const fetchFn = async (url, init) => {
         if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
