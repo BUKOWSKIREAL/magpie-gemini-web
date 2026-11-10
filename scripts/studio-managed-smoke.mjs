@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2);
 const packageRoot = args.find(arg => arg.startsWith('--package-root='))?.slice('--package-root='.length) || root;
 const download = args.includes('--download');
-const { installStudio, ensureStudio, stopStudio, studioAdmin, studioStatus, computeFileHash, STUDIO_VERSION } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-native.mjs')));
+const { installStudio, ensureStudio, stopStudio, studioAdmin, studioBrowserSession, studioStatus, computeFileHash, STUDIO_VERSION } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-native.mjs')));
 const release = JSON.parse(fs.readFileSync(path.join(packageRoot, 'lib/studio-release.json'), 'utf8'));
 const key = `${process.platform}-${process.arch}`;
 const pin = release.binaries[key];
@@ -48,7 +48,52 @@ try {
   assert.equal(config.search_model_aliases, false);
   assert.equal(config.strip_thought_signatures, false);
   assert.equal(config.hide_dock_icon, false);
-  assert.deepEqual(await studioAdmin(local, 'GET', '/api/accounts/tasks'), { tasks: [] });
+  const taskStatus = await studioAdmin(local, 'GET', '/api/accounts/tasks');
+  assert.deepEqual(taskStatus.tasks, []);
+  if (release.patches.includes('studio-0.3.4-magpie-signin.patch')) {
+    assert.equal(taskStatus.magpie_signin, 1);
+    const { openStudioConnect } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-connect.mjs')));
+    const bridge = await openStudioConnect({ prepare: async () => local, deadline: Date.now() + 15000 });
+    const pending = bridge.start();
+    try {
+      let ready = false;
+      for (let i = 0; i < 40; i++) {
+        if ((await (await fetch(bridge.url + '/status')).json()).ready) { ready = true; break; }
+        await new Promise(r => setTimeout(r, 100));
+      }
+      assert.ok(ready, 'sign-in bridge must prepare the real backend');
+      const managed = await fetch(bridge.url + '/manage', { method: 'POST', headers: { Origin: new URL(bridge.url).origin } });
+      assert.equal(managed.status, 200);
+      const destination = new URL((await managed.json()).url);
+      assert.equal(destination.origin, local.origin);
+      const state = new URLSearchParams(destination.hash.slice(1));
+      assert.equal(state.get('callback'), bridge.url + '/finish');
+      const cookie = await studioBrowserSession(local);
+      assert.ok(managed.headers.get('set-cookie').startsWith(cookie + ';'));
+      // Invalid cookie text fails locally before touching Google; this still exercises a real
+      // asynchronous task, authenticated browser writes, client correlation and retry semantics.
+      const imported = await fetch(local.origin + '/api/accounts/import/cookies', {
+        method: 'POST', headers: { Origin: local.origin, Cookie: cookie, 'Content-Type': 'application/json', 'X-Magpie-Signin': state.get('magpie') },
+        body: JSON.stringify({ items: [{ email: 'smoke@example.invalid', cookies: 'not-a-cookie' }] })
+      });
+      assert.equal(imported.status, 202);
+      const { task } = await imported.json();
+      assert.equal(task.client_id, state.get('magpie'));
+      let saved;
+      for (let i = 0; i < 40; i++) {
+        saved = (await studioAdmin(local, 'GET', '/api/accounts/tasks')).tasks.find(t => t.id === task.id);
+        if (saved.state !== 'running') break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      assert.equal(saved.state, 'failed');
+      assert.equal(saved.client_id, task.client_id);
+      assert.equal((await (await fetch(bridge.url + '/status')).json()).done, false);
+      await fetch(bridge.url + '/cancel', { method: 'POST', headers: { Origin: new URL(bridge.url).origin } });
+      await assert.rejects(pending, /取消/);
+      await studioAdmin(local, 'DELETE', `/api/accounts/tasks/${encodeURIComponent(task.id)}`);
+      console.log('PASS automatic sign-in: session handoff, capability, task correlation and failed-import retry');
+    } finally { bridge.close(); }
+  }
   // Save upstream defaults that differ from this plugin's defaults. They must stay explicit
   // through the backend's Save and the plugin's next config sync, not get silently re-seeded.
   const choices = {

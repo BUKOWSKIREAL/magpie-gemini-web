@@ -32,10 +32,13 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 ### Option 1: Google AI Studio (`ai-studio`)
 
 1. Sign in to **Google AI Studio** in Magpie and choose **「用 Google 账号登录（推荐）」** (Sign in with a Google account).
-2. Wait for the local service on the connection page, then click **「打开账号管理页」** (Open account manager). The plugin signs you into the bundled AIStudio2API management page automatically; no separate installation or API key copying is needed. Choose **Chrome import, paste cookies, or browser login** under Add account. The upstream UI handles platform restrictions and selecting accounts from a multi-account session.
-3. After importing or signing in, **return to the connection page**, select an account from the automatically refreshed list, and click **「连接到 Magpie」** (Connect to Magpie). It uses the plugin’s existing `ai-studio` provider, including its models, image generation and usage cards.
-   > The local service (~40 MB) is downloaded on first use. Camoufox (~300 MB) is needed only when choosing browser login. Magpie waits up to 10 minutes, downloads included. A timeout or cancellation preserves imported accounts; sign in again to select one. Import tasks in the management page remain owned by that page and can be cancelled there. Set `studio.proxy` first if GitHub is unreachable.
-4. **Managing accounts:** Sign in again to add an account, create a card for an existing account, or re-authenticate through the management page. If you import several accounts, select one per Magpie sign-in. **「直接打开 Google 登录窗口」** (Open Google login window directly) retains the previous isolated browser login flow.
+2. Once the plugin prepares the local service, the same tab automatically opens **account import / sign-in**. Choose **Chrome import, paste cookies, or browser login**. No separate installation or API key copying is needed; select multiple accounts once in the import UI.
+3. When every item in this sign-in task succeeds, the plugin **automatically configures Magpie**. A single import saves that account; a batch saves the imported group. There is no return-and-select step, and the existing `ai-studio` provider, models, image generation and usage cards remain available.
+4. **Managing accounts:** Sign in again to add an account, create a separate card for an existing account, or re-authenticate. **「直接打开 Google 登录窗口」** (Open Google login window directly) retains the isolated browser login flow.
+
+The local service (~40 MB) is downloaded on first use. Camoufox (~300 MB) is needed only for browser login. Magpie waits up to 10 minutes, downloads included. In the automatic flow, timeout or cancellation stops this sign-in's unfinished tasks and preserves imported accounts; tasks from other windows are unaffected. Set `studio.proxy` first if GitHub is unreachable.
+
+The automatic flow requires the bundled sign-in patch (candidate backend `0.3.4-magpie.2`). The published pin is still `0.3.4-magpie.1`; until the new backend is built and published, it retains the previous flow: open account management, import, then return to the connection page and select an account.
 
 ### Option 2: Gemini Web (`gemini-web`)
 

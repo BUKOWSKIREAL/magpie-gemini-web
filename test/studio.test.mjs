@@ -1169,12 +1169,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   const signInFor = account => ({ type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL, account, email: account } });
 
-  it('connects an upstream-imported account back to the managed plugin without a second provider', async () => {
+  it('automatically connects exactly the accounts from the upstream sign-in task', async () => {
     const setup = standInSetup('managed-key');
     try {
       const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
       const google = plugin.auth.methods[0];
       serverResponses['/api/accounts'] = accountsResponse([]);
+      serverResponses['/api/accounts/tasks'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ tasks: [], magpie_signin: 1 }) };
       const pending = await google.authorize({});
       assert.match(pending.instructions, /Chrome 导入、粘贴 Cookie 或浏览器登录/);
       const callback = pending.callback();
@@ -1190,18 +1191,26 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(status.ready, true);
       const manage = await post('/manage');
       assert.equal(manage.status, 200);
-      assert.equal((await manage.json()).url, `${new URL(serverURL).origin}/?tab=accounts`);
+      const destination = new URL((await manage.json()).url);
+      assert.equal(destination.origin, new URL(serverURL).origin);
+      const client = new URLSearchParams(destination.hash.slice(1)).get('magpie');
       assert.match(manage.headers.get('set-cookie'), /HttpOnly/);
-      // The upstream UI imported several accounts. The connector selects only the one requested.
+      // A fully completed task connects all accounts selected in the upstream import page.
       serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'ready' }]);
-      assert.equal((await post('/select', { id: POOL[1].id })).status, 200);
-      assert.deepEqual(await callback, signInFor(POOL[1].id));
+      serverResponses['/api/accounts/tasks'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ tasks: [
+        { id: 'import', client_id: client, state: 'done', items: [POOL[0], POOL[1]].map(a => ({ account_id: a.id, state: 'done' })) }
+      ] }) };
+      const signed = await callback;
+      assert.deepEqual(signed, { type: 'success', key: 'managed-key', metadata: {
+        mode: 'studio', managed: true, baseURL: serverURL, accounts: [POOL[0].id, POOL[1].id]
+      } });
       assert.equal((await (await fetch(`${pending.url}/status`)).json()).done, true);
       const ready = await google.authorize({ account: POOL[0].id });
       assert.equal(ready.url, '');
       assert.deepEqual(await ready.callback(), signInFor(POOL[0].id));
       await new Promise(resolve => setTimeout(resolve, 100));
     } finally {
+      delete serverResponses['/api/accounts/tasks'];
       delete serverResponses['/api/accounts'];
       setup.remove();
     }
@@ -1438,6 +1447,11 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(card.user, 'a@example.com +1（1 个需要重新登录）', 'the disabled account is left out');
       const pool = card.windows.filter(w => w.name !== '管理页');
       assert.deepEqual(pool, [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '1/1 个账号冷却中：quota exhausted' }]);
+      const batchAuth = { ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['a@example.com'] } };
+      const batch = await plugin.auth.usage(async () => batchAuth);
+      assert.equal(batch.user, 'a@example.com', 'an imported group does not display unrelated accounts');
+      const missing = await plugin.auth.usage(async () => ({ ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['removed'] } }));
+      assert.match(missing.error, /本次导入.*停用或移除/);
 
       // The proxy the service goes out through, and why the one saved in the admin page isn't it yet
       serverResponses['/api/config'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ proxy: '', active_proxy: 'http://127.0.0.1:9393' }) };

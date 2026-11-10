@@ -1,0 +1,503 @@
+diff --git a/internal/api/account_tasks.go b/internal/api/account_tasks.go
+index c9bb50d..667058c 100644
+--- a/internal/api/account_tasks.go
++++ b/internal/api/account_tasks.go
+@@ -3,6 +3,7 @@ package api
+ import (
+ 	"context"
+ 	"crypto/rand"
++	"encoding/hex"
+ 	"net/http"
+ 	"slices"
+ 	"strings"
+@@ -16,6 +17,7 @@ import (
+ // AccountTask 是在服务端运行的添加或重新登录账户任务，管理页关闭或刷新后继续运行，结束后保留到用户关闭
+ type AccountTask struct {
+ 	ID        string            `json:"id"`
++	ClientID  string            `json:"client_id,omitempty"`
+ 	Kind      string            `json:"kind"`
+ 	View      string            `json:"view,omitempty"`
+ 	State     string            `json:"state"`
+@@ -25,10 +27,11 @@ type AccountTask struct {
+ 
+ // AccountTaskItem 是任务中的一个账户，Label 为邮箱，浏览器登录完成前为空
+ type AccountTaskItem struct {
+-	Label string `json:"label"`
+-	State string `json:"state"`
+-	Code  string `json:"code,omitempty"`
+-	Error string `json:"error,omitempty"`
++	Label     string `json:"label"`
++	AccountID string `json:"account_id,omitempty"`
++	State     string `json:"state"`
++	Code      string `json:"code,omitempty"`
++	Error     string `json:"error,omitempty"`
+ }
+ 
+ // chromeImportRequest 是从本机 Chrome 导入的账号与共用的账户环境
+@@ -84,6 +87,13 @@ func (task AccountTask) clone() AccountTask {
+ func (tasks *accountTasks) start(r *http.Request, task AccountTask, run func(context.Context, accountTaskUpdate)) AccountTask {
+ 	ctx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
+ 	task.ID = rand.Text()
++	// The plugin tags only tasks submitted from its current sign-in page. Existing tasks and
++	// other browser windows must never complete that sign-in. This is correlation, not auth.
++	if id := r.Header.Get("X-Magpie-Signin"); len(id) == 48 {
++		if _, err := hex.DecodeString(id); err == nil {
++			task.ClientID = id
++		}
++	}
+ 	task.State = "running"
+ 	task.StartedAt = time.Now().UTC()
+ 	entry := &accountTaskEntry{task: task.clone(), cancel: cancel}
+@@ -183,7 +193,7 @@ func runAccountTaskItems(ctx context.Context, update accountTaskUpdate, count in
+ 				item.State, item.Code, item.Error = "failed", codeFromError(err, ""), err.Error()
+ 				return
+ 			}
+-			item.State, item.Label = "done", account.Label
++			item.State, item.Label, item.AccountID = "done", account.Label, account.ID
+ 		})
+ 	}
+ }
+@@ -195,7 +205,7 @@ func (s *server) startAccountTask(w http.ResponseWriter, r *http.Request, task A
+ 
+ // handleAccountTasks 返回账户任务
+ func (s *server) handleAccountTasks(w http.ResponseWriter, _ *http.Request) {
+-	writeJSON(w, http.StatusOK, map[string][]AccountTask{"tasks": s.accountTasks.list()})
++	writeJSON(w, http.StatusOK, map[string]any{"tasks": s.accountTasks.list(), "magpie_signin": 1})
+ }
+ 
+ // handleDeleteAccountTask 取消进行中的账户任务或关闭已结束的任务
+diff --git a/internal/api/magpie_signin_test.go b/internal/api/magpie_signin_test.go
+new file mode 100644
+index 0000000..91b34ab
+--- /dev/null
++++ b/internal/api/magpie_signin_test.go
+@@ -0,0 +1,46 @@
++package api
++
++import (
++	"context"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestMagpieTaskCorrelation(t *testing.T) {
++	for _, client := range []string{strings.Repeat("a", 48), "", "not-a-client-id"} {
++		tasks := &accountTasks{}
++		request := httptest.NewRequest("POST", "/api/accounts", nil)
++		request.Header.Set("X-Magpie-Signin", client)
++		release := make(chan struct{})
++		task := tasks.start(request, AccountTask{Kind: "login", Items: []AccountTaskItem{{State: "pending"}}}, func(ctx context.Context, update accountTaskUpdate) {
++			<-release
++			runAccountTaskItems(ctx, update, 1, func(int) (AdminAccount, error) {
++				return AdminAccount{ID: "canonical-id", Label: "display@example.com"}, nil
++			})
++		})
++		expected := ""
++		if len(client) == 48 {
++			expected = client
++		}
++		if task.ClientID != expected {
++			t.Fatalf("client = %q, want %q", task.ClientID, expected)
++		}
++		close(release)
++		deadline := time.Now().Add(time.Second)
++		for {
++			saved := tasks.list()[0]
++			if saved.State == "done" {
++				if saved.ClientID != expected || saved.Items[0].AccountID != "canonical-id" || saved.Items[0].Label != "display@example.com" {
++					t.Fatalf("task identity lost: %#v", saved)
++				}
++				break
++			}
++			if time.Now().After(deadline) {
++				t.Fatal("task did not complete")
++			}
++			time.Sleep(time.Millisecond)
++		}
++	}
++}
+diff --git a/web/src/App.vue b/web/src/App.vue
+index e09a472..ae6006c 100644
+--- a/web/src/App.vue
++++ b/web/src/App.vue
+@@ -1,7 +1,17 @@
+ <script setup lang="ts">
+ defineProps<{ adminUsername?: string }>()
+ const emit = defineEmits<{ logout: [] }>()
+-import { computed, defineAsyncComponent, h, onMounted, ref, useTemplateRef, watch } from 'vue'
++import {
++  computed,
++  defineAsyncComponent,
++  h,
++  onMounted,
++  onUnmounted,
++  ref,
++  useTemplateRef,
++  watch,
++} from 'vue'
++import { magpieSignIn, magpieTaskComplete, returnToMagpie } from '@/magpie'
+ import type { AsyncComponentLoader } from 'vue'
+ import {
+   DropdownMenuContent,
+@@ -58,6 +68,11 @@ const validTabs: TabID[] = [
+   'version',
+ ]
+ const { tab: currentTab, select: selectTab } = useTabParam(validTabs, 'logs')
++if (magpieSignIn) currentTab.value = 'accounts'
++const signInTimer = magpieSignIn
++  ? window.setTimeout(() => returnToMagpie(), Math.max(0, magpieSignIn.deadline - Date.now()))
++  : undefined
++onUnmounted(() => window.clearTimeout(signInTimer))
+ const router = useRouter()
+ const route = useRoute()
+ // currentTab 在从试用页返回时同步目标管理页面
+@@ -166,6 +181,19 @@ const {
+   waitForRestart,
+ } = useConsole()
+ 
++const signInTasks = computed(() =>
++  magpieSignIn
++    ? accountTasks.value.filter((task) => task.client_id === magpieSignIn?.client)
++    : accountTasks.value,
++)
++watch(
++  signInTasks,
++  (tasks) => {
++    if (tasks.some((task) => magpieTaskComplete(task))) returnToMagpie()
++  },
++  { deep: true, immediate: true },
++)
++
+ // noticeText 是按界面语言显示的提示正文，服务文案翻译表到达后随之更新
+ const noticeText = computed(() => logText(notice.message))
+ // deletedNotice 是撤销提示的正文：删除一个账户时写账户名，批量删除时写数量
+@@ -231,6 +259,7 @@ onMounted(revealCurrentTab)
+ <template>
+   <div class="flex h-full w-full flex-col md:flex-row">
+     <aside
++      v-if="!magpieSignIn"
+       class="app-sidebar relative grid w-full min-w-0 shrink-0 border-b border-line bg-panel md:border-r md:border-b-0"
+       :style="{ '--sidebar-width': `${sidebarWidth}px` }"
+     >
+@@ -417,7 +446,7 @@ onMounted(revealCurrentTab)
+ 
+     <main class="@container flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
+       <div
+-        v-if="config?.reserved_listen_addr"
++        v-if="!magpieSignIn && config?.reserved_listen_addr"
+         role="alert"
+         class="page-x overflow-hidden border-b border-amber-500/30 bg-amber-500/10 py-2.5 text-sm break-words text-amber-200 [scrollbar-gutter:stable]"
+       >
+@@ -428,7 +457,7 @@ onMounted(revealCurrentTab)
+         }}
+       </div>
+       <div
+-        v-if="config?.invalid.length"
++        v-if="!magpieSignIn && config?.invalid.length"
+         role="alert"
+         class="page-x overflow-hidden border-b border-amber-500/30 bg-amber-500/10 py-2.5 text-sm break-words text-amber-200 [scrollbar-gutter:stable]"
+       >
+@@ -444,7 +473,7 @@ onMounted(revealCurrentTab)
+         <AccountsPanel
+           v-else-if="currentTab === 'accounts'"
+           :accounts="visibleAccounts"
+-          :tasks="accountTasks"
++          :tasks="signInTasks"
+           :loading="loading.accounts"
+           :error="errors.accounts"
+           :chrome-import="status?.chrome_import ?? false"
+diff --git a/web/src/api.ts b/web/src/api.ts
+index 1032107..e5ce0e6 100644
+--- a/web/src/api.ts
++++ b/web/src/api.ts
+@@ -1,4 +1,5 @@
+ import { ref } from 'vue'
++import { magpieSignIn } from '@/magpie'
+ import { keepPage } from '@/desktop'
+ import type {
+   Account,
+@@ -94,6 +95,18 @@ keepPage(() => writes.value > 0)
+ 
+ // send 发出管理端请求并保留服务端错误语义，管理登录失效时通知页面清理管理数据，写请求进行中时计入 writes
+ async function send(path: string, init?: RequestInit): Promise<Response> {
++  if (
++    magpieSignIn &&
++    init?.method === 'POST' &&
++    (path === '/api/accounts' ||
++      path === '/api/accounts/import/chrome' ||
++      path === '/api/accounts/import/cookies' ||
++      /^\/api\/accounts\/[^/]+\/login$/.test(path))
++  ) {
++    const headers = new Headers(init.headers)
++    headers.set('X-Magpie-Signin', magpieSignIn.client)
++    init = { ...init, headers }
++  }
+   const write = init?.method !== undefined && init.method !== 'GET'
+   if (write) writes.value++
+   try {
+diff --git a/web/src/components/AccountsPanel.vue b/web/src/components/AccountsPanel.vue
+index 3eb94ee..dda3190 100644
+--- a/web/src/components/AccountsPanel.vue
++++ b/web/src/components/AccountsPanel.vue
+@@ -9,6 +9,7 @@ import {
+   DropdownMenuTrigger,
+ } from 'reka-ui'
+ import { api, ApiError } from '@/api'
++import { magpieSignIn, returnToMagpie } from '@/magpie'
+ import { useI18n, type TranslationKey } from '@/i18n'
+ import { usePaged } from '@/paging'
+ import { maskedProxy } from '@/proxy'
+@@ -54,6 +55,12 @@ const emit = defineEmits<{
+ }>()
+ 
+ const { t, locale, errorText, logText } = useI18n()
++const signInBusy = computed(
++  () => pendingAction.value !== '' || props.tasks.some((task) => task.state === 'running'),
++)
++const signInAccount = computed(() =>
++  props.accounts.find((account) => account.id === magpieSignIn?.account),
++)
+ const defaultAccountLocale = navigator.language
+ const showEditor = ref(false)
+ const showBrowserLogin = ref(false)
+@@ -939,7 +946,45 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+   <section
+     class="flex min-h-0 flex-1 flex-col overflow-auto max-md:[scrollbar-gutter:stable] md:overflow-hidden"
+   >
++    <header v-if="magpieSignIn" class="page-x border-b border-line py-6">
++      <div class="flex items-center justify-between gap-4">
++        <h1 class="text-xl font-semibold text-white">登录 Google AI Studio</h1>
++        <button
++          type="button"
++          class="rounded border border-line px-3 py-1.5 text-sm text-gray-300"
++          @click="returnToMagpie(true)"
++        >
++          取消
++        </button>
++      </div>
++      <p class="mt-2 text-sm text-gray-400">
++        导入或登录成功后将自动连接到 Magpie，无需再填写任何配置。
++      </p>
++      <div v-if="!magpieSignIn.account" class="mt-5 grid gap-3 md:grid-cols-3">
++        <button
++          v-for="item in addMethods.slice(0, 3)"
++          :key="item.label"
++          type="button"
++          class="rounded-lg border border-line bg-panel p-4 text-left transition hover:bg-raised disabled:opacity-50"
++          :disabled="signInBusy || item.disabled"
++          @click="item.action"
++        >
++          <span class="block font-medium text-white">{{ t(item.label) }}</span>
++          <span class="mt-2 block text-sm text-gray-400">{{ t(item.help) }}</span>
++        </button>
++      </div>
++      <button
++        v-else-if="signInAccount"
++        type="button"
++        class="mt-5 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
++        :disabled="signInBusy"
++        @click="loginAccount(signInAccount)"
++      >
++        重新登录 {{ signInAccount.label || signInAccount.id }}
++      </button>
++    </header>
+     <header
++      v-else
+       class="page-x flex flex-wrap items-center gap-3 border-b border-line py-4 md:overflow-hidden md:[scrollbar-gutter:stable]"
+     >
+       <div class="min-w-0 flex-[1_1_16rem]">
+@@ -1073,7 +1118,7 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+                 {{ t('common.cancel') }}
+               </button>
+               <button
+-                v-else
++                v-else-if="!magpieSignIn || task.state === 'failed'"
+                 v-tooltip="t('common.close')"
+                 type="button"
+                 class="flex size-[26px] items-center justify-center rounded text-gray-400 transition hover:bg-line hover:text-gray-200"
+@@ -1122,7 +1167,7 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+           </ul>
+         </li>
+       </ul>
+-      <div class="mb-3 flex flex-wrap items-center gap-2">
++      <div v-if="!magpieSignIn" class="mb-3 flex flex-wrap items-center gap-2">
+         <input
+           v-model="search"
+           type="search"
+@@ -1161,27 +1206,27 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+           </option>
+         </UiSelect>
+       </div>
+-      <p v-if="error" class="flex items-center gap-2 text-sm text-red-300">
++      <p v-if="!magpieSignIn && error" class="flex items-center gap-2 text-sm text-red-300">
+         <UiIcon name="warning" :size="15" class="shrink-0" />{{ error }}
+       </p>
+-      <div v-else-if="loading" class="py-12 text-center text-gray-500">
++      <div v-else-if="!magpieSignIn && loading" class="py-12 text-center text-gray-500">
+         {{ t('common.loading') }}
+       </div>
+       <div
+-        v-else-if="accounts.length === 0"
++        v-else-if="!magpieSignIn && accounts.length === 0"
+         class="rounded border border-line bg-panel py-10 text-center text-gray-500"
+       >
+         <p class="mb-2">{{ t('accounts.empty') }}</p>
+         <p class="text-xs">{{ t('accounts.emptyHint') }}</p>
+       </div>
+       <div
+-        v-else-if="visibleAccounts.length === 0"
++        v-else-if="!magpieSignIn && visibleAccounts.length === 0"
+         class="rounded border border-line bg-panel py-10 text-center text-sm text-gray-500"
+       >
+         {{ t('accounts.noMatches') }}
+       </div>
+       <div
+-        v-else
++        v-else-if="!magpieSignIn"
+         class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-panel max-md:max-h-[70vh] max-md:shrink-0 max-md:basis-auto"
+       >
+         <div class="flex min-h-10 items-center gap-3 border-b border-line px-4 py-1.5 text-xs">
+diff --git a/web/src/magpie.ts b/web/src/magpie.ts
+new file mode 100644
+index 0000000..84e1f2b
+--- /dev/null
++++ b/web/src/magpie.ts
+@@ -0,0 +1,59 @@
++import type { AccountTask } from './types'
++
++interface MagpieSignIn {
++  client: string
++  callback: string
++  account: string
++  deadline: number
++}
++
++// The fragment is local sign-in state, never an API key or a Google credential. Keep it in the
++// URL across reloads; it is not sent to the service or in HTTP referrers.
++export function parseMagpieSignIn(hash: string): MagpieSignIn | null {
++  const params = new URLSearchParams(hash.replace(/^#/, ''))
++  const client = params.get('magpie') || ''
++  if (!/^[a-f0-9]{48}$/.test(client)) return null
++  try {
++    const callback = new URL(params.get('callback') || '')
++    const deadline = Number(params.get('deadline'))
++    if (
++      callback.protocol !== 'http:' ||
++      callback.hostname !== '127.0.0.1' ||
++      !callback.port ||
++      callback.username ||
++      callback.password ||
++      callback.search ||
++      callback.hash ||
++      !/^\/[a-f0-9]{48}\/finish$/.test(callback.pathname) ||
++      !Number.isSafeInteger(deadline) ||
++      deadline <= 0 ||
++      deadline > Date.now() + 10 * 60 * 1000
++    )
++      return null
++    return { client, callback: callback.href, account: params.get('account') || '', deadline }
++  } catch {
++    return null
++  }
++}
++
++export const magpieSignIn =
++  typeof window === 'undefined' ? null : parseMagpieSignIn(window.location.hash)
++
++export function magpieTaskComplete(task: AccountTask, signIn = magpieSignIn): boolean {
++  return (
++    !!signIn &&
++    task.client_id === signIn.client &&
++    task.state === 'done' &&
++    task.items.length > 0 &&
++    task.items.every(
++      (item) =>
++        item.state === 'done' &&
++        !!item.account_id &&
++        (!signIn.account || item.account_id === signIn.account),
++    )
++  )
++}
++
++export function returnToMagpie(cancel = false): void {
++  if (magpieSignIn) window.location.replace(magpieSignIn.callback + (cancel ? '#cancel' : ''))
++}
+diff --git a/web/src/types.ts b/web/src/types.ts
+index 616e943..72f32c3 100644
+--- a/web/src/types.ts
++++ b/web/src/types.ts
+@@ -101,6 +101,7 @@ export interface CookieAccountsInput extends AccountLoginInput {
+ 
+ // AccountTaskItem 是账户任务中的一个账户，label 为邮箱，浏览器登录完成前为空
+ export interface AccountTaskItem {
++  account_id?: string
+   label: string
+   state: 'pending' | 'running' | 'done' | 'failed'
+   code?: string
+@@ -109,6 +110,7 @@ export interface AccountTaskItem {
+ 
+ // AccountTask 是在服务端运行的添加或重新登录账户任务，view 为显示登录画面的登录窗口 ID
+ export interface AccountTask {
++  client_id?: string
+   id: string
+   kind: 'login' | 'relogin' | 'chrome' | 'cookies' | 'browser'
+   view?: string
+diff --git a/web/tests/magpie.test.ts b/web/tests/magpie.test.ts
+new file mode 100644
+index 0000000..fb6c3cc
+--- /dev/null
++++ b/web/tests/magpie.test.ts
+@@ -0,0 +1,51 @@
++/// <reference types="node" />
++import assert from 'node:assert/strict'
++import { test } from 'node:test'
++import { parseMagpieSignIn, magpieTaskComplete } from '../src/magpie.ts'
++
++const client = 'a'.repeat(48)
++const callback = `http://127.0.0.1:12345/${'b'.repeat(48)}/finish`
++const fragment = (url = callback) =>
++  '#' + new URLSearchParams({ magpie: client, callback: url, deadline: String(Date.now() + 60000) })
++
++void test('accepts only a local callback and preserves sign-in state across reloads', () => {
++  const hash = fragment()
++  const signIn = parseMagpieSignIn(hash)!
++  assert.equal(signIn.callback, callback)
++  assert.equal(signIn.client, client)
++  assert.deepEqual(parseMagpieSignIn(hash), signIn)
++  for (const url of [
++    'https://evil.example',
++    'http://localhost:12345/x',
++    callback + '?key=secret',
++    callback.replace('/finish', '/api/auth'),
++    callback.replace('127.0.0.1', 'user@127.0.0.1'),
++  ]) {
++    assert.equal(parseMagpieSignIn(fragment(url)), null)
++  }
++})
++
++void test('only a fully successful task from this page completes login', () => {
++  const signIn = parseMagpieSignIn(fragment())!
++  const task = {
++    id: 'task',
++    kind: 'cookies' as const,
++    client_id: client,
++    state: 'done' as const,
++    started_at: '',
++    items: [{ account_id: 'one', label: 'One', state: 'done' as const }],
++  }
++  assert.equal(magpieTaskComplete(task, signIn), true)
++  assert.equal(magpieTaskComplete({ ...task, client_id: 'other' }, signIn), false)
++  assert.equal(magpieTaskComplete({ ...task, client_id: undefined }, signIn), false)
++  assert.equal(magpieTaskComplete({ ...task, state: 'running' }, signIn), false)
++  assert.equal(
++    magpieTaskComplete(
++      { ...task, state: 'failed', items: [...task.items, { label: 'Two', state: 'failed' }] },
++      signIn,
++    ),
++    false,
++  )
++  assert.equal(magpieTaskComplete({ ...task, items: [] }, signIn), false)
++  assert.equal(magpieTaskComplete(task, { ...signIn, account: 'two' }), false)
++})
