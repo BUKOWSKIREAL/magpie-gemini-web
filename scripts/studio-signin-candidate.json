@@ -1,10 +1,17 @@
 {
-  "version": "0.3.4-magpie.2",
-  "tag": "studio-v0.3.4-magpie.2",
+  "version": "0.3.5-magpie.1",
+  "tag": "studio-v0.3.5-magpie.1",
+  "upstream": {
+    "version": "0.3.5",
+    "repository": "https://github.com/Mag1cFall/AIStudio2API.git",
+    "commit": "bab7209eef0d5a8f9baed4652d7e4158a3adad7b",
+    "camoufox": "152.0.4-beta.29"
+  },
   "patches": [
     "studio-0.2.17-preserve-request-bodies.patch",
     "studio-0.2.19-managed-config.patch",
-    "studio-0.3.4-magpie-signin.patch"
+    "studio-0.3.4-magpie-signin.patch",
+    "studio-0.3.5-signin-reauth.patch"
   ],
   "binaries": {
     "darwin-arm64": {},

@@ -1,16 +1,16 @@
 # AI Studio 托管后端构建
 
-插件使用 `0.3.4-magpie.1`，基于 AIStudio2API `v0.3.4`（`a4092efcdf358775339aa27cbb4db027fdf8f100`）。上游版本、commit、Go 版本、C/C++ 工具链、SpiderMonkey 与 libwebp 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
+插件使用 `0.3.5-magpie.1`，基于 AIStudio2API `v0.3.5`（`bab7209eef0d5a8f9baed4652d7e4158a3adad7b`）。上游版本、commit、Go 版本、C/C++ 工具链、SpiderMonkey 与 libwebp 静态库（`toolchains`）、补丁列表、安装包及二进制 SHA-256 均记录在 `lib/studio-release.json`。`upstream.camoufox` 是这个 commit 要求的 Camoufox 版本（上游 `internal/camoufoxnative/download.go` 里的 `camoufoxRelease`），更新上游 commit 时要一起核对，构建脚本发现不一致会报错。MIT 许可见 `LICENSE-AISTUDIO`。
 
 ## 插件账号管理接入
 
-推荐登录入口由 `lib/studio-connect.mjs` 显示安装进度，随后在同一标签页自动进入随包上游的账号导入／登录界面。上游登录模式展示 Chrome 导入、Cookie 导入、调试浏览器会话导入和浏览器登录，隐藏远程配对。已有账号重新登录时显示加载、错误或账号缺失状态，并明确提示当前上游仅支持浏览器重登；v0.3.4 会拒绝用 Chrome / Cookie 重复导入已有账号。单个账号成功后直接保存原有 `managed: true` 的 `ai-studio` 登录；批量导入成功后保存 `metadata.accounts` 和带账号集合摘要的 `metadata.email`，使不同分组不会互相覆盖；同组以不同顺序重试保持相同标识。额度卡片的账号和冷却记录都按本次账号组过滤。此元数据不改变后端的全局选号、API key 绑定或模型绑定规则。模型、图片和用量继续走原插件，不调用 `magpie://import` 创建其他供应商。
+推荐登录入口由 `lib/studio-connect.mjs` 显示安装进度，随后在同一标签页自动进入随包上游的账号导入／登录界面。上游登录模式展示 Chrome 导入、Cookie 导入、调试浏览器会话导入和浏览器登录，隐藏远程配对。专用重登入口显示加载、错误或账号缺失状态，使用隔离浏览器重新登录。v0.3.5 也支持通过添加账号入口导入同一账号来更新认证状态；`studio-0.3.5-signin-reauth.patch` 修正此前不支持覆盖导入的提示。单个账号成功后直接保存原有 `managed: true` 的 `ai-studio` 登录；批量导入成功后保存 `metadata.accounts` 和带账号集合摘要的 `metadata.email`，使不同分组不会互相覆盖；同组以不同顺序重试保持相同标识。额度卡片的账号和冷却记录都按本次账号组过滤。此元数据不改变后端的全局选号、API key 绑定或模型绑定规则。模型、图片和用量继续走原插件，不调用 `magpie://import` 创建其他供应商。
 
 `patches/studio-0.3.4-magpie-signin.patch` 给管理页增加由 URL fragment 开启的登录模式，并给账号任务增加 `client_id`、成功条目的规范 `account_id` 和 `GET /api/accounts/tasks` 的 `magpie_signin: 1` 能力标识。每次登录使用独立随机标识；只有当前页面提交的完整成功任务能完成认证。插件从后台任务取得账号 ID，再重新读取账号列表校验。已有账号、其他窗口任务、失败或部分失败任务均不会自动完成当前登录。部分失败可只重试失败账号：插件按本次标识累积每个已成功条目的账号 ID，最终成功时合并、去重并重新校验。登录模式暂不提供关闭失败任务的按钮，避免插件观察前删除成功条目；已观察到的成功条目即使之后从任务列表移除也会保留。刷新页面保留登录标识；关闭浏览器后，插件仍能跟踪已启动任务。
 
 管理会话通过本机 HTTP 响应的 `HttpOnly; SameSite=Strict; Path=/api` Cookie 交给浏览器。两个服务均限定为 `http://127.0.0.1`；Cookie 按主机共享，不按端口隔离。临时页使用随机路径、严格 Host / 写操作 Origin 检查和 CSP，状态接口不返回 API key、管理密码或 Google Cookie。上游 fragment 仅含关联标识、本机回程地址、截止时间及可选目标账号；不放凭据。自动流程取消或超时只取消本次标识下仍运行的任务，保留已导入账号。结束后不再发放管理会话，两分钟后关闭临时服务，并清理本次标识下的成功、失败及未结束任务记录。回程页的状态请求会等待正在进行的检查或立即检查任务，无需额外等待轮询周期。
 
-**发行状态：** 自动模式需要重新构建后端，候选版本为 `0.3.4-magpie.2`。`lib/studio-release.json` 仍保留已发布 `0.3.4-magpie.1` 的真实哈希；该版本不含新补丁。插件探测到旧后端时，使用 `lib/studio-connect-legacy.mjs` 保持现有手动连接流程，避免把自动界面交给不支持任务关联的二进制。新后端完成发布并更新发行 pin 后，推荐入口才会默认启用自动模式。用户无需额外安装、填 URL 或复制密钥。
+**发行状态：** `0.3.5-magpie.1` 包含自动登录补丁，正式 pin 由五平台 CI 生成并在全新 runner 上严格复现。插件探测到不支持任务关联的旧后端时，使用 `lib/studio-connect-legacy.mjs` 保持手动连接流程。用户无需额外安装、填 URL 或复制密钥。
 
 候选构建配置位于 `scripts/studio-signin-candidate.json`，空的 `binaries` 条目表示尚无发行哈希，不是可安装的发行清单。普通本机构建可验证补丁和 UI（不会改动当前 pin）：
 
@@ -22,7 +22,14 @@ node scripts/studio-release.mjs --manifest=scripts/studio-signin-candidate.json 
 
 测试覆盖当前任务隔离、批量导入、部分失败重试、完成时重新校验、重新登录身份限制、来源检查、旧后端回退、取消和超时；上游补丁另含任务关联、前端回程地址、窄视口导航、路由锁定及重登状态渲染测试。Windows CI 运行全部 `studio*.test.mjs`，候选配置随 npm 包提供。构建脚本同时运行这些测试、上游 Go 测试、前端 lint 和类型检查。真实 Google 登录和 Windows Chrome 导入仍需带账号验证。
 
-## 0.3.4 升级兼容
+## 0.3.5 升级兼容
+
+- 基线为上游 `v0.3.5`（`bab7209eef0d5a8f9baed4652d7e4158a3adad7b`）。包含 Ultra 模型目录读取优先、Gemini 4 Carbon 定价、Responses `agent_message` 输入支持、额度 429 的 `Retry-After`、Worker 并发与取消修复、连接错误原账号重试，以及中文欢迎弹窗处理。
+- 导入已有账号会更新认证状态并保留文件绑定与续签材料；新增登录任务仍以本次任务返回的规范账号 ID 为准，不把账号列表中已有的记录当作登录完成。专用重登入口继续使用浏览器并限制目标账号。
+- 上游会将特定客户端系统提示中的身份归属句改为中性描述，并过滤 Claude Code 计费行及含 RFC 2119 keywords 的行；这是上游协议处理行为。
+- 请求正文迁移、托管配置与自动登录补丁原样适用；附加补丁只更新重登提示及对应测试。Camoufox、SpiderMonkey、libwebp 和固定编译器工具链保持不变。
+
+## 0.3.4 升级兼容（历史记录）
 
 - 基线为上游 `v0.3.4`（`a4092efcdf358775339aa27cbb4db027fdf8f100`）。包含 SpiderMonkey Worker 关闭超时崩溃修复、账号启用／禁用即时生效与后台平滑排空、Google AI 欢迎弹窗自动关闭、图片生成 WAA 请求 30 秒超时保护、Responses 流式心跳保活、`-build` 助手配额阶梯式冷却（1/5/15/30/60 分钟），以及管理页界面重构（含接入指南面板新增 Magpie 说明）。Camoufox、SpiderMonkey、libwebp 和固定编译器工具链沿用上一版。
 - 请求正文迁移补丁与托管配置补丁均原样适用于 `v0.3.4`。
@@ -81,7 +88,7 @@ node scripts/studio-release.mjs --manifest=scripts/studio-signin-candidate.json 
 
 上游从 v0.2.14 起原生支持分发方管理更新。构建时通过 `-ldflags` 写入以下值：
 
-- `internal/app.version=v0.3.4-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
+- `internal/app.version=v0.3.5-magpie.1`：明确的版本标识。同基线或更旧的官方版、以及更旧的托管版需要升级；更新的官方版、更新的托管版或不认识的定制版仍提示冲突。
 - `internal/app.managedBy=magpie-gemini-web`：`GET /api/update`（包括 `?refresh=1`）只返回本地版本、`mode: managed` 和 `managed_by`，不访问 GitHub；`POST /api/update` 返回 HTTP 409，不下载、不替换文件、不重启。管理页显示“更新由 magpie-gemini-web 管理”。
 
 `internal/config.managedBy=magpie-gemini-web` 同时启用上面的配置兼容补丁。
@@ -158,6 +165,11 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
+## 0.3.5 升级验证（2026-11-11）
+
+- 五平台候选构建（[run 42948360160](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42948360160)）通过上游测试、真实安装冒烟测试和插件测试。发行清单的安装包及可执行文件 SHA-256 来自该次固定工具链构建。
+- PR 和发布提交须分别完成严格复现验证；包含从已发布 `0.3.4-magpie.1` 及同基线官方版本接管升级的回归覆盖。真实 Google 认证和 #53 的登录态生成挂起不属于这组离线验证。
+
 ## 0.3.4 升级验证（2026-11-10）
 
 - 五个平台的候选构建（[run 42744366347](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42744366347)）一次性通过上游测试、真实安装冒烟验证（含旧版 `bodies` 表迁移、`account_order` 与 `model_accounts` 设置保存与重启持久化、SpiderMonkey 与 libwebp 静态链接、管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
@@ -214,7 +226,7 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 - 新版 Google 登录/生成端到端验证尚未完成。
 - 此分支未发布后端 release 或 npm 包。本机日常后端仍使用 `0.2.16-magpie.1`，新版仅在临时数据目录运行。
 
-发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.4-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
+发布前必须审查各平台 CI 与构建记录，再将安装包及许可证上传到本仓库 `studio-v0.3.5-magpie.1` release。该 release 的安装包可公开下载后，才能发布对应 npm 版本，否则新安装会遇到 404。合并 PR 不代表已经满足发布条件；构建脚本及验证 CI 不自动发布 release 或 npm 包。
 
 本地试用建议使用独立数据目录：
 

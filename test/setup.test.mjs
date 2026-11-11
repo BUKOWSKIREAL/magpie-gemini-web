@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
 import { ensureBackend, installBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
-import { parseCookieInput, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
+import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
 
 const LOGIN_CAPABILITIES = { capabilities: { account_proxy_binding: true } };
 
@@ -67,6 +67,23 @@ describe('24. Cookie input parsing', () => {
   });
 });
 
+describe('Google session index', () => {
+  it('defaults single-account sessions to zero and accepts explicit indices', () => {
+    for (const value of [undefined, null, '', ' ', '0', 0]) assert.equal(parseAuthuser(value), 0);
+    for (const value of [4, '4', ' 4 ']) assert.equal(parseAuthuser(value), 4);
+    assert.equal(parseAuthuser('9'), 9);
+  });
+
+  it('rejects malformed indices before any backend request', async () => {
+    for (const value of [-1, 10, '1.5', '1e2', '0x4', '/u/4/app', true, [], {}, Infinity, '9007199254740992']) {
+      await assert.rejects(importCookie({}, SIGNED_IN, {
+        authuser: value,
+        fetchFn: () => assert.fail('invalid authuser must not reach the backend')
+      }), /账号索引须为 0–9 的整数/);
+    }
+  });
+});
+
 describe('25. Cookie import through the admin API', () => {
   const setup = { origin: 'http://127.0.0.1:1', adminToken: 'admin_test' };
 
@@ -87,6 +104,7 @@ describe('25. Cookie import through the admin API', () => {
     assert.deepEqual(calls.map(c => `${c.method} ${c.path}`), ['GET /', 'POST /admin/api/cookies', 'POST /admin/api/cookies/7/check']);
     assert.equal(calls[1].auth, 'Bearer admin_test');
     assert.equal(JSON.parse(calls[1].body).cookie, SIGNED_IN);
+    assert.equal(JSON.parse(calls[1].body).authuser, 0);
   });
 
   it('removes an account that fails the check', async () => {
@@ -422,8 +440,8 @@ describe('27. One-click sign-in through the plugin', () => {
           const id = nextId++;
           const proxyId = Number.isInteger(parsed.proxy_id) ? parsed.proxy_id : 0;
           accounts.set(id, { cookie: parsed.cookie, proxyId, checkedProxyId: null });
-          db.prepare(`INSERT INTO accounts (id, label, cookie, status, proxy_id) VALUES (?, 'Magpie', ?, 'enabled', ?)`)
-            .run(id, parsed.cookie, proxyId);
+          db.prepare(`INSERT INTO accounts (id, label, cookie, status, proxy_id, authuser) VALUES (?, 'Magpie', ?, 'enabled', ?, ?)`)
+            .run(id, parsed.cookie, proxyId, parsed.authuser ?? 0);
           return send(200, { id });
         }
         const m = req.url.match(/^\/admin\/api\/cookies\/(\d+)(\/check)?$/);
@@ -431,8 +449,9 @@ describe('27. One-click sign-in through the plugin', () => {
           const entry = accounts.get(Number(m[1]));
           const cookie = entry?.cookie || '';
           if (entry) {
-            const row = db.prepare('SELECT proxy_id FROM accounts WHERE id = ?').get(Number(m[1]));
+            const row = db.prepare('SELECT proxy_id, authuser FROM accounts WHERE id = ?').get(Number(m[1]));
             entry.checkedProxyId = row?.proxy_id ?? 0;
+            entry.checkedAuthuser = row?.authuser ?? 0;
           }
           return send(200, cookie.includes('SID=good') ? { ok: true, detail: 'ok' } : { ok: false, detail: 'not signed in' });
         }
@@ -449,7 +468,7 @@ describe('27. One-click sign-in through the plugin', () => {
     db = new DatabaseSync(path.join(dataDir, 'gemini.db'));
     db.exec(`CREATE TABLE proxies (id INTEGER PRIMARY KEY, name TEXT, url TEXT, enabled INTEGER);
       CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER,
-        last_used_at INTEGER NOT NULL DEFAULT 0);
+        last_used_at INTEGER NOT NULL DEFAULT 0, authuser INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE requests (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, account_id INTEGER);`);
     previousDataDir = process.env.GEMINI_WEB_DATA_DIR;
     process.env.GEMINI_WEB_DATA_DIR = dataDir;
@@ -626,6 +645,34 @@ describe('27. One-click sign-in through the plugin', () => {
     }
   });
 
+  it('uses the selected session for account checking and the saved email identity (#53)', async () => {
+    const method = await oauthMethod();
+    await assert.rejects(method.authorize({ authuser: '-1' }), /账号索引/);
+    const pending = await method.authorize({ authuser: '4' });
+    assert.equal(pending.url, 'https://gemini.google.com/u/4/app');
+    assert.ok(pending.instructions.includes(pending.url));
+    const realFetch = globalThis.fetch;
+    const google = [];
+    globalThis.fetch = (url, init) => {
+      if (String(url).startsWith('https://gemini.google.com/')) {
+        google.push(String(url));
+        return Promise.resolve(new Response('{"oPEP7c":"session-four@gmail.com"}'));
+      }
+      return realFetch(url, init);
+    };
+    try {
+      const result = await pending.callback(SIGNED_IN.replace('SID=v-SID', 'SID=good-four'));
+      assert.equal(result.type, 'success');
+      assert.equal(accounts.get(result.metadata.account).checkedAuthuser, 4);
+      assert.equal(db.prepare('SELECT authuser FROM accounts WHERE id = ?').get(result.metadata.account).authuser, 4);
+      assert.equal(result.metadata.email, 'session-four@gmail.com');
+      assert.equal(result.metadata.authuser, 4);
+      assert.deepEqual(google, [pending.url]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   it('asks for an optional proxy up front, binds the new account to it before checking, and uses it even when another proxy is in the pool', async () => {
     const method = await oauthMethod();
     assert.equal(method.prompts[0].key, 'proxy');
@@ -634,8 +681,12 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.equal(question.validate(''), undefined);
     assert.equal(question.validate('http://127.0.0.1:7890'), undefined);
     assert.match(question.validate('bad-proxy'), /代理地址/);
-    assert.equal(method.ask({ proxy: '' }), null);
-    assert.equal(method.ask({ proxy: 'http://127.0.0.1:7890' }), null);
+    const indexQuestion = method.ask({ proxy: '' });
+    assert.equal(indexQuestion.key, 'authuser');
+    assert.equal(indexQuestion.validate('4'), undefined);
+    assert.match(indexQuestion.validate('-1'), /账号索引/);
+    assert.equal(method.ask({ proxy: '', authuser: '' }), null);
+    assert.equal(method.ask({ proxy: 'http://127.0.0.1:7890', authuser: '4' }), null);
 
     // Pre-populate Proxy A in the pool so Proxy B is the second entry.
     db.exec(`INSERT INTO proxies VALUES (1, 'proxy-a', 'http://127.0.0.1:18080', 1)`);

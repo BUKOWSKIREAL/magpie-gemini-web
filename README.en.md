@@ -19,9 +19,9 @@ The plugin provides two independent providers that can be used individually or t
 | **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
 | **Image input** | On by default; chat models read images | On by default; chat models read images (needs a signed-in cookie) |
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
-| **Sign-in method** | Sign in directly in an isolated popup browser window | Copy `cookie` from a private/incognito window |
+| **Sign-in method** | Chrome / cookie / browser import with automatic configuration | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.3.4`) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (`v0.3.5`) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
 
 ---
 
@@ -36,14 +36,14 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 3. When every item in this sign-in task succeeds, the plugin **automatically configures Magpie**. A single import saves that account; a batch saves the imported group, retaining earlier successes when only failed accounts are retried. There is no return-and-select step, and the existing `ai-studio` provider, models, image generation and usage cards remain available.
 4. **Managing accounts:** Sign in again to add an account, create a separate card for an existing account, or re-authenticate. **「直接打开 Google 登录窗口」** (Open Google login window directly) retains the isolated browser login flow.
 
-The local service (~40 MB) is downloaded on first use. Browser login and reauthentication of existing accounts require Camoufox (~300 MB). This upstream version rejects Chrome / cookie imports that would overwrite an existing account; the reauthentication page explains that limitation. Magpie waits up to 10 minutes, downloads included. In the automatic flow, timeout or cancellation stops this sign-in's unfinished tasks and preserves imported accounts; tasks from other windows are unaffected. Set `studio.proxy` first if GitHub is unreachable.
+The local service (~40 MB) is downloaded on first use. Browser login and the dedicated reauthentication entry require Camoufox (~300 MB). You can also use Add Google Account to import the same account from Chrome, cookies, or a debugging browser, updating its login state while preserving file bindings and renewal credentials. Magpie waits up to 10 minutes, downloads included. In the automatic flow, timeout or cancellation stops this sign-in's unfinished tasks and preserves imported accounts; tasks from other windows are unaffected. Set `studio.proxy` first if GitHub is unreachable.
 
-The automatic flow requires the bundled sign-in patch (candidate backend `0.3.4-magpie.2`). The published pin is still `0.3.4-magpie.1`; until the new backend is built and published, it retains the previous flow: open account management, import, then return to the connection page and select an account.
+Bundled backend `0.3.5-magpie.1` includes automatic sign-in. An older running backend retains the manual connection flow; after it is stopped, the next managed startup upgrades it.
 
 ### Option 2: Gemini Web (`gemini-web`)
 
 1. Sign in to **Gemini Web** in Magpie and choose **「一键配置本地 Gemini Web（推荐）」** (One-click local setup). If you need a proxy to reach Google, enter its URL (e.g. `http://127.0.0.1:7890`) when prompted at the start of sign-in, or leave it blank for direct connection / existing proxy pool.
-2. Copy your cookie using a **private / incognito window** (Firefox recommended):
+2. Enter the **Google account index** when prompted: for `/u/4/app` in the same window you copy cookies from, enter `4`; leave it blank for a single-account session (`0`). Private windows may assign different indices from your regular browser. Copy your cookie using a **private / incognito window** (Firefox recommended):
    1. Open <https://gemini.google.com/app> in the private window and sign in to your Google account.
    2. Press `F12` (`⌥⌘I` on macOS), switch to the **Network** tab, and reload the page.
    3. Click any `gemini.google.com` request → **Headers** → **Request Headers**, copy the `cookie` value, and paste it into Magpie.
@@ -182,7 +182,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Gemini Web takes at most 2 requests at once per sign-in (AI Studio 1), adjustable in Magpie's provider settings. Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- The plugin pins SHA-256-verified `v0.3.4-magpie.1`, based on upstream `v0.3.4`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
+- The plugin pins SHA-256-verified `v0.3.5-magpie.1`, based on upstream `v0.3.5`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
 - Account priority ordering (`ACCOUNT_ORDER`) and per-model account bindings (`MODEL_ACCOUNTS`) from 0.3.3, as well as API key account bindings and hedge model selections from 0.2.19, are preserved. Settings saved in the admin page, including upstream defaults, survive plugin restarts. Hedge requests remain off by default; enable them and select models in the admin page if needed.
 - For users upgrading from 0.2.18 with `auto` enabled, hedging now applies only to `FIRST_EVENT_HEDGE_MODELS`, defaulting to Argon when that list is absent. Saving in the admin page fixes the current defaults in the file; later upstream default changes require manual adjustment. When taking over an official 0.2.19 sparse configuration, missing settings follow the plugin's initialization rules (for example, hedging becomes `off`). See the [upgrade compatibility notes](docs/studio-release.md#0219-升级兼容).
 - **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page says updates are managed by magpie-gemini-web; the update endpoint returns HTTP 409 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for how the managed build is made and reproduced.
@@ -195,6 +195,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Models with `-build` or `assistant_route` are filtered out: they inject the Build coding assistant's own system prompt and are not offered as ordinary Agent models. Refresh with `magpie provider models ai-studio` after upgrading.
 
 **Gemini Web optimized backend upgrades & rollback:**
+- The missing multi-account index in [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) is fixed. Reimport affected cookies or correct the index in backend account management. A successful account check does not guarantee generation; signed-in Argon hangs remain unresolved. This build still uses StreamGenerate and logs that `web_channel` is ignored when enabled.
 - One-click setup uses [4.28.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.28.0-magpie.1) by default (built from pinned upstream v4.28.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon model verification). Chat requests are timed by silence: while Google queues a request it sends a heartbeat every 60 s, and the backend waits through it for the first words. A try is given up, and retried, only after Google has sent nothing for `request_timeout_sec` (180 s by default), so a long reply that keeps coming is never cut off either.
 - **Upgrading:** Running backends are not interrupted automatically. Stop the existing process (PID in `backend.pid` inside the data directory); the next Magpie launch or request will upgrade the binary while preserving config and cookies.
 - **Rollback to upstream / restore optimized build** (run in the plugin directory after stopping the backend):

@@ -19,9 +19,9 @@
 | **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` 中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
 | **图片输入** | 默认开启，对话模型可以读图 | 默认开启，对话模型可以读图（需登录态挂 Cookie） |
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
-| **登录方式** | 弹出独立浏览器窗口直接登录 Google | 用无痕窗口登录并复制 `cookie` |
+| **登录方式** | Chrome / Cookie / 浏览器导入后自动配置 | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API (`v0.3.4`) | gemini-web2api-go (`4.28.0-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API (`v0.3.5`) | gemini-web2api-go (`4.28.0-magpie.1` 优化版) |
 
 ---
 
@@ -36,14 +36,14 @@
 3. 本次任务全部成功后，插件会**自动完成 Magpie 配置**，无需返回连接页再选账号。导入一个账号时保存该账号，批量导入时保存本次账号组，部分失败后仅重试失败账号也会保留此前成功的账号；继续使用原有的 `ai-studio` Provider、模型、图片生成和额度卡片。
 4. **后续管理**：再次点击「用 Google 账号登录」，可添加新账号、为本机已有账号单独建卡，或重新登录过期账号。也可选择 **「直接打开 Google 登录窗口」**，沿用独立浏览器登录流程。
 
-首次使用需下载本地服务（约 40 MB）；浏览器登录与已有账号重新登录需要 Camoufox（约 300 MB）。当前上游不支持用 Chrome / Cookie 覆盖已有账号的登录状态，重登页会明确提示这一限制。Magpie 最多等 10 分钟，下载时间也算在内。自动流程超时或取消时会停止本次尚未完成的任务，保留已导入的账号；其他窗口的任务不受影响。连不上 GitHub 时先设置 `studio.proxy`。
+首次使用需下载本地服务（约 40 MB）；浏览器登录和专用重登入口需要 Camoufox（约 300 MB）。也可通过「添加 Google 账号」的 Chrome / Cookie / 调试浏览器导入更新同一账号的登录状态，保留文件绑定与续签材料。Magpie 最多等 10 分钟，下载时间也算在内。自动流程超时或取消时会停止本次尚未完成的任务，保留已导入的账号；其他窗口的任务不受影响。连不上 GitHub 时先设置 `studio.proxy`。
 
-自动流程需要带登录补丁的内置后端（候选版本 `0.3.4-magpie.2`）。当前发行 pin 仍为 `0.3.4-magpie.1`，在新后端完成构建和发布前会兼容原流程：打开账号管理页，导入后返回连接页选择账号。
+内置后端 `0.3.5-magpie.1` 已包含自动登录补丁。尚在运行的旧后端会兼容原来的手动连接流程；停止旧进程后，下次托管启动会更新后端。
 
 ### 方式二：Gemini Web (`gemini-web`)
 
 1. 在 Magpie 中登录 **Gemini Web**，选择 **「一键配置本地 Gemini Web（推荐）」**（若访问 Google 需要代理，可在第一步提示中直接填写代理地址，例如 `http://127.0.0.1:7890`，无需代理或已配置代理池可留空）。
-2. 打开浏览器**无痕 / 隐私窗口**（推荐 Firefox）获取 Cookie：
+2. 按提示填写 **Google 账号索引**：复制 Cookie 的同一窗口地址若为 `/u/4/app`，填 `4`；单账号会话可留空（`0`）。无痕窗口中的索引可能不同，不能直接沿用日常窗口的编号。然后在浏览器**无痕 / 隐私窗口**（推荐 Firefox）获取 Cookie：
    1. 访问 <https://gemini.google.com/app> 并登录 Google 账号；
    2. 按 `F12`（macOS 按 `⌥⌘I`）切到 **Network（网络）**，刷新页面；
    3. 点击任意 `gemini.google.com` 请求 → **Headers** → **Request Headers**，复制 `cookie` 的值粘贴回 Magpie；
@@ -182,7 +182,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - Gemini Web 每个登录同时最多 2 个请求（AI Studio 为 1），可在 Magpie 的 provider 设置里调整；仍无法完全排除 Google 账号风控风险，请自行评估使用。
 
 **AI Studio 升级与模型范围：**
-- 插件固定使用经过 SHA-256 校验的 `v0.3.4-magpie.1`（基于上游 `v0.3.4`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
+- 插件固定使用经过 SHA-256 校验的 `v0.3.5-magpie.1`（基于上游 `v0.3.5`），通过升级插件更新后端。同基线或更旧的官方版、以及旧版插件装的托管后端，在下次管理启动时自动升级，保留账号、端口与登录凭据。
 - 0.3.3 的账号优先顺序（`ACCOUNT_ORDER`）与模型账号绑定（`MODEL_ACCOUNTS`）、以及 0.2.19 的 API Key 账号绑定与备用请求模型设置均会保留；管理页保存的默认值不会在重启后被改回插件默认值。备用请求默认关闭，需要时可在管理页开启并选择模型。
 - 从 0.2.18 升级且已开启 `auto` 时，备用请求从所有模型缩为 `FIRST_EVENT_HEDGE_MODELS` 中的模型，未配置该列表时仅有 Argon。管理页完整保存会固定当时的默认值，后续上游默认值变化需要手动调整。接管官方 0.2.19 的稀疏配置时，缺失项会按插件规则补齐（例如备用请求变为 `off`）；详见[升级兼容说明](docs/studio-release.md#0219-升级兼容)。
 - **托管后端已在 macOS、Linux、Windows 统一禁用在线更新**：管理页提示“更新由 magpie-gemini-web 管理”，更新接口返回 HTTP 409，检查更新也不会访问 GitHub。用户自行连接的外部服务不受影响。托管构建方式和可复现构建流程见 [docs/studio-release.md](docs/studio-release.md)。
@@ -195,6 +195,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
+- [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) 的多账号索引漏传已修复，需重新导入受影响的 Cookie 或在后端账号管理中修正索引。账号检测通过不保证生成成功；登录态 Argon 挂起仍待验证修复。当前优化版仍使用 StreamGenerate，启用 `web_channel` 会在日志提示被忽略。
 - 插件默认使用本仓库发布的 [4.28.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.28.0-magpie.1)（基于上游 v4.28.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：
