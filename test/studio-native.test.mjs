@@ -600,7 +600,11 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    for (const version of ['v0.3.5', 'v1.0.0', 'v0.3.4-magpie.2', 'v0.3.5-magpie.1', 'v0.2.15-custom', 'unknown']) {
+    // This test also runs against candidate manifests: "next" must stay newer than that pin.
+    const [, major, minor, patch, revision] = STUDIO_VERSION.match(/^v(\d+)\.(\d+)\.(\d+)-magpie\.(\d+)$/);
+    const nextUpstream = `v${major}.${minor}.${Number(patch) + 1}`;
+    const nextManaged = `v${major}.${minor}.${patch}-magpie.${Number(revision) + 1}`;
+    for (const version of [nextUpstream, `v${Number(major) + 1}.0.0`, nextManaged, `${nextUpstream}-magpie.1`, 'v0.2.15-custom', 'unknown']) {
       const fetchFn = async (url, init) => {
         if (url.includes('/api/control/') || url.includes('github.com')) mutations++;
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
