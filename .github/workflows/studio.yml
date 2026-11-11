@@ -12,6 +12,10 @@ on:
         description: Make candidate pins instead of verifying the committed ones
         type: boolean
         default: false
+      signin_candidate:
+        description: Build the automatic sign-in backend (requires write_pins)
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'lib/studio*.mjs'
@@ -42,6 +46,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '26.8.2'
+      - name: Prepare automatic sign-in candidate
+        if: inputs.signin_candidate
+        env:
+          WRITE_PINS: ${{ inputs.write_pins }}
+        run: |
+          test "$WRITE_PINS" = true || { echo 'signin_candidate requires write_pins'; exit 1; }
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import base from "./lib/studio-release.json" with {type:"json"};
+            import candidate from "./scripts/studio-signin-candidate.json" with {type:"json"};
+            fs.writeFileSync("lib/studio-release.json", JSON.stringify({...base, ...candidate}, null, 2) + "\n");
+          '
       - name: Read pinned toolchains
         id: pins
         run: |
@@ -78,7 +94,7 @@ jobs:
           # The macOS-only Task route and older Web fixtures assume POSIX.
           # Exercise the complete Studio suite on Windows, plus the real binary above.
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            node --test test/studio-native.test.mjs test/studio.test.mjs test/studio-pins.test.mjs
+            node --test test/studio*.test.mjs
           else
             npm test
           fi
@@ -107,6 +123,15 @@ jobs:
         with:
           pattern: candidate-*
           path: candidates
+      - name: Prepare automatic sign-in candidate
+        if: inputs.signin_candidate
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import base from "./lib/studio-release.json" with {type:"json"};
+            import candidate from "./scripts/studio-signin-candidate.json" with {type:"json"};
+            fs.writeFileSync("lib/studio-release.json", JSON.stringify({...base, ...candidate}, null, 2) + "\n");
+          '
       - name: Pin all targets from their candidate build records
         run: node scripts/studio-pins.mjs candidates/*/build-*.json
       - name: Summarize

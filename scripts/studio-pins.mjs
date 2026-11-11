@@ -37,13 +37,16 @@ export function mergePins(release, records, patchHashes) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const files = process.argv.slice(2);
-  if (!files.length) throw new Error('Usage: node scripts/studio-pins.mjs <build-record.json>...');
-  const release = JSON.parse(fs.readFileSync(pinPath, 'utf8'));
+  const args = process.argv.slice(2);
+  const manifest = args.find(arg => arg.startsWith('--manifest='))?.slice(11);
+  const output = manifest ? path.resolve(manifest) : pinPath;
+  const files = args.filter(arg => !arg.startsWith('--manifest='));
+  if (!files.length) throw new Error('Usage: node scripts/studio-pins.mjs [--manifest=<candidate.json>] <build-record.json>...');
+  const release = { ...JSON.parse(fs.readFileSync(pinPath, 'utf8')), ...JSON.parse(fs.readFileSync(output, 'utf8')) };
   const patchHashes = Object.fromEntries(release.patches.map(name => [name,
     crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'patches', name))).digest('hex')]));
   const records = files.map(file => ({ file, record: JSON.parse(fs.readFileSync(file, 'utf8')) }));
   const merged = mergePins(release, records, patchHashes);
-  fs.writeFileSync(pinPath, JSON.stringify(merged, null, 2) + '\n');
+  fs.writeFileSync(output, JSON.stringify(merged, null, 2) + '\n');
   for (const [key, pin] of Object.entries(merged.binaries)) console.log(`${key}: ${pin.sha256}  ${pin.asset}`);
 }

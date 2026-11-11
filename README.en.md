@@ -32,9 +32,13 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 ### Option 1: Google AI Studio (`ai-studio`)
 
 1. Sign in to **Google AI Studio** in Magpie and choose **「用 Google 账号登录（推荐）」** (Sign in with a Google account).
-2. Sign in to your Google account in the separate login window that opens (your regular browser is unaffected), then close the window.
-   > On first run, the local service (~40 MB) and the login browser Camoufox (~300 MB) are downloaded first, so the window may take a few minutes to appear. While they download, Magpie opens a progress page in your browser. Magpie waits at most 10 minutes, downloads included, so finish signing in promptly; if GitHub is unreachable, set `studio.proxy` first (see plugin options and proxy settings below).
-3. **Managing accounts:** Choose "Sign in with a Google account" again at any time to **add a new account**, create a card for an existing local account, or **re-authenticate** an expired account.
+2. Once the plugin prepares the local service, the same tab automatically opens **account import / sign-in**. Choose **Chrome import, paste cookies, or browser login**. No separate installation or API key copying is needed; select multiple accounts once in the import UI.
+3. When every item in this sign-in task succeeds, the plugin **automatically configures Magpie**. A single import saves that account; a batch saves the imported group, retaining earlier successes when only failed accounts are retried. There is no return-and-select step, and the existing `ai-studio` provider, models, image generation and usage cards remain available.
+4. **Managing accounts:** Sign in again to add an account, create a separate card for an existing account, or re-authenticate. **「直接打开 Google 登录窗口」** (Open Google login window directly) retains the isolated browser login flow.
+
+The local service (~40 MB) is downloaded on first use. Browser login and reauthentication of existing accounts require Camoufox (~300 MB). This upstream version rejects Chrome / cookie imports that would overwrite an existing account; the reauthentication page explains that limitation. Magpie waits up to 10 minutes, downloads included. In the automatic flow, timeout or cancellation stops this sign-in's unfinished tasks and preserves imported accounts; tasks from other windows are unaffected. Set `studio.proxy` first if GitHub is unreachable.
+
+The automatic flow requires the bundled sign-in patch (candidate backend `0.3.4-magpie.2`). The published pin is still `0.3.4-magpie.1`; until the new backend is built and published, it retains the previous flow: open account management, import, then return to the connection page and select an account.
 
 ### Option 2: Gemini Web (`gemini-web`)
 
@@ -54,7 +58,7 @@ Install **magpie-gemini-web** from the Magpie plugin market, then sign in to eit
 
 ## Multiple Accounts & Usage Cards
 
-- **One card per account:** Each Google account gets its own usage card titled with its email address.
+- **Account usage cards:** Individual accounts use their email address. An AI Studio batch gets a separate group card; importing the same group in a different order keeps its identity.
   - *Migrating older Gemini Web accounts:* For accounts added in earlier versions, add a Gemini Web account in Magpie and choose **「添加本地后端里已有的 Google 账号」** (Add an existing Google account from the local backend) to create individual cards, then remove the old pooled `API key …` card.
 - **Automatic account rotation:** The local backend selects which Google account serves each request (Gemini Web rotates across the pool; AI Studio uses one account until cooldown and switches to the next, with optional account priority order and per-model account bindings configurable in the admin page or via `studio.accountOrder` and `studio.modelAccounts`). Switching cards in Magpie does not change which account the backend picks.
 - **Usage reporting:**

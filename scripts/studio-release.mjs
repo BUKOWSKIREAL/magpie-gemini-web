@@ -10,11 +10,15 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const pinPath = path.join(root, 'lib/studio-release.json');
-const release = JSON.parse(fs.readFileSync(pinPath, 'utf8'));
 const args = process.argv.slice(2);
+const candidate = args.find(arg => arg.startsWith('--manifest='))?.slice(11);
+const pinPath = candidate ? path.resolve(candidate) : path.join(root, 'lib/studio-release.json');
+// A candidate manifest overrides release identity/patches, but keeps the pinned toolchains.
+// Candidate hashes are written only to that file, never over the installed release's pins.
+const release = { ...JSON.parse(fs.readFileSync(path.join(root, 'lib/studio-release.json'), 'utf8')),
+  ...JSON.parse(fs.readFileSync(pinPath, 'utf8')) };
 for (const arg of args) {
-  if (!['--write-pins', '--verify'].includes(arg) && !arg.startsWith('--target=') && !arg.startsWith('--source=')) throw new Error(`Unknown argument: ${arg}`);
+  if (!['--write-pins', '--verify'].includes(arg) && !arg.startsWith('--target=') && !arg.startsWith('--source=') && !arg.startsWith('--manifest=')) throw new Error(`Unknown argument: ${arg}`);
 }
 const writePins = args.includes('--write-pins');
 const verify = args.includes('--verify');
@@ -236,6 +240,10 @@ try {
   }
   npm(['ci', '--no-audit', '--no-fund']);
   npm(['run', 'lint']);
+  if (fs.existsSync(path.join(source, 'web/tests/magpie.test.ts'))) {
+    const tests = fs.readdirSync(path.join(source, 'web/tests')).filter(name => name.endsWith('.test.ts')).map(name => `tests/${name}`);
+    execFileSync(process.execPath, ['--test', ...tests], { cwd: path.join(source, 'web'), stdio: 'inherit' });
+  }
   npm(['run', 'build']);
   // Node's gzip differs between builders; Go's is the same everywhere (see studio-regzip.go).
   go(['run', path.join(root, 'scripts/studio-regzip.go'), path.join(source, 'internal/webui/dist')]);

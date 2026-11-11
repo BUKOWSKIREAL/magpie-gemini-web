@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
-import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
+import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accountGroupEmail, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
 
@@ -1072,8 +1072,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     const setup = standInSetup('managed-key');
     try {
       const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-      const oneClick = plugin.auth.methods[0];
-      assert.match(oneClick.label, /（推荐）/);
+      const oneClick = plugin.auth.methods[1];
+      assert.match(oneClick.label, /直接打开/);
 
       serverResponses['/api/accounts'] = (req, res) => {
         if (req.method === 'POST') {
@@ -1169,10 +1169,57 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   const signInFor = account => ({ type: 'success', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL, account, email: account } });
 
+  it('automatically connects exactly the accounts from the upstream sign-in task', async () => {
+    const setup = standInSetup('managed-key');
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      const google = plugin.auth.methods[0];
+      serverResponses['/api/accounts'] = accountsResponse([]);
+      serverResponses['/api/accounts/tasks'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ tasks: [], magpie_signin: 1 }) };
+      const pending = await google.authorize({});
+      assert.match(pending.instructions, /Chrome 导入、粘贴 Cookie 或浏览器登录/);
+      const callback = pending.callback();
+      const post = (path, body = {}) => fetch(`${pending.url}${path}`, {
+        method: 'POST', redirect: 'manual', headers: { Origin: new URL(pending.url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      let status;
+      for (let i = 0; i < 40; i++) {
+        status = await (await fetch(`${pending.url}/status`)).json();
+        if (status.ready) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(status.ready, true);
+      const manage = await post('/manage');
+      assert.equal(manage.status, 200);
+      const destination = new URL((await manage.json()).url);
+      assert.equal(destination.origin, new URL(serverURL).origin);
+      const client = new URLSearchParams(destination.hash.slice(1)).get('magpie');
+      assert.match(manage.headers.get('set-cookie'), /HttpOnly/);
+      // A fully completed task connects all accounts selected in the upstream import page.
+      serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'ready' }]);
+      serverResponses['/api/accounts/tasks'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ tasks: [
+        { id: 'import', client_id: client, state: 'done', items: [POOL[0], POOL[1]].map(a => ({ account_id: a.id, state: 'done' })) }
+      ] }) };
+      const signed = await callback;
+      assert.deepEqual(signed, { type: 'success', key: 'managed-key', metadata: {
+        mode: 'studio', managed: true, baseURL: serverURL, accounts: [POOL[0].id, POOL[1].id], email: accountGroupEmail([POOL[0], POOL[1]])
+      } });
+      assert.equal((await (await fetch(`${pending.url}/status`)).json()).done, true);
+      const ready = await google.authorize({ account: POOL[0].id });
+      assert.equal(ready.url, '');
+      assert.deepEqual(await ready.callback(), signInFor(POOL[0].id));
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } finally {
+      delete serverResponses['/api/accounts/tasks'];
+      delete serverResponses['/api/accounts'];
+      setup.remove();
+    }
+  });
+
   it('9d. one sign-in way asks nothing the first time, then offers a new account or a local one', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['用 Google 账号登录（推荐）', '连接已有 AIStudio2API（地址 + API key）']);
-    const google = plugin.auth.methods[0];
+    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['用 Google 账号登录（推荐）', '直接打开 Google 登录窗口', '连接已有 AIStudio2API（地址 + API key）']);
+    const google = plugin.auth.methods[1];
 
     // Nothing set up: no question, and asking installs nothing (authorize sets it up)
     assert.equal(await google.ask({}), null);
@@ -1232,7 +1279,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.ok(Date.now() - asked < 5000);
 
       // whose sign-in shows the start still under way on its page
-      const signIn = await plugin.auth.methods[0].authorize({});
+      const signIn = await plugin.auth.methods[1].authorize({});
       assert.match(signIn.instructions, /^本地 AI Studio 服务还没启动/);
       const shown = await (await fetch(`${signIn.url}/status`)).json();
       assert.deepEqual(shown.steps.map(s => s.state), ['active', 'pending', 'pending']);
@@ -1260,7 +1307,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   it('9e. choosing an account that must sign in again opens the login window, and reports a login that failed', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    const google = plugin.auth.methods[0];
+    const google = plugin.auth.methods[1];
     const setup = standInSetup('managed-key');
     const loginURL = '/api/accounts/b%40example.com/login';
     try {
@@ -1300,24 +1347,49 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.ok(serverRequests.slice(before).some(r => r.method === 'POST' && r.url === loginURL));
       assert.ok(serverRequests.slice(before).some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-relogin'));
 
-      // A timed-out login task is cancelled via DELETE /api/accounts/tasks/{id} so the backend closes its browser window
-      serverResponses['/api/accounts/tasks'] = {
-        status: 200,
-        headers: jsonHeaders,
-        body: JSON.stringify({ tasks: [{ id: 't-relogin', kind: 'relogin', state: 'running', items: [{ label: 'b@example.com', state: 'running' }] }] })
-      };
-      const beforeTimeout = serverRequests.length;
-      await assert.rejects(
-        studioLogin(localStudio(), 'b@example.com', { deadline: Date.now() + 80, pollMs: 30 }),
-        err => err.timedOut === true
-      );
-      assert.ok(serverRequests.slice(beforeTimeout).some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-relogin'));
       await new Promise(r => setTimeout(r, 300));
     } finally {
       delete serverResponses['/api/accounts'];
       delete serverResponses['/api/accounts/tasks'];
       delete serverResponses['/api/accounts/tasks/t-relogin'];
       delete serverResponses[loginURL];
+      setup.remove();
+    }
+  });
+
+  it('classifies login deadlines inside requests and body reads, and still cancels the exact task', async t => {
+    const setup = standInSetup('managed-key');
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    try {
+      for (const stage of ['start', 'poll', 'body', 'request-timeout', 'expired']) {
+        const calls = [];
+        const deadline = Date.now() + (stage === 'expired' ? -1 : stage === 'request-timeout' ? 60000 : 1000);
+        const fail = name => {
+          t.mock.timers.tick(stage === 'request-timeout' ? 10000 : 1001);
+          throw new DOMException('fixture timeout', name);
+        };
+        const fetchFn = async (url, init) => {
+          const route = new URL(url).pathname;
+          calls.push(`${init.method} ${route}`);
+          if (route === '/api/auth/login') return new Response('{}', { headers: { 'Set-Cookie': 'aistudio_admin=deadline-fixture; Path=/api' } });
+          if (init.method === 'DELETE') return new Response(null, { status: 204 });
+          if (init.method === 'POST') {
+            if (stage === 'start') fail('TimeoutError');
+            return Response.json({ task: { id: 'deadline-task', state: stage === 'body' ? 'done' : 'running', items: [{ label: 'b@example.com', state: 'done' }] } });
+          }
+          if (route === '/api/accounts/tasks') fail('TimeoutError');
+          assert.equal(route, '/api/accounts');
+          const response = Response.json({ accounts: [] });
+          response.json = async () => fail('AbortError');
+          return response;
+        };
+        await assert.rejects(studioLogin(localStudio(), 'b@example.com', { deadline, pollMs: 0, fetchFn }),
+          err => stage === 'request-timeout' ? !err.timedOut && err.cause?.name === 'TimeoutError' : err.timedOut === true);
+        assert.equal(calls.includes('DELETE /api/accounts/tasks/deadline-task'), !['start', 'expired'].includes(stage));
+        if (stage === 'expired') assert.deepEqual(calls, [], 'an expired login must not start a task');
+      }
+    } finally {
+      t.mock.timers.reset();
       setup.remove();
     }
   });
@@ -1382,6 +1454,14 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  it('keeps group card identities stable and separates overlapping groups with the same labels', () => {
+    const a = { id: 'a', label: 'Same' }, b = { id: 'b', label: 'Same' }, c = { id: 'c', label: 'Same' };
+    assert.equal(accountGroupEmail([a, b]), accountGroupEmail([b, a]));
+    assert.equal(accountGroupEmail([a, b]), accountGroupEmail([a, b, a]));
+    assert.notEqual(accountGroupEmail([a, b]), accountGroupEmail([a, c]));
+    assert.match(accountGroupEmail([a, b]), /^Same \+1 \[[a-f0-9]{16}\]$/);
+  });
+
   it('10b2. a 0.5.0 sign-in for the whole pool names the pool and shows its cooldowns', async () => {
     const setup = standInSetup('managed-key');
     const managedAuth = { type: 'api', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL } };
@@ -1400,6 +1480,15 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(card.user, 'a@example.com +1（1 个需要重新登录）', 'the disabled account is left out');
       const pool = card.windows.filter(w => w.name !== '管理页');
       assert.deepEqual(pool, [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '1/1 个账号冷却中：quota exhausted' }]);
+      const batchAuth = { ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['a@example.com'] } };
+      const batch = await plugin.auth.usage(async () => batchAuth);
+      assert.equal(batch.user, 'a@example.com', 'an imported group does not display unrelated accounts');
+      serverResponses['/api/accounts'] = accountsResponse(POOL.map(a => ({ ...a, state: 'ready' })));
+      const unrelated = await plugin.auth.usage(async () => ({ ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['b@example.com'] } }));
+      assert.deepEqual(unrelated.windows.filter(w => Object.hasOwn(w, 'used')), [], 'cooldowns of other groups must not leak into this card');
+      serverResponses['/api/accounts'] = accountsResponse(POOL);
+      const missing = await plugin.auth.usage(async () => ({ ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['removed'] } }));
+      assert.match(missing.error, /本次导入.*停用或移除/);
 
       // The proxy the service goes out through, and why the one saved in the admin page isn't it yet
       serverResponses['/api/config'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ proxy: '', active_proxy: 'http://127.0.0.1:9393' }) };

@@ -1,0 +1,16 @@
+{
+  "version": "0.3.4-magpie.2",
+  "tag": "studio-v0.3.4-magpie.2",
+  "patches": [
+    "studio-0.2.17-preserve-request-bodies.patch",
+    "studio-0.2.19-managed-config.patch",
+    "studio-0.3.4-magpie-signin.patch"
+  ],
+  "binaries": {
+    "darwin-arm64": {},
+    "darwin-x64": {},
+    "linux-x64": {},
+    "linux-arm64": {},
+    "win32-x64": {}
+  }
+}
