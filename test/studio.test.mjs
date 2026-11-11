@@ -1347,24 +1347,49 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.ok(serverRequests.slice(before).some(r => r.method === 'POST' && r.url === loginURL));
       assert.ok(serverRequests.slice(before).some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-relogin'));
 
-      // A timed-out login task is cancelled via DELETE /api/accounts/tasks/{id} so the backend closes its browser window
-      serverResponses['/api/accounts/tasks'] = {
-        status: 200,
-        headers: jsonHeaders,
-        body: JSON.stringify({ tasks: [{ id: 't-relogin', kind: 'relogin', state: 'running', items: [{ label: 'b@example.com', state: 'running' }] }] })
-      };
-      const beforeTimeout = serverRequests.length;
-      await assert.rejects(
-        studioLogin(localStudio(), 'b@example.com', { deadline: Date.now() + 80, pollMs: 30 }),
-        err => err.timedOut === true
-      );
-      assert.ok(serverRequests.slice(beforeTimeout).some(r => r.method === 'DELETE' && r.url === '/api/accounts/tasks/t-relogin'));
       await new Promise(r => setTimeout(r, 300));
     } finally {
       delete serverResponses['/api/accounts'];
       delete serverResponses['/api/accounts/tasks'];
       delete serverResponses['/api/accounts/tasks/t-relogin'];
       delete serverResponses[loginURL];
+      setup.remove();
+    }
+  });
+
+  it('classifies login deadlines inside requests and body reads, and still cancels the exact task', async t => {
+    const setup = standInSetup('managed-key');
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    try {
+      for (const stage of ['start', 'poll', 'body', 'request-timeout', 'expired']) {
+        const calls = [];
+        const deadline = Date.now() + (stage === 'expired' ? -1 : stage === 'request-timeout' ? 60000 : 1000);
+        const fail = name => {
+          t.mock.timers.tick(stage === 'request-timeout' ? 10000 : 1001);
+          throw new DOMException('fixture timeout', name);
+        };
+        const fetchFn = async (url, init) => {
+          const route = new URL(url).pathname;
+          calls.push(`${init.method} ${route}`);
+          if (route === '/api/auth/login') return new Response('{}', { headers: { 'Set-Cookie': 'aistudio_admin=deadline-fixture; Path=/api' } });
+          if (init.method === 'DELETE') return new Response(null, { status: 204 });
+          if (init.method === 'POST') {
+            if (stage === 'start') fail('TimeoutError');
+            return Response.json({ task: { id: 'deadline-task', state: stage === 'body' ? 'done' : 'running', items: [{ label: 'b@example.com', state: 'done' }] } });
+          }
+          if (route === '/api/accounts/tasks') fail('TimeoutError');
+          assert.equal(route, '/api/accounts');
+          const response = Response.json({ accounts: [] });
+          response.json = async () => fail('AbortError');
+          return response;
+        };
+        await assert.rejects(studioLogin(localStudio(), 'b@example.com', { deadline, pollMs: 0, fetchFn }),
+          err => stage === 'request-timeout' ? !err.timedOut && err.cause?.name === 'TimeoutError' : err.timedOut === true);
+        assert.equal(calls.includes('DELETE /api/accounts/tasks/deadline-task'), !['start', 'expired'].includes(stage));
+        if (stage === 'expired') assert.deepEqual(calls, [], 'an expired login must not start a task');
+      }
+    } finally {
+      t.mock.timers.reset();
       setup.remove();
     }
   });
