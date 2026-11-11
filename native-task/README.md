@@ -33,15 +33,9 @@
 
 已知问题：客户端收到工具调用后若不回传结果（例如 agent 中途被打断），该 Task 会一直占用唯一的名额，直到工具等待和任务超时到期（最长约 4 分钟），期间其他请求返回 409 `concurrency_limit`。另外曾出现过一次首个健康检查超时（2 秒），未能复现。
 
-## Magpie 插件安装与登录
+## Magpie 插件登录
 
-Task 已并入 `magpie-gemini-web` 插件，不需要单独安装。先完成下面的本地服务 Setup，再登录并选择「macOS 原生 Task（实验性）」：
-
-```bash
-magpie plugin login gemini-web
-```
-
-登录后模型为 `gemini-web/gemini-task-argon`。没有完成 Setup 时，这个选项会报错并给出 setup 命令。
+`magpie-gemini-web` 不再提供「macOS 原生 Task」登录入口，该通道已不可用。下面的本地桥接命令只用于开发和回归，不能从 Magpie 的 Gemini Web 登录里选择。
 
 ## 本地桥接守护进程 CLI
 

@@ -3,7 +3,7 @@ import { ensureBackend, localBackend, localSetup } from './lib/native.mjs';
 import { registerMagpieCleanup, isPluginRemovedInActiveMagpie } from './lib/cleanup.mjs';
 import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
-import { taskSupported, taskMethod, taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
+import { taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
 
 const ID = 'gemini-web';
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -221,7 +221,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
             callback: async () => signInFor(local, chosen)
           };
         }
-      }, ...(taskSupported() ? [taskMethod] : [])],
+      }],
       async loader(getAuth) {
         const auth = await getAuth();
         if (isTaskAuth(auth)) return taskLoader(auth);

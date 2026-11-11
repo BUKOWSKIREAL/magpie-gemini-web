@@ -5,7 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin } from '../index.mjs';
-import { taskSupported, taskMethod, TASK_MODEL } from '../lib/task.mjs';
+import { taskMethod, TASK_MODEL } from '../lib/task.mjs';
 
 describe('29. The experimental macOS Task route', () => {
   const KEY = 'task_key_0123456789abcdef';
@@ -43,15 +43,11 @@ describe('29. The experimental macOS Task route', () => {
     }), { mode: 0o600 });
   }
 
-  it('is offered on macOS only, after the Web methods', async () => {
-    assert.equal(taskSupported('darwin'), true);
-    assert.equal(taskSupported('win32'), false);
-    assert.equal(taskSupported('linux'), false);
+  it('is not offered as a Gemini Web sign-in', async () => {
     const methods = (await GeminiWebPlugin({})).auth.methods;
-    assert.equal(methods.includes(taskMethod), taskSupported());
-    if (taskSupported()) assert.equal(methods.at(-1), taskMethod);
-    assert.match(taskMethod.label, /实验性/);
-    assert.doesNotMatch(taskMethod.label, /推荐/);
+    assert.equal(methods.includes(taskMethod), false);
+    assert.equal(methods.some(method => /Task|原生/.test(method.label)), false);
+    assert.deepEqual(methods.map(method => method.type), ['oauth', 'api', 'oauth']);
   });
 
   it('says how to set the bridge up when it has no configuration', async () => {

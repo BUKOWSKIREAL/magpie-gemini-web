@@ -168,7 +168,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 </details>
 
 <details>
-<summary><b>🔒 安全、数据目录与后端版本管理</b>（日志位置、升级与回退、macOS 原生 Task）</summary>
+<summary><b>🔒 安全、数据目录与后端版本管理</b>（日志位置、升级与回退）</summary>
 
 <br>
 
@@ -204,9 +204,6 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
   npm run backend:install           # 恢复默认优化版
   ```
 - 源码复现构建与发布流程见 [docs/backend-release.md](docs/backend-release.md)。
-
-**macOS 原生 Task（实验性）：**
-macOS 用户登录 Gemini Web 时会额外看到「macOS 原生 Task（实验性）」选项，通过本机 `Gemini.app` 的原生 Task 通道调用 `gemini-task-argon`（原生 Function Calling）。当前处于 Alpha 阶段，需预先完成本机配置，详见 [native-task/README.md](native-task/README.md)。
 
 </details>
 

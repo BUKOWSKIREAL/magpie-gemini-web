@@ -168,7 +168,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 </details>
 
 <details>
-<summary><b>🔒 Security, Data Directories & Backend Version Management</b> (logs, rollback, macOS Native Task)</summary>
+<summary><b>🔒 Security, Data Directories & Backend Version Management</b> (logs, rollback)</summary>
 
 <br>
 
@@ -204,9 +204,6 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
   npm run backend:install           # Restore default optimized build
   ```
 - For reproducible builds and release procedures, see [docs/backend-release.md](docs/backend-release.md).
-
-**Native Task on macOS (experimental):**
-On macOS, Gemini Web sign-in includes an experimental **macOS Native Task** option that routes requests through `Gemini.app`'s native Task mode (`gemini-task-argon` with native Function Calling). Currently in Alpha and requires local setup first—see [native-task/README.md](native-task/README.md).
 
 </details>
 

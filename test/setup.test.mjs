@@ -492,9 +492,7 @@ describe('27. One-click sign-in through the plugin', () => {
 
   it('offers one-click setup first and keeps the custom-backend method', async () => {
     const plugin = await GeminiWebPlugin({});
-    const types = ['oauth', 'api', 'oauth'];
-    if (process.platform === 'darwin') types.push('oauth'); // the Task route, last (see task.test.mjs)
-    assert.deepEqual(plugin.auth.methods.map(m => m.type), types);
+    assert.deepEqual(plugin.auth.methods.map(m => m.type), ['oauth', 'api', 'oauth']);
   });
 
   it('blocks a reused live legacy backend before changing its pool, and permits login after its upgrade', async () => {
