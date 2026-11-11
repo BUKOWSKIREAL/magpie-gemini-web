@@ -3,10 +3,19 @@ import { ensureBackend, localBackend, localSetup } from './lib/native.mjs';
 import { registerMagpieCleanup, isPluginRemovedInActiveMagpie } from './lib/cleanup.mjs';
 import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
-import { taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
 
 const ID = 'gemini-web';
 const GEMINI_URL = 'https://gemini.google.com/app';
+
+// Saved macOS Task sign-ins predate removal of the native bridge. Reject them here so their
+// local key is not sent to the Gemini Web backend.
+function retiredTask(auth) {
+  return auth?.type === 'api' && auth.metadata?.mode === 'task';
+}
+
+function retiredTaskError() {
+  return Object.assign(new Error('macOS 原生 Task 已停用，请改用 Gemini Web 登录'), { signIn: 'expired' });
+}
 
 // The backend keeps the session alive by rotating its cookies, which signs the browser it came
 // from out of Google. A private window that is closed afterwards gives the backend a session of
@@ -224,7 +233,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       }],
       async loader(getAuth) {
         const auth = await getAuth();
-        if (isTaskAuth(auth)) return taskLoader(auth);
+        if (retiredTask(auth)) throw retiredTaskError();
         if (auth?.type !== 'api') return {};
         const c = credentials(auth, opts);
         return {
@@ -240,7 +249,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       async usage(getAuth) {
         const auth = await getAuth();
         if (auth?.type !== 'api') return { error: 'Gemini Web 还没有登录', windows: [], signIn: 'kept' };
-        if (isTaskAuth(auth)) return { error: '原生 Task 登录读不到额度', windows: [], signIn: 'kept' };
+        if (retiredTask(auth)) return { error: retiredTaskError().message, windows: [], signIn: 'expired' };
         let c;
         try {
           c = credentials(auth, opts);
@@ -258,7 +267,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       id: ID,
       async models(provider, { auth } = {}) {
         if (auth?.type !== 'api') return provider.models;
-        if (isTaskAuth(auth)) return taskModels(auth, ID);
+        if (retiredTask(auth)) throw retiredTaskError();
         const c = credentials(auth, opts);
         try {
           return await listModels(c, opts);
@@ -267,16 +276,6 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
           await ensureBackend({ proxy: opts.proxy });
           return listModels(c, opts);
         }
-      }
-    },
-    // The Task bridge keeps a conversation's state by its session, so each request carries the
-    // host's session id. The Web backend's forward() passes on only the headers it needs, so
-    // this doesn't reach it.
-    async 'chat.headers'(input, output) {
-      if (input?.model?.providerID !== ID && input?.provider?.info?.id !== ID) return;
-      if (typeof input.sessionID === 'string' && input.sessionID) {
-        output.headers ??= {};
-        output.headers['X-Gemini-Session'] = input.sessionID;
       }
     }
   };
