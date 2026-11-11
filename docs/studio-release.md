@@ -165,6 +165,11 @@ AI_STUDIO_TEST_ARCHIVE=/absolute/path/to/archive.tar.gz npm test
 
 真实安装验证检查旧版请求正文迁移及重启后可读、管理页保存的备用请求设置、启动、版本、GET 更新状态、POST 更新返回 409、二进制及 PID 不变、管理页面显示托管提示、停止与状态。`.github/workflows/studio.yml` 在五种系统/架构的原生 runner 上重新构建、对比 SHA-256 并运行该验证；本机交叉编译不能代替 Linux/Windows 真机验证。
 
+## 0.3.5 升级验证（2026-11-11）
+
+- 五平台候选构建（[run 42948360160](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42948360160)）通过上游测试、真实安装冒烟测试和插件测试。发行清单的安装包及可执行文件 SHA-256 来自该次固定工具链构建。
+- PR 和发布提交须分别完成严格复现验证；包含从已发布 `0.3.4-magpie.1` 及同基线官方版本接管升级的回归覆盖。真实 Google 认证和 #53 的登录态生成挂起不属于这组离线验证。
+
 ## 0.3.4 升级验证（2026-11-10）
 
 - 五个平台的候选构建（[run 42744366347](https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/42744366347)）一次性通过上游测试、真实安装冒烟验证（含旧版 `bodies` 表迁移、`account_order` 与 `model_accounts` 设置保存与重启持久化、SpiderMonkey 与 libwebp 静态链接、管理页配置持久化）及插件测试；安装包和二进制 pin 来自该次构建。
