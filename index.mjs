@@ -1,7 +1,7 @@
 import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER, PLUGIN_ICON } from './lib/backend.mjs';
 import { ensureBackend, localBackend, localSetup } from './lib/native.mjs';
 import { registerMagpieCleanup, isPluginRemovedInActiveMagpie } from './lib/cleanup.mjs';
-import { parseCookieInput, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
+import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
 import { taskSupported, taskMethod, taskLoader, taskModels, isTaskAuth } from './lib/task.mjs';
 
@@ -14,6 +14,7 @@ const GEMINI_URL = 'https://gemini.google.com/app';
 const COOKIE_STEPS = [
   '请用浏览器的无痕 / 隐私窗口（推荐 Firefox），不要用你平时登录着 Google 的窗口：后端会定时刷新这份登录，和浏览器共用会被 Google 踢出登录。',
   `1. 在无痕窗口打开 ${GEMINI_URL} 并登录要使用的 Google 账号`,
+  '确认这个窗口的目标账号索引与刚才填写的一致；无痕窗口中的索引可能和普通窗口不同。如地址是 /u/4/app，应填 4；填错请取消并重新登录。',
   '2. 按 F12（macOS 按 ⌥⌘I）打开开发者工具，切到 Network（网络）面板，刷新页面',
   '3. 点列表里任意一个 gemini.google.com 的请求 → Headers（标头）→ Request Headers（请求标头）',
   '4. 找到 cookie 那一行，复制它的值，粘贴到下面',
@@ -89,6 +90,20 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
     }
   };
 
+  const authuserPrompt = {
+    type: 'text',
+    key: 'authuser',
+    message: 'Google 账号索引（复制 Cookie 的同一窗口中 /u/N/app 的 N；单账号留空为 0，无痕窗口可能不同）',
+    placeholder: '0',
+    validate: value => {
+      try {
+        parseAuthuser(value);
+      } catch (e) {
+        return e.message;
+      }
+    }
+  };
+
   // Bring a backend set up earlier back after Magpie or the computer restarts. Not awaited:
   // requests that arrive first start it themselves through forwardManaged.
   if (localBackend()) {
@@ -117,9 +132,10 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
       methods: [{
         type: 'oauth',
         label: '一键配置本地 Gemini Web（推荐）',
-        prompts: [proxyPrompt],
+        prompts: [proxyPrompt, authuserPrompt],
         ask(inputs) {
-          return inputs && 'proxy' in inputs ? null : proxyPrompt;
+          if (!inputs || !('proxy' in inputs)) return proxyPrompt;
+          return 'authuser' in inputs ? null : authuserPrompt;
         },
         // Installs and starts the pinned backend while the user copies the Gemini cookie; the
         // callback then waits for it, configures its proxy pool when a proxy URL is given, and
@@ -128,18 +144,20 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
         // one for each Google account (see signInFor).
         async authorize(inputs) {
           const proxy = validateProxyURL(inputs?.proxy || opts.proxy || '');
+          const authuser = parseAuthuser(inputs?.authuser);
+          const loginURL = authuser ? `https://gemini.google.com/u/${authuser}/app` : GEMINI_URL;
           const ready = ensureBackend({ proxy });
           ready.catch(() => {});
           return {
-            url: GEMINI_URL,
+            url: loginURL,
             method: 'code',
-            instructions: COOKIE_STEPS,
+            instructions: COOKIE_STEPS.replaceAll(GEMINI_URL, loginURL),
             async callback(code) {
               let local, cookie, added;
               try {
                 cookie = parseCookieInput(code);
                 local = await ready;
-                added = await importCookie(local, cookie, proxy ? { proxy } : {});
+                added = await importCookie(local, cookie, { authuser, ...(proxy ? { proxy } : {}) });
               } catch (err) {
                 return { type: 'failed', error: err.message };
               }
