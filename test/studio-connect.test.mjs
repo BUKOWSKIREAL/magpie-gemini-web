@@ -20,7 +20,10 @@ async function fixture(options = {}) {
       headers: { 'Content-Type': 'application/json', 'Set-Cookie': 'aistudio_admin=test-session; Path=/api; HttpOnly' }
     });
     assert.equal(new Headers(init.headers).get('Cookie'), 'aistudio_admin=test-session');
-    if (path === '/api/accounts/tasks') return Response.json({ tasks, magpie_signin: options.legacy ? undefined : 1 });
+    if (path === '/api/accounts/tasks') {
+      await options.beforeTasks?.();
+      return Response.json({ tasks, magpie_signin: options.legacy ? undefined : 1 });
+    }
     if (init.method === 'DELETE') return new Response(null, { status: 204 });
     assert.equal(path, '/api/accounts');
     return Response.json({ accounts });
@@ -99,8 +102,63 @@ describe('Automatic upstream sign-in', () => {
       await new Promise(r => setTimeout(r, 30));
       assert.equal((await f.status()).done, false);
       f.setTasks([completed(client, ['two', ready.id])]);
-      assert.deepEqual((await within(result)).accounts.map(a => a.id), ['two', ready.id]);
+      assert.deepEqual((await within(result)).accounts.map(a => a.id), [ready.id, 'two']);
     } finally { f.page.close(); }
+  });
+
+  it('retains partial successes after a failed task is removed and merges only this sign-in', async () => {
+    const f = await fixture({ pollMs: 60000 });
+    try {
+      const { result, client } = await f.start();
+      f.setAccounts([ready, { ...ready, id: 'two' }, { ...ready, id: 'unrelated' }]);
+      f.setTasks([
+        { ...completed(client), id: 'partial', state: 'failed', items: [...completed(client).items, { state: 'failed', label: 'two' }] },
+        completed('another-window', ['unrelated'])
+      ]);
+      assert.equal((await f.status()).done, false);
+      f.setTasks([{ ...completed(client, ['two']), id: 'retry' }]);
+      assert.equal((await f.status()).done, true, 'the finish-page poll checks tasks immediately');
+      assert.deepEqual((await within(result)).accounts.map(a => a.id), [ready.id, 'two']);
+    } finally { await f.page.close(); }
+  });
+
+  it('revalidates successes accumulated before retry and never borrows them for reauthentication', async () => {
+    for (const accountId of [undefined, ready.id]) {
+      const f = await fixture({ pollMs: 60000, accountId });
+      try {
+        const { result, client } = await f.start();
+        f.setAccounts([{ ...ready, enabled: false }, { ...ready, id: 'two' }]);
+        f.setTasks([{ ...completed(client), state: 'failed' }]);
+        assert.equal((await f.status()).done, false);
+        f.setTasks([completed(client, ['two'])]);
+        await f.status();
+        await assert.rejects(result, accountId ? /不一致/ : /停用/);
+      } finally { await f.page.close(); }
+    }
+  });
+
+  it('joins an in-flight task check and cleans up only its own banners on close', async () => {
+    let gate, entered;
+    const f = await fixture({ pollMs: 60000, beforeTasks: () => { entered?.(); return gate; } });
+    try {
+      const { result, client } = await f.start();
+      let release;
+      gate = new Promise(resolve => { release = resolve; });
+      const reading = new Promise(resolve => { entered = resolve; });
+      f.setAccounts([ready]);
+      f.setTasks([completed(client), { ...completed(client), id: 'failed', state: 'failed' }, completed('other')]);
+      const first = f.status();
+      await reading;
+      const second = f.status();
+      release();
+      gate = null;
+      assert.equal((await first).done, true);
+      assert.equal((await second).done, true);
+      await within(result);
+      assert.equal(f.requests.filter(r => r.method === 'DELETE').length, 0, 'keep tasks until the frontend can return');
+      await f.page.close();
+      assert.deepEqual(f.requests.filter(r => r.method === 'DELETE').map(r => r.path).sort(), ['/api/accounts/tasks/failed', '/api/accounts/tasks/task']);
+    } finally { await f.page.close(); }
   });
 
   it('revalidates results and confines reauthentication to the original account', async () => {

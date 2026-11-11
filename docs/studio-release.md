@@ -4,11 +4,11 @@
 
 ## 插件账号管理接入
 
-推荐登录入口由 `lib/studio-connect.mjs` 显示安装进度，随后在同一标签页自动进入随包上游的账号导入／登录界面。上游登录模式只展示 Chrome 导入、Cookie 导入和浏览器登录；已有账号重新登录时只展示目标账号。单个账号成功后直接保存原有 `managed: true` 的 `ai-studio` 登录；批量导入全部成功后保存 `metadata.accounts`，额度卡片按本次账号组显示。此元数据不改变后端的全局选号、API key 绑定或模型绑定规则。模型、图片和用量继续走原插件，不调用 `magpie://import` 创建其他供应商。
+推荐登录入口由 `lib/studio-connect.mjs` 显示安装进度，随后在同一标签页自动进入随包上游的账号导入／登录界面。上游登录模式展示 Chrome 导入、Cookie 导入、调试浏览器会话导入和浏览器登录，隐藏远程配对。已有账号重新登录时显示加载、错误或账号缺失状态，并明确提示当前上游仅支持浏览器重登；v0.3.4 会拒绝用 Chrome / Cookie 重复导入已有账号。单个账号成功后直接保存原有 `managed: true` 的 `ai-studio` 登录；批量导入成功后保存 `metadata.accounts` 和带账号集合摘要的 `metadata.email`，使不同分组不会互相覆盖；同组以不同顺序重试保持相同标识。额度卡片的账号和冷却记录都按本次账号组过滤。此元数据不改变后端的全局选号、API key 绑定或模型绑定规则。模型、图片和用量继续走原插件，不调用 `magpie://import` 创建其他供应商。
 
-`patches/studio-0.3.4-magpie-signin.patch` 给管理页增加由 URL fragment 开启的登录模式，并给账号任务增加 `client_id`、成功条目的规范 `account_id` 和 `GET /api/accounts/tasks` 的 `magpie_signin: 1` 能力标识。每次登录使用独立随机标识；只有当前页面提交的完整成功任务能完成认证。插件从后台任务取得账号 ID，再重新读取账号列表校验。已有账号、其他窗口任务、失败或部分失败任务均不会自动完成当前登录。部分失败可在上游界面重试。刷新页面保留登录标识；关闭浏览器后，插件仍能跟踪已启动任务。
+`patches/studio-0.3.4-magpie-signin.patch` 给管理页增加由 URL fragment 开启的登录模式，并给账号任务增加 `client_id`、成功条目的规范 `account_id` 和 `GET /api/accounts/tasks` 的 `magpie_signin: 1` 能力标识。每次登录使用独立随机标识；只有当前页面提交的完整成功任务能完成认证。插件从后台任务取得账号 ID，再重新读取账号列表校验。已有账号、其他窗口任务、失败或部分失败任务均不会自动完成当前登录。部分失败可只重试失败账号：插件按本次标识累积每个已成功条目的账号 ID，最终成功时合并、去重并重新校验。登录模式暂不提供关闭失败任务的按钮，避免插件观察前删除成功条目；已观察到的成功条目即使之后从任务列表移除也会保留。刷新页面保留登录标识；关闭浏览器后，插件仍能跟踪已启动任务。
 
-管理会话通过本机 HTTP 响应的 `HttpOnly; SameSite=Strict; Path=/api` Cookie 交给浏览器。两个服务均限定为 `http://127.0.0.1`；Cookie 按主机共享，不按端口隔离。临时页使用随机路径、严格 Host / 写操作 Origin 检查和 CSP，状态接口不返回 API key、管理密码或 Google Cookie。上游 fragment 仅含关联标识、本机回程地址、截止时间及可选目标账号；不放凭据。自动流程取消或超时只取消本次标识下仍运行的任务，保留已导入账号。结束后不再发放管理会话，两分钟后关闭临时服务。
+管理会话通过本机 HTTP 响应的 `HttpOnly; SameSite=Strict; Path=/api` Cookie 交给浏览器。两个服务均限定为 `http://127.0.0.1`；Cookie 按主机共享，不按端口隔离。临时页使用随机路径、严格 Host / 写操作 Origin 检查和 CSP，状态接口不返回 API key、管理密码或 Google Cookie。上游 fragment 仅含关联标识、本机回程地址、截止时间及可选目标账号；不放凭据。自动流程取消或超时只取消本次标识下仍运行的任务，保留已导入账号。结束后不再发放管理会话，两分钟后关闭临时服务，并清理本次标识下的成功、失败及未结束任务记录。回程页的状态请求会等待正在进行的检查或立即检查任务，无需额外等待轮询周期。
 
 **发行状态：** 自动模式需要重新构建后端，候选版本为 `0.3.4-magpie.2`。`lib/studio-release.json` 仍保留已发布 `0.3.4-magpie.1` 的真实哈希；该版本不含新补丁。插件探测到旧后端时，使用 `lib/studio-connect-legacy.mjs` 保持现有手动连接流程，避免把自动界面交给不支持任务关联的二进制。新后端完成发布并更新发行 pin 后，推荐入口才会默认启用自动模式。用户无需额外安装、填 URL 或复制密钥。
 
@@ -20,7 +20,7 @@ node scripts/studio-release.mjs --manifest=scripts/studio-signin-candidate.json 
 
 正式五平台构建使用 `studio.yml` 的 `write_pins=true` 和 `signin_candidate=true`，从固定工具链生成 candidate artifacts。收集阶段会验证所有构建记录的上游、补丁哈希和工具链，再产生完整 `candidate-pins`。将该文件替换 `lib/studio-release.json`，执行常规五平台验证并发布后端，最后发布插件。也可用 `scripts/studio-pins.mjs --manifest=<candidate.json> <build-record.json>...` 合并本地候选记录；缺平台或输入不一致会拒绝。不要把本机 beta Xcode 的验证构建哈希写入正式 pin。
 
-测试覆盖当前任务隔离、批量导入、部分失败重试、完成时重新校验、重新登录身份限制、来源检查、旧后端回退、取消和超时；上游补丁另含任务关联与前端回程地址验证测试。构建脚本同时运行这些测试、上游 Go 测试、前端 lint 和类型检查。真实 Google 登录和 Windows Chrome 导入仍需带账号验证。
+测试覆盖当前任务隔离、批量导入、部分失败重试、完成时重新校验、重新登录身份限制、来源检查、旧后端回退、取消和超时；上游补丁另含任务关联、前端回程地址、窄视口导航、路由锁定及重登状态渲染测试。Windows CI 运行全部 `studio*.test.mjs`，候选配置随 npm 包提供。构建脚本同时运行这些测试、上游 Go 测试、前端 lint 和类型检查。真实 Google 登录和 Windows Chrome 导入仍需带账号验证。
 
 ## 0.3.4 升级兼容
 

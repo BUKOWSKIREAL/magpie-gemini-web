@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
-import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
+import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accountGroupEmail, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
 
@@ -1202,7 +1202,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       ] }) };
       const signed = await callback;
       assert.deepEqual(signed, { type: 'success', key: 'managed-key', metadata: {
-        mode: 'studio', managed: true, baseURL: serverURL, accounts: [POOL[0].id, POOL[1].id]
+        mode: 'studio', managed: true, baseURL: serverURL, accounts: [POOL[0].id, POOL[1].id], email: accountGroupEmail([POOL[0], POOL[1]])
       } });
       assert.equal((await (await fetch(`${pending.url}/status`)).json()).done, true);
       const ready = await google.authorize({ account: POOL[0].id });
@@ -1429,6 +1429,14 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  it('keeps group card identities stable and separates overlapping groups with the same labels', () => {
+    const a = { id: 'a', label: 'Same' }, b = { id: 'b', label: 'Same' }, c = { id: 'c', label: 'Same' };
+    assert.equal(accountGroupEmail([a, b]), accountGroupEmail([b, a]));
+    assert.equal(accountGroupEmail([a, b]), accountGroupEmail([a, b, a]));
+    assert.notEqual(accountGroupEmail([a, b]), accountGroupEmail([a, c]));
+    assert.match(accountGroupEmail([a, b]), /^Same \+1 \[[a-f0-9]{16}\]$/);
+  });
+
   it('10b2. a 0.5.0 sign-in for the whole pool names the pool and shows its cooldowns', async () => {
     const setup = standInSetup('managed-key');
     const managedAuth = { type: 'api', key: 'managed-key', metadata: { mode: 'studio', managed: true, baseURL: serverURL } };
@@ -1450,6 +1458,10 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const batchAuth = { ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['a@example.com'] } };
       const batch = await plugin.auth.usage(async () => batchAuth);
       assert.equal(batch.user, 'a@example.com', 'an imported group does not display unrelated accounts');
+      serverResponses['/api/accounts'] = accountsResponse(POOL.map(a => ({ ...a, state: 'ready' })));
+      const unrelated = await plugin.auth.usage(async () => ({ ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['b@example.com'] } }));
+      assert.deepEqual(unrelated.windows.filter(w => Object.hasOwn(w, 'used')), [], 'cooldowns of other groups must not leak into this card');
+      serverResponses['/api/accounts'] = accountsResponse(POOL);
       const missing = await plugin.auth.usage(async () => ({ ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['removed'] } }));
       assert.match(missing.error, /本次导入.*停用或移除/);
 

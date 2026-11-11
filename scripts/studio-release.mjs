@@ -241,7 +241,8 @@ try {
   npm(['ci', '--no-audit', '--no-fund']);
   npm(['run', 'lint']);
   if (fs.existsSync(path.join(source, 'web/tests/magpie.test.ts'))) {
-    execFileSync(process.execPath, ['--test', 'tests/magpie.test.ts'], { cwd: path.join(source, 'web'), stdio: 'inherit' });
+    const tests = fs.readdirSync(path.join(source, 'web/tests')).filter(name => name.endsWith('.test.ts')).map(name => `tests/${name}`);
+    execFileSync(process.execPath, ['--test', ...tests], { cwd: path.join(source, 'web'), stdio: 'inherit' });
   }
   npm(['run', 'build']);
   // Node's gzip differs between builders; Go's is the same everywhere (see studio-regzip.go).

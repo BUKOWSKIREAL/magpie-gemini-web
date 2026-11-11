@@ -19,7 +19,7 @@ index c9bb50d..667058c 100644
  	View      string            `json:"view,omitempty"`
  	State     string            `json:"state"`
 @@ -25,10 +27,11 @@ type AccountTask struct {
- 
+
  // AccountTaskItem 是任务中的一个账户，Label 为邮箱，浏览器登录完成前为空
  type AccountTaskItem struct {
 -	Label string `json:"label"`
@@ -32,7 +32,7 @@ index c9bb50d..667058c 100644
 +	Code      string `json:"code,omitempty"`
 +	Error     string `json:"error,omitempty"`
  }
- 
+
  // chromeImportRequest 是从本机 Chrome 导入的账号与共用的账户环境
 @@ -84,6 +87,13 @@ func (task AccountTask) clone() AccountTask {
  func (tasks *accountTasks) start(r *http.Request, task AccountTask, run func(context.Context, accountTaskUpdate)) AccountTask {
@@ -58,13 +58,13 @@ index c9bb50d..667058c 100644
  	}
  }
 @@ -195,7 +205,7 @@ func (s *server) startAccountTask(w http.ResponseWriter, r *http.Request, task A
- 
+
  // handleAccountTasks 返回账户任务
  func (s *server) handleAccountTasks(w http.ResponseWriter, _ *http.Request) {
 -	writeJSON(w, http.StatusOK, map[string][]AccountTask{"tasks": s.accountTasks.list()})
 +	writeJSON(w, http.StatusOK, map[string]any{"tasks": s.accountTasks.list(), "magpie_signin": 1})
  }
- 
+
  // handleDeleteAccountTask 取消进行中的账户任务或关闭已结束的任务
 diff --git a/internal/api/magpie_signin_test.go b/internal/api/magpie_signin_test.go
 new file mode 100644
@@ -119,7 +119,7 @@ index 0000000..91b34ab
 +	}
 +}
 diff --git a/web/src/App.vue b/web/src/App.vue
-index e09a472..ae6006c 100644
+index e09a472..e96b591 100644
 --- a/web/src/App.vue
 +++ b/web/src/App.vue
 @@ -1,7 +1,17 @@
@@ -141,7 +141,7 @@ index e09a472..ae6006c 100644
  import type { AsyncComponentLoader } from 'vue'
  import {
    DropdownMenuContent,
-@@ -58,6 +68,11 @@ const validTabs: TabID[] = [
+@@ -58,12 +68,21 @@ const validTabs: TabID[] = [
    'version',
  ]
  const { tab: currentTab, select: selectTab } = useTabParam(validTabs, 'logs')
@@ -153,10 +153,34 @@ index e09a472..ae6006c 100644
  const router = useRouter()
  const route = useRoute()
  // currentTab 在从试用页返回时同步目标管理页面
-@@ -166,6 +181,19 @@ const {
+ watch(
+   () => route.fullPath,
+   () => {
++    if (magpieSignIn) {
++      currentTab.value = 'accounts'
++      return
++    }
+     if (route.name === 'console') {
+       const tab = route.query.tab as TabID
+       currentTab.value = validTabs.includes(tab) ? tab : 'logs'
+@@ -83,9 +102,10 @@ const wideQuery = window.matchMedia('(min-width: 48rem)')
+
+ // revealCurrentTab 把窄屏横向导航的当前项横向滚入视野
+ function revealCurrentTab(): void {
+-  if (wideQuery.matches) return
+-  const bar = navigationBar.value!
+-  const item = bar.querySelector('[aria-current="page"]')!
++  if (magpieSignIn || wideQuery.matches || !navigationBar.value) return
++  const bar = navigationBar.value
++  const item = bar.querySelector('[aria-current="page"]')
++  if (!item) return
+   const barRect = bar.getBoundingClientRect()
+   const itemRect = item.getBoundingClientRect()
+   if (itemRect.left < barRect.left) bar.scrollLeft -= barRect.left - itemRect.left
+@@ -166,6 +186,19 @@ const {
    waitForRestart,
  } = useConsole()
- 
+
 +const signInTasks = computed(() =>
 +  magpieSignIn
 +    ? accountTasks.value.filter((task) => task.client_id === magpieSignIn?.client)
@@ -173,7 +197,7 @@ index e09a472..ae6006c 100644
  // noticeText 是按界面语言显示的提示正文，服务文案翻译表到达后随之更新
  const noticeText = computed(() => logText(notice.message))
  // deletedNotice 是撤销提示的正文：删除一个账户时写账户名，批量删除时写数量
-@@ -231,6 +259,7 @@ onMounted(revealCurrentTab)
+@@ -231,6 +264,7 @@ onMounted(revealCurrentTab)
  <template>
    <div class="flex h-full w-full flex-col md:flex-row">
      <aside
@@ -181,8 +205,8 @@ index e09a472..ae6006c 100644
        class="app-sidebar relative grid w-full min-w-0 shrink-0 border-b border-line bg-panel md:border-r md:border-b-0"
        :style="{ '--sidebar-width': `${sidebarWidth}px` }"
      >
-@@ -417,7 +446,7 @@ onMounted(revealCurrentTab)
- 
+@@ -417,7 +451,7 @@ onMounted(revealCurrentTab)
+
      <main class="@container flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
        <div
 -        v-if="config?.reserved_listen_addr"
@@ -190,7 +214,7 @@ index e09a472..ae6006c 100644
          role="alert"
          class="page-x overflow-hidden border-b border-amber-500/30 bg-amber-500/10 py-2.5 text-sm break-words text-amber-200 [scrollbar-gutter:stable]"
        >
-@@ -428,7 +457,7 @@ onMounted(revealCurrentTab)
+@@ -428,7 +462,7 @@ onMounted(revealCurrentTab)
          }}
        </div>
        <div
@@ -199,7 +223,7 @@ index e09a472..ae6006c 100644
          role="alert"
          class="page-x overflow-hidden border-b border-amber-500/30 bg-amber-500/10 py-2.5 text-sm break-words text-amber-200 [scrollbar-gutter:stable]"
        >
-@@ -444,7 +473,7 @@ onMounted(revealCurrentTab)
+@@ -444,7 +478,7 @@ onMounted(revealCurrentTab)
          <AccountsPanel
            v-else-if="currentTab === 'accounts'"
            :accounts="visibleAccounts"
@@ -219,7 +243,7 @@ index 1032107..e5ce0e6 100644
  import type {
    Account,
 @@ -94,6 +95,18 @@ keepPage(() => writes.value > 0)
- 
+
  // send 发出管理端请求并保留服务端错误语义，管理登录失效时通知页面清理管理数据，写请求进行中时计入 writes
  async function send(path: string, init?: RequestInit): Promise<Response> {
 +  if (
@@ -238,7 +262,7 @@ index 1032107..e5ce0e6 100644
    if (write) writes.value++
    try {
 diff --git a/web/src/components/AccountsPanel.vue b/web/src/components/AccountsPanel.vue
-index 3eb94ee..dda3190 100644
+index 3eb94ee..0d0af06 100644
 --- a/web/src/components/AccountsPanel.vue
 +++ b/web/src/components/AccountsPanel.vue
 @@ -9,6 +9,7 @@ import {
@@ -251,7 +275,7 @@ index 3eb94ee..dda3190 100644
  import { maskedProxy } from '@/proxy'
 @@ -54,6 +55,12 @@ const emit = defineEmits<{
  }>()
- 
+
  const { t, locale, errorText, logText } = useI18n()
 +const signInBusy = computed(
 +  () => pendingAction.value !== '' || props.tasks.some((task) => task.state === 'running'),
@@ -262,7 +286,7 @@ index 3eb94ee..dda3190 100644
  const defaultAccountLocale = navigator.language
  const showEditor = ref(false)
  const showBrowserLogin = ref(false)
-@@ -939,7 +946,45 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+@@ -939,7 +946,57 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
    <section
      class="flex min-h-0 flex-1 flex-col overflow-auto max-md:[scrollbar-gutter:stable] md:overflow-hidden"
    >
@@ -282,7 +306,7 @@ index 3eb94ee..dda3190 100644
 +      </p>
 +      <div v-if="!magpieSignIn.account" class="mt-5 grid gap-3 md:grid-cols-3">
 +        <button
-+          v-for="item in addMethods.slice(0, 3)"
++          v-for="item in addMethods.filter((method) => method.label !== 'accounts.remoteAdd')"
 +          :key="item.label"
 +          type="button"
 +          class="rounded-lg border border-line bg-panel p-4 text-left transition hover:bg-raised disabled:opacity-50"
@@ -293,31 +317,43 @@ index 3eb94ee..dda3190 100644
 +          <span class="mt-2 block text-sm text-gray-400">{{ t(item.help) }}</span>
 +        </button>
 +      </div>
-+      <button
-+        v-else-if="signInAccount"
-+        type="button"
-+        class="mt-5 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
-+        :disabled="signInBusy"
-+        @click="loginAccount(signInAccount)"
-+      >
-+        重新登录 {{ signInAccount.label || signInAccount.id }}
-+      </button>
++      <p v-else-if="error" role="alert" class="mt-5 text-sm text-red-300">{{ error }}</p>
++      <p v-else-if="loading" role="status" class="mt-5 text-sm text-gray-400">
++        {{ t('common.loading') }}
++      </p>
++      <template v-else-if="signInAccount">
++        <p class="mt-5 text-sm text-gray-400">
++          已有账号重新登录目前仅支持浏览器；首次使用需下载 Camoufox（约 300 MB）。此版本不能用
++          Chrome 或 Cookie 重复导入已有账号。
++        </p>
++        <button
++          type="button"
++          class="mt-5 rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
++          :disabled="signInBusy"
++          @click="loginAccount(signInAccount)"
++        >
++          重新登录 {{ signInAccount.label || signInAccount.id }}
++        </button>
++      </template>
++      <p v-else role="alert" class="mt-5 text-sm text-red-300">
++        目标账号已不存在，请取消并重新添加账号。
++      </p>
 +    </header>
      <header
 +      v-else
        class="page-x flex flex-wrap items-center gap-3 border-b border-line py-4 md:overflow-hidden md:[scrollbar-gutter:stable]"
      >
        <div class="min-w-0 flex-[1_1_16rem]">
-@@ -1073,7 +1118,7 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+@@ -1073,7 +1130,7 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
                  {{ t('common.cancel') }}
                </button>
                <button
 -                v-else
-+                v-else-if="!magpieSignIn || task.state === 'failed'"
++                v-else-if="!magpieSignIn"
                  v-tooltip="t('common.close')"
                  type="button"
                  class="flex size-[26px] items-center justify-center rounded text-gray-400 transition hover:bg-line hover:text-gray-200"
-@@ -1122,7 +1167,7 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+@@ -1122,7 +1179,7 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
            </ul>
          </li>
        </ul>
@@ -326,7 +362,7 @@ index 3eb94ee..dda3190 100644
          <input
            v-model="search"
            type="search"
-@@ -1161,27 +1206,27 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
+@@ -1161,27 +1218,27 @@ async function refreshAccounts(accounts: Account[]): Promise<void> {
            </option>
          </UiSelect>
        </div>
@@ -361,7 +397,7 @@ index 3eb94ee..dda3190 100644
          <div class="flex min-h-10 items-center gap-3 border-b border-line px-4 py-1.5 text-xs">
 diff --git a/web/src/magpie.ts b/web/src/magpie.ts
 new file mode 100644
-index 0000000..84e1f2b
+index 0000000..44939e7
 --- /dev/null
 +++ b/web/src/magpie.ts
 @@ -0,0 +1,59 @@
@@ -394,7 +430,7 @@ index 0000000..84e1f2b
 +      !/^\/[a-f0-9]{48}\/finish$/.test(callback.pathname) ||
 +      !Number.isSafeInteger(deadline) ||
 +      deadline <= 0 ||
-+      deadline > Date.now() + 10 * 60 * 1000
++      deadline > Date.now() + 15 * 60 * 1000
 +    )
 +      return null
 +    return { client, callback: callback.href, account: params.get('account') || '', deadline }
@@ -429,7 +465,7 @@ index 616e943..72f32c3 100644
 --- a/web/src/types.ts
 +++ b/web/src/types.ts
 @@ -101,6 +101,7 @@ export interface CookieAccountsInput extends AccountLoginInput {
- 
+
  // AccountTaskItem 是账户任务中的一个账户，label 为邮箱，浏览器登录完成前为空
  export interface AccountTaskItem {
 +  account_id?: string
@@ -437,19 +473,148 @@ index 616e943..72f32c3 100644
    state: 'pending' | 'running' | 'done' | 'failed'
    code?: string
 @@ -109,6 +110,7 @@ export interface AccountTaskItem {
- 
+
  // AccountTask 是在服务端运行的添加或重新登录账户任务，view 为显示登录画面的登录窗口 ID
  export interface AccountTask {
 +  client_id?: string
    id: string
    kind: 'login' | 'relogin' | 'chrome' | 'cookies' | 'browser'
    view?: string
+diff --git a/web/tests/magpie-ui.test.ts b/web/tests/magpie-ui.test.ts
+new file mode 100644
+index 0000000..ec03a69
+--- /dev/null
++++ b/web/tests/magpie-ui.test.ts
+@@ -0,0 +1,123 @@
++/// <reference types="node" />
++import assert from 'node:assert/strict'
++import { readFileSync } from 'node:fs'
++import vm from 'node:vm'
++import { test } from 'node:test'
++import ts from 'typescript'
++import * as Vue from 'vue'
++import { compile } from '@vue/compiler-dom'
++import { parse } from '@vue/compiler-sfc'
++import { renderToString } from '@vue/server-renderer'
++
++const app = parse(readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')).descriptor
++  .scriptSetup!.content
++const ast = ts.createSourceFile('App.ts', app, ts.ScriptTarget.Latest, true)
++const reveal = ast.statements.find(
++  (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'revealCurrentTab',
++)!
++const routeWatch = ast.statements.find(
++  (node) =>
++    ts.isExpressionStatement(node) &&
++    ts.isCallExpression(node.expression) &&
++    node.expression.expression.getText(ast) === 'watch' &&
++    node.expression.arguments[0]?.getText(ast).includes('route.fullPath'),
++)!
++const javascript = (source: string) =>
++  ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
++
++void test('narrow sign-in layout safely handles an unmounted navigation bar and stays on accounts', () => {
++  const context = {
++    magpieSignIn: {},
++    wideQuery: { matches: false },
++    navigationBar: { value: null },
++    currentTab: { value: 'logs' },
++    route: { name: 'console', query: { tab: 'logs' }, fullPath: '/?tab=logs' },
++    validTabs: ['accounts', 'logs'],
++    watch: (_source: unknown, callback: () => void) => callback(),
++  }
++  vm.runInNewContext(
++    javascript(reveal.getText(ast) + '\nrevealCurrentTab();\n' + routeWatch.getText(ast)),
++    context,
++  )
++  assert.equal(context.currentTab.value, 'accounts')
++  vm.runInNewContext(javascript(reveal.getText(ast) + '\nrevealCurrentTab();'), {
++    ...context,
++    magpieSignIn: null,
++  })
++  vm.runInNewContext(javascript(reveal.getText(ast) + '\nrevealCurrentTab();'), {
++    ...context,
++    magpieSignIn: null,
++    navigationBar: { value: { querySelector: () => null } },
++  })
++})
++
++const panel = parse(
++  readFileSync(new URL('../src/components/AccountsPanel.vue', import.meta.url), 'utf8'),
++).descriptor.template!.content
++const header = panel.match(/<header v-if="magpieSignIn"[\s\S]*?<\/header>/)![0]
++function renderTemplate(template: string): Vue.ComponentOptions['render'] {
++  const code = compile(template, { mode: 'function', prefixIdentifiers: true }).code
++  return vm.runInNewContext(`(function(Vue) { ${code} })(Vue)`, {
++    Vue,
++  }) as Vue.ComponentOptions['render']
++}
++const render = renderTemplate(header)
++async function headerHTML(state: Record<string, unknown>) {
++  return renderToString(
++    Vue.createSSRApp({
++      setup: () => ({
++        magpieSignIn: { account: 'one' },
++        error: '',
++        loading: false,
++        signInAccount: null,
++        signInBusy: false,
++        addMethods: [],
++        t: (text: string) => text,
++        returnToMagpie: () => {},
++        loginAccount: () => {},
++        ...state,
++      }),
++      render,
++    }),
++  )
++}
++
++void test('reauthentication explains loading, errors, missing accounts and the browser requirement', async () => {
++  assert.match(await headerHTML({ loading: true }), /role="status"[^>]*>common.loading/)
++  assert.match(
++    await headerHTML({ error: 'Account service unavailable', loading: true }),
++    /role="alert"[^>]*>Account service unavailable/,
++  )
++  assert.match(await headerHTML({}), /目标账号已不存在/)
++  const ready = await headerHTML({ signInAccount: { id: 'one', label: 'One' } })
++  assert.match(ready, /Camoufox/)
++  assert.match(ready, /不能用 Chrome 或 Cookie 重复导入/)
++  assert.match(ready, /重新登录 One/)
++})
++
++void test('import mode offers browser-session import and retains failed task records until completion', async () => {
++  const html = await headerHTML({
++    magpieSignIn: { account: '' },
++    addMethods: [
++      { label: 'accounts.remoteAdd', help: 'remote', action: () => {} },
++      { label: 'accounts.readBrowser', help: 'browser', action: () => {} },
++      { label: 'accounts.pasteCookie', help: 'cookie', action: () => {} },
++    ],
++  })
++  assert.match(html, /accounts.readBrowser/)
++  assert.match(html, /accounts.pasteCookie/)
++  assert.doesNotMatch(html, /accounts.remoteAdd/)
++  const closeButton = panel.match(
++    /<button\s+v-else-if="[^"]+"\s+v-tooltip="t\('common.close'\)"[\s\S]*?<\/button>/,
++  )![0]
++  const closeRender = renderTemplate(closeButton.replace('v-else-if=', 'v-if='))
++  const closed = await renderToString(
++    Vue.createSSRApp({
++      setup: () => ({ magpieSignIn: {}, task: { state: 'failed' } }),
++      components: { UiIcon: { render: () => null } },
++      directives: { tooltip: { getSSRProps: () => ({}) } },
++      render: closeRender,
++    }),
++  )
++  assert.doesNotMatch(closed, /<button/)
++})
 diff --git a/web/tests/magpie.test.ts b/web/tests/magpie.test.ts
 new file mode 100644
-index 0000000..fb6c3cc
+index 0000000..2e5dbe9
 --- /dev/null
 +++ b/web/tests/magpie.test.ts
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,59 @@
 +/// <reference types="node" />
 +import assert from 'node:assert/strict'
 +import { test } from 'node:test'
@@ -475,6 +640,14 @@ index 0000000..fb6c3cc
 +  ]) {
 +    assert.equal(parseMagpieSignIn(fragment(url)), null)
 +  }
++})
++
++void test('allows a full ten-minute deadline with clock margin but rejects distant deadlines', () => {
++  const params = new URLSearchParams(fragment().slice(1))
++  params.set('deadline', String(Date.now() + 12 * 60 * 1000))
++  assert.ok(parseMagpieSignIn('#' + params))
++  params.set('deadline', String(Date.now() + 16 * 60 * 1000))
++  assert.equal(parseMagpieSignIn('#' + params), null)
 +})
 +
 +void test('only a fully successful task from this page completes login', () => {
