@@ -49,6 +49,9 @@ try {
     await sleep(250);
   }
   assert.ok(update?.updatedAt, 'the public plugin must automatically install the next official stable release');
+  // State is saved before the background job removes its staging directory and
+  // releases its lock. Join that job before starting a distinct rollback probe.
+  await updateStudioAutomatically({ dataDir });
   const upgraded = (await checkStudioHealth(local, globalThis.fetch)).status.version;
   assert.ok(newerStudioRelease(upgraded, initial));
   assert.notEqual(computeFileHash(local.binaryPath), initialHash);
