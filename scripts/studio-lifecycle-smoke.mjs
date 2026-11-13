@@ -30,7 +30,8 @@ export async function smokeStudioLifecycle(source) {
       // Synthetic disabled records contain no Google credentials and make no Google requests.
       seedDisabled(path.join(dataDir, 'auth'), 'directory-probe@example.invalid');
       seedDisabled(path.join(cwd, 'wrong-accounts'), 'wrong-directory@example.invalid');
-      const bin = path.join(mode === 'user' ? root : path.join(dataDir, 'package'), process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
+      const programDir = mode === 'user' ? root : process.platform === 'win32' ? dataDir : path.join(dataDir, 'package');
+      const bin = path.join(programDir, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
       fs.mkdirSync(path.dirname(bin), { recursive: true });
       fs.copyFileSync(source, bin);
       fs.chmodSync(bin, 0o755);

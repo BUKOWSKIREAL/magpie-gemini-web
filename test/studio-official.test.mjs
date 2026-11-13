@@ -76,6 +76,7 @@ describe('Official AIStudio2API installation', () => {
     const local = locals[0];
     for (const l of locals) assert.deepEqual(l, local);
     assert.equal(local.backendMode, 'local');
+    assert.equal(path.dirname(local.binaryPath), process.platform === 'win32' ? f.dataDir : path.join(f.dataDir, 'package'), 'Windows desktop must read .env and runtime beside its executable');
     assert.ok(local.apiKey.length >= 24 && local.adminPassword.length >= 24);
     assert.equal(start.launches[0].env.PROXY_API_KEY, local.apiKey);
     assert.equal(start.launches[0].env.ADMIN_PASSWORD, local.adminPassword);
@@ -134,7 +135,7 @@ describe('Official AIStudio2API installation', () => {
   it('release lookup failure keeps installed files and never falls back to a bundled version', async t => {
     const f = fixture(t);
     ensureStudioConfig(f.dataDir, '', { port: 2048 });
-    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)));
+    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)), { recursive: true });
     fs.writeFileSync(binaryPath(f.dataDir), 'previous user update');
     const config = fs.readFileSync(path.join(f.dataDir, 'config.json'), 'utf8');
     await assert.rejects(installStudio({ dataDir: f.dataDir, fetchFn: url => {
@@ -149,7 +150,7 @@ describe('Official AIStudio2API installation', () => {
   it('an explicit official migration preserves legacy credentials, account data, settings and account-card metadata', async t => {
     const f = fixture(t);
     const config = ensureStudioConfig(f.dataDir, 'http://127.0.0.1:7890', { port: 23456 });
-    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)));
+    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)), { recursive: true });
     fs.writeFileSync(binaryPath(f.dataDir), 'old magpie build', { mode: 0o755 });
     fs.writeFileSync(path.join(f.dataDir, 'auth', 'sentinel.json'), '{"account":"kept"}');
     fs.mkdirSync(path.join(f.dataDir, 'runtime'));
@@ -174,7 +175,7 @@ describe('Official AIStudio2API installation', () => {
   it('a listener appearing during download prevents the executable swap', async t => {
     const f = fixture(t);
     ensureStudioConfig(f.dataDir);
-    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)));
+    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)), { recursive: true });
     fs.writeFileSync(binaryPath(f.dataDir), 'old executable');
     let listening = false;
     const fetchFn = (url, init) => {
@@ -202,7 +203,7 @@ describe('Official AIStudio2API installation', () => {
   it('keeps a successful install when deleting the old backup fails partway through', async t => {
     const f = fixture(t);
     ensureStudioConfig(f.dataDir);
-    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)));
+    fs.mkdirSync(path.dirname(binaryPath(f.dataDir)), { recursive: true });
     fs.writeFileSync(binaryPath(f.dataDir), 'previous executable');
     const remove = fs.rmSync;
     let attempted = false;
