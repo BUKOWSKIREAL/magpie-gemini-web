@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   ensureStudio, ensureStudioConfig, useStudioBinary, useDefaultStudio, installStudio, stopStudio,
   pickStudioPort, studioAdmin, studioProcessPids, verifyProcessIdentity, checkStudioHealth
@@ -69,7 +70,16 @@ export async function smokeStudioLifecycle(source) {
         else await assert.rejects(useDefaultStudio(gap), /still be running or restarting/);
       }
       assert.deepEqual(await stopStudio(gap), { stopped: true });
-      assert.equal((await checkStudioHealth(local)).state, 'down');
+      // An already pooled socket can reset once after exit on Windows. Require
+      // a confirmed refusal, but allow the next probe to open a fresh connection.
+      let health;
+      const closedDeadline = Date.now() + 10000;
+      do {
+        health = await checkStudioHealth(local, globalThis.fetch);
+        if (health.state !== 'unresponsive') break;
+        await sleep(150);
+      } while (Date.now() < closedDeadline);
+      assert.equal(health.state, 'down', health.reason);
       if (mode === 'local') {
         // Existing installations have no policy marker. Migrate missing settings once.
         const configPath = path.join(dataDir, 'config.json');

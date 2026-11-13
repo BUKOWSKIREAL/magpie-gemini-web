@@ -1503,7 +1503,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
         if (!spawned) throw Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
         return adminFetch(() => runningStatus({ total: 0, ready: 0, busy: 0, cooldown: 0, auth_required: 0 }))(url);
       };
-      const local = await ensureStudio({ dataDir, fetchFn, preferredPort: busy, spawnFn: () => { spawned++; return { pid: 1, on: () => {}, unref: () => {} }; } });
+      const local = await ensureStudio({ dataDir, fetchFn, preferredPort: busy, spawnFn: () => { spawned++; return { on: () => {}, unref: () => {} }; } });
       assert.ok(fs.existsSync(bin));
       assert.notEqual(local.port, busy);
       assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8')).port, local.port);
@@ -1521,7 +1521,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       fs.writeFileSync(envPath, fs.readFileSync(envPath, 'utf8').replace(/PREVIEW_LISTEN_ADDR=.*/, `PREVIEW_LISTEN_ADDR=127.0.0.1:${busy}`));
       fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(config) + '\n', { mode: 0o600 });
       spawned = 0;
-      await ensureStudio({ dataDir, fetchFn, spawnFn: () => { spawned++; return { pid: 1, on: () => {}, unref: () => {} }; } });
+      await ensureStudio({ dataDir, fetchFn, spawnFn: () => { spawned++; return { on: () => {}, unref: () => {} }; } });
       assert.notEqual(readStudioEnv(dataDir).PREVIEW_LISTEN_ADDR, `127.0.0.1:${busy}`);
       assert.notEqual(readStudioEnv(dataDir).PREVIEW_LISTEN_ADDR, `127.0.0.1:${config.port}`);
     } finally {
