@@ -93,6 +93,27 @@ describe('Official AIStudio2API installation', () => {
     assert.equal(setupStep(f.dataDir), null);
   });
 
+  it('limits a supplied release token to metadata requests and excludes it from the backend', async t => {
+    const prior = process.env.AI_STUDIO_GITHUB_TOKEN;
+    const token = 'github-test-token-for-metadata-only';
+    const f = fixture(t), start = starter(f);
+    process.env.AI_STUDIO_GITHUB_TOKEN = token;
+    try {
+      await ensureStudio(start.options);
+      const metadata = f.requests.find(r => r.url.includes('api.github.com'));
+      const asset = f.requests.find(r => r.url.includes('/download/'));
+      assert.equal(new Headers(metadata.init.headers).get('Authorization'), `Bearer ${token}`);
+      assert.equal(new Headers(asset.init.headers).get('Authorization'), null);
+      assert.equal(start.launches[0].env.AI_STUDIO_GITHUB_TOKEN, undefined);
+      for (const file of ['config.json', '.env', 'install-manifest.json']) {
+        assert.ok(!fs.readFileSync(path.join(f.dataDir, file), 'utf8').includes(token));
+      }
+    } finally {
+      if (prior === undefined) delete process.env.AI_STUDIO_GITHUB_TOKEN;
+      else process.env.AI_STUDIO_GITHUB_TOKEN = prior;
+    }
+  });
+
   it('login during an explicit install waits for the same lock and reuses its executable', { timeout: 20000 }, async t => {
     const f = fixture(t), start = starter(f);
     let reached, release;

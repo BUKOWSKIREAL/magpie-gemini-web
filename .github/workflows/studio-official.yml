@@ -62,6 +62,8 @@ jobs:
       - name: Check connection pages in the Magpie plugin runtime
         run: bun test test/studio-connect*.test.mjs --timeout 15000
       - name: Pack and verify the actual installed package against the official backend
+        env:
+          AI_STUDIO_GITHUB_TOKEN: ${{ github.token }}
         run: |
           PACKAGE_DIR="$(mktemp -d)"
           npm pack --pack-destination "$PACKAGE_DIR" --json > "$PACKAGE_DIR/pack.json"

@@ -6,7 +6,7 @@
 
 ## 官方安装与版本管理
 
-`lib/studio-upstream.mjs` 从 GitHub Releases API 解析 latest，或 `studio:install -- --version <tag>` 指定的标签；只选择 macOS / Linux x64、arm64 和 Windows x64 对应的官方归档。安装器要求官方仓库的下载 URL 和有效的 `sha256:` digest，校验归档后解压；元数据缺失、哈希不符或不安全归档会中止，保留原程序。发布信息查询和下载均使用已有代理设置。`--archive` 可复用本地官方包，但仍需查询所选版本的官方校验值。
+`lib/studio-upstream.mjs` 从 GitHub Releases API 解析 latest，或 `studio:install -- --version <tag>` 指定的标签；只选择 macOS / Linux x64、arm64 和 Windows x64 对应的官方归档。安装器要求官方仓库的下载 URL 和有效的 `sha256:` digest，校验归档后解压；元数据缺失、哈希不符或不安全归档会中止，保留原程序。发布信息查询和下载均使用已有代理设置。`--archive` 可复用本地官方包，但仍需查询所选版本的官方校验值。CI 通过 `AI_STUDIO_GITHUB_TOKEN` 提供 GitHub 的短期只读凭据，减少共享 runner 的匿名 API 限额影响；它仅用于发布元数据查询，经 curl 标准输入传递，不写入配置、不用于安装包下载认证，也不传给后端。普通用户无需设置该变量。
 
 默认程序保存在数据目录的 `package/aistudio2api`；Windows 官方包属于桌面版，会自行切换工作目录，因此默认把 `aistudio2api.exe` 放在数据目录根部，与 `.env` 和 `runtime/` 相邻。启动先复用已有程序，缺失时下载。`install-manifest.json` 记录来源与完整性校验，不强制恢复历史文件或版本。
 
@@ -71,7 +71,7 @@ npm run studio:user:smoke -- --binary /path/to/official/aistudio2api
 
 本机 macOS arm64 另完成 Camoufox `158.0.1-beta.41` 的完整下载、解压和隔离登录任务启动，确认官方后端创建了对应的浏览器子进程。真实测试中，连接页取消／超时不取消独立的官方登录任务；另一次实际下载在准备命令和连接页均超时后继续增长。下载进度兼容官方中英文日志。未使用真实 Google 账号，未验证完成 Google 认证后的文本／图片生成；图形界面的实际点击验收也尚未完成。
 
-另增 `npm run studio:update:smoke -- v0.3.6`，只在新建临时目录安装指定旧官方版并显式调用其在线更新 API。`npm run studio:auto-update:smoke` 通过公共插件入口验证后台自动升级，使用虚构停用账号保留检查设置、凭据和账号文件，并注入校验值一致但无法启动的测试程序来验证回滚与失败重试阻断。两种真实升级均已在本机 macOS arm64 的 Node/Bun 中完成 v0.3.6 → v0.3.7。固定的 0.3.6 仅为升级测试起点，目标版本实时取自官方发布信息。完整本地回归 283 项通过、无失败或跳过；Bun 的连接页与自动更新回归共 35 项通过。历史 `0.3.5-magpie.1` 的真实程序冒烟也通过。
+另增 `npm run studio:update:smoke -- v0.3.6`，只在新建临时目录安装指定旧官方版并显式调用其在线更新 API。`npm run studio:auto-update:smoke` 通过公共插件入口验证后台自动升级，使用虚构停用账号保留检查设置、凭据和账号文件，并注入校验值一致但无法启动的测试程序来验证回滚与失败重试阻断。两种真实升级均已在本机 macOS arm64 的 Node/Bun 中完成 v0.3.6 → v0.3.7。固定的 0.3.6 仅为升级测试起点，目标版本实时取自官方发布信息。完整本地回归 284 项通过、无失败或跳过；Bun 的连接页、官方安装和自动更新回归共 48 项通过。历史 `0.3.5-magpie.1` 的真实程序冒烟也通过。
 
 ## 历史定制构建
 
