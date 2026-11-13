@@ -11,7 +11,7 @@ import {
 } from '../lib/studio-native.mjs';
 import { openStudioConnect } from '../lib/studio-connect.mjs';
 import { AIStudioPlugin } from '../index.mjs';
-import { smokeStudioLifecycle } from './studio-lifecycle-smoke.mjs';
+import { smokeStudioLifecycle, removeSmokeData } from './studio-lifecycle-smoke.mjs';
 
 export async function smokeOfficialStudio({ binary, version, archivePath } = {}) {
   const selected = binary ? validateStudioBinary(binary) : undefined;
@@ -116,7 +116,7 @@ export async function smokeOfficialStudio({ binary, version, archivePath } = {})
   } finally {
     local ||= localStudio({ dataDir });
     const stopped = !local || (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;
-    if (stopped) await fs.promises.rm(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    if (stopped) await removeSmokeData(dataDir);
     else {
       console.error(`Backend exit not confirmed; kept ${dataDir}`);
       process.exitCode = 1;

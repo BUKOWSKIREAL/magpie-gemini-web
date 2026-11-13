@@ -112,7 +112,27 @@ export async function smokeStudioLifecycle(source) {
     }
   } finally {
     const stopped = !active || (await stopStudio({ dataDir: active }).catch(() => ({ stopped: false }))).stopped;
-    if (stopped) await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    if (stopped) await removeSmokeData(root);
     else { console.error('Process exit not confirmed; kept ' + root); process.exitCode = 1; }
+  }
+}
+
+// Bun on Windows can reject rm without honoring Node's maxRetries option.
+// Only call after the test has verified that its backend exited.
+export async function removeSmokeData(root) {
+  const deadline = Date.now() + 12000;
+  for (;;) {
+    try { await fs.promises.rm(root, { recursive: true, force: true }); return; }
+    catch (err) {
+      if (process.platform !== 'win32' || !['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(err.code)) throw err;
+      if (Date.now() < deadline) { await sleep(250); continue; }
+      console.error('Temporary cleanup failed', { cwd: process.cwd(), remaining: fs.readdirSync(root, { recursive: true }).slice(0, 40) });
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        try {
+          console.error(execFileSync('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:MAGPIE_SMOKE_ROOT)) -or ($_.Name -eq "msedgewebview2.exe" -and $_.CommandLine.Contains("AIStudio2API")) } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress'], { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, MAGPIE_SMOKE_ROOT: root } }));
+        } catch {}
+      }
+      throw err;
+    }
   }
 }
