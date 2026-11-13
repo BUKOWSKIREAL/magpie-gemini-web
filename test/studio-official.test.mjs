@@ -116,6 +116,7 @@ describe('Official AIStudio2API installation', () => {
     fs.mkdirSync(f.dataDir);
     fs.copyFileSync(f.archive, path.join(f.dataDir, f.name));
     await installStudio({ dataDir: f.dataDir, preferredPort: 0, version: '0.3.6', fetchFn: f.fetchFn });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.dataDir, 'config.json'), 'utf8')).autoUpdate, false);
     assert.equal(f.requests[0].url, 'https://api.github.com/repos/Mag1cFall/AIStudio2API/releases/tags/v0.3.6');
     assert.equal(f.requests.filter(r => r.url.includes('/download/')).length, 0);
     await assert.rejects(resolveStudioRelease({ version: '../bad', fetchFn() { assert.fail('invalid tag must not be sent'); } }), /release tag/);

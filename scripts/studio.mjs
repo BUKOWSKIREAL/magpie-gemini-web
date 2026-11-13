@@ -215,11 +215,14 @@ async function main() {
     }
     case 'status': {
       const status = await studioStatus({ dataDir });
+      const automatic = !fs.existsSync(path.join(dataDir, 'config.json')) || studioAutoUpdates(dataDir);
       console.log(`Service status: ${status.status}`);
-      console.log(`Backend: ${status.backendMode === 'user' ? 'custom executable' : 'local installation'}; updates are user-controlled`);
+      console.log(`Backend: ${status.backendMode === 'user' ? 'custom executable' : 'local installation'}; updates: ${automatic ? 'automatic official stable releases while Magpie is open' : 'user-controlled'}`);
       if (status.binaryPath) console.log(`Executable: ${status.binaryPath}`);
       if (status.version) console.log(`Version: ${status.version}`);
-      if (status.version?.includes('-magpie.')) console.log('Legacy managed build: stop and run install to switch to the official CLI with upstream update support. Accounts and settings are kept.');
+      if (status.version?.includes('-magpie.')) console.log(automatic
+        ? 'Legacy managed build: automatic updates can switch to a newer official stable release when idle. Accounts and settings are kept.'
+        : 'Legacy managed build: its built-in updater is restricted. You can replace it with an official executable while stopped. Accounts and settings are kept.');
       if (status.status === 'running') {
         console.log(`State: ${status.state || 'RUNNING'}`);
         console.log(`Listen port: ${status.port}`);
