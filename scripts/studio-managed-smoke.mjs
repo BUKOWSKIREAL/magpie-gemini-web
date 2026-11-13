@@ -1,26 +1,50 @@
-// Isolated real-binary check: no Google accounts, no generation or online update.
+// Historical managed-artifact check. The plugin now installs official releases; this script
+// explicitly verifies and stages an archived fork to keep its patches reproducible.
+// No Google accounts, generation or applied update.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { execFileSync, spawn } from 'node:child_process';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2);
 const packageRoot = args.find(arg => arg.startsWith('--package-root='))?.slice('--package-root='.length) || root;
 const download = args.includes('--download');
-const { installStudio, ensureStudio, stopStudio, studioAdmin, studioBrowserSession, studioStatus, computeFileHash, STUDIO_VERSION } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-native.mjs')));
+const { ensureStudio, ensureStudioConfig, localStudio, pickStudioPort, stopStudio, studioAdmin, studioBrowserSession, studioStatus, computeFileHash } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-native.mjs')));
 const release = JSON.parse(fs.readFileSync(path.join(packageRoot, 'lib/studio-release.json'), 'utf8'));
+const STUDIO_VERSION = `v${release.version}`;
 const key = `${process.platform}-${process.arch}`;
 const pin = release.binaries[key];
 assert.ok(pin, `Unsupported platform ${key}`);
-const archivePath = download ? undefined : path.join(root, 'studio-build/release', pin.asset);
+let archivePath = path.join(root, 'studio-build/release', pin.asset);
 const source = download ? 'GitHub release' : 'local release artifact';
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-managed-smoke-'));
 let local;
+const startOptions = { dataDir, managementOnly: true, spawnFn: (file, args, options) => spawn(file, args, {
+  ...options, env: { ...options.env, WAA_BACKEND: 'spidermonkey' }
+}) };
 try {
-  local = await installStudio({ dataDir, ...(archivePath ? { archivePath } : {}) });
+  if (download) {
+    archivePath = path.join(dataDir, pin.asset);
+    execFileSync('curl', ['--fail', '--location', '--silent', '--show-error', '--max-time', '300', '-o', archivePath,
+      `https://github.com/${release.repository}/releases/download/${release.tag}/${pin.asset}`]);
+  }
+  assert.equal(computeFileHash(archivePath), pin.sha256, 'historical archive hash');
+  const extracted = path.join(dataDir, 'extracted');
+  fs.mkdirSync(extracted);
+  if (process.platform === 'win32') {
+    execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', "Expand-Archive -LiteralPath $env:SMOKE_ARCHIVE -DestinationPath $env:SMOKE_DEST"], {
+      env: { ...process.env, SMOKE_ARCHIVE: archivePath, SMOKE_DEST: extracted }, windowsHide: true
+    });
+  } else execFileSync('tar', ['-xzf', archivePath, '-C', extracted]);
+  const entries = fs.readdirSync(extracted);
+  const top = entries.length === 1 && fs.statSync(path.join(extracted, entries[0])).isDirectory() ? path.join(extracted, entries[0]) : extracted;
+  fs.renameSync(top, path.join(dataDir, 'package'));
+  ensureStudioConfig(dataDir, undefined, { port: await pickStudioPort(0) });
+  local = localStudio({ dataDir });
   const bin = path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
   assert.equal(computeFileHash(bin), pin.binarySha256);
   // A pre-0.2.17 ledger must survive the real process's first startup.
@@ -33,8 +57,8 @@ try {
       .run('legacy-smoke', 1234, '旧请求', 100, 'old response', 200);
   } finally { db.close(); }
   // Both values would be reset by upstream's legacy full-.env migration.
-  fs.appendFileSync(path.join(dataDir, '.env'), 'FIRST_EVENT_HEDGE=off\nREQUEST_TIMEOUT=5m\n');
-  await ensureStudio({ dataDir, managementOnly: true });
+  fs.appendFileSync(path.join(dataDir, '.env'), 'FIRST_EVENT_HEDGE=off\nREQUEST_TIMEOUT=5m\nSEARCH_MODEL_ALIASES=false\n');
+  await ensureStudio(startOptions);
   const migratedBody = await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body');
   assert.equal(migratedBody.request, '旧请求');
   assert.equal(migratedBody.response, 'old response');
@@ -46,11 +70,16 @@ try {
   // Generation's WAA runs in the service itself, on SpiderMonkey, with no copies of the models
   assert.equal(config.waa_backend, 'spidermonkey');
   assert.equal(config.search_model_aliases, false);
+  const extendedConfig = release.upstream.version.localeCompare('0.3.7', undefined, { numeric: true }) >= 0;
+  if (extendedConfig) {
+    assert.equal(config.discover_hidden_models, false);
+    assert.equal(config.max_account_switches, 3);
+  }
   assert.equal(config.strip_thought_signatures, false);
   assert.equal(config.hide_dock_icon, false);
   const taskStatus = await studioAdmin(local, 'GET', '/api/accounts/tasks');
   assert.deepEqual(taskStatus.tasks, []);
-  if (release.patches.includes('studio-0.3.4-magpie-signin.patch')) {
+  if (release.patches.some(name => name.endsWith('-magpie-signin.patch'))) {
     assert.equal(taskStatus.magpie_signin, 1);
     const { openStudioConnect } = await import(pathToFileURL(path.join(packageRoot, 'lib/studio-connect.mjs')));
     const bridge = await openStudioConnect({ prepare: async () => local, deadline: Date.now() + 15000 });
@@ -99,6 +128,7 @@ try {
   const choices = {
     search_model_aliases: true, strip_thought_signatures: true, hide_dock_icon: true, routing_strategy: 'round-robin',
     account_order: 'smoke-b@example.com,smoke-a@example.com', per_account_concurrency: 2,
+    ...(extendedConfig ? { max_account_switches: 5, discover_hidden_models: true } : {}),
     first_event_hedge: 'auto', first_event_hedge_models: 'gemini-3.8-flash',
     api_key_accounts: `${local.apiKey}:smoke@example.com`,
     model_accounts: 'gemini-3.1-pro-preview:smoke-b@example.com|smoke-a@example.com'
@@ -146,14 +176,14 @@ try {
   assert.match(panel, /version\.managed/);
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
   assert.equal((await studioStatus({ dataDir })).status, 'stopped');
-  await ensureStudio({ dataDir, managementOnly: true });
+  await ensureStudio(startOptions);
   assert.deepEqual(await studioAdmin(local, 'GET', '/api/requests/legacy-smoke/body'), migratedBody);
   const restarted = await studioAdmin(local, 'GET', '/api/config');
   for (const [key, value] of Object.entries(choices)) assert.equal(restarted[key], value, `${key} after restart`);
   assert.equal(restarted.request_timeout, '5m0s');
   assert.equal(restarted.waa_backend, 'spidermonkey');
   assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
-  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved defaults/Dock visibility/hedge/models/key bindings across restart, locked plugin settings, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
+  console.log(`PASS ${key}: ${STUDIO_VERSION} (${source}), legacy body migration/restart, saved admin settings across restart, locked plugin settings, SpiderMonkey WAA, managed status, update HTTP 409, unchanged executable/PID, managed UI, clean stop`);
 } finally {
   let stopped = !local;
   if (local) stopped = (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;

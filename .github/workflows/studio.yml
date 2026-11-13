@@ -1,10 +1,9 @@
-name: Verify managed AI Studio release
+name: Verify historical managed AI Studio release
 
-# Verification (pull requests, and the dispatch run publish-studio.yml takes) rebuilds each target on
-# its own runner and requires the archive and executable hashes in lib/studio-release.json.
-# A candidate run (dispatch with write_pins) builds and tests the same way, then collects the five
-# targets' hashes into a lib/studio-release.json artifact to commit. macOS pins can only come from
-# the pinned Xcode, so they are made here rather than on a maintainer's machine.
+# Optional reproduction of the archived managed fork. Normal plugin onboarding and releases
+# use official upstream artifacts, tested by studio-official.yml.
+# A candidate run (dispatch with write_pins) builds and tests the archived fork, then collects
+# the targets' hashes. macOS pins can only come from the pinned Xcode.
 on:
   workflow_dispatch:
     inputs:
@@ -16,14 +15,6 @@ on:
         description: Build the automatic sign-in backend (requires write_pins)
         type: boolean
         default: false
-  pull_request:
-    paths:
-      - 'lib/studio*.mjs'
-      - 'lib/studio-release.json'
-      - 'scripts/studio*'
-      - 'patches/studio-*'
-      - 'test/studio*.mjs'
-      - '.github/workflows/studio.yml'
 
 permissions:
   contents: read
@@ -88,9 +79,8 @@ jobs:
         run: node scripts/studio-release.mjs --target=host ${{ inputs.write_pins && '--write-pins' || '--verify' }}
       - name: Test real install, update refusal, admin page, and stop without Google accounts
         run: node scripts/studio-managed-smoke.mjs
-      - name: Plugin tests with the built local archive
+      - name: Plugin tests
         run: |
-          export AI_STUDIO_TEST_ARCHIVE="$(node --input-type=module -e 'import r from "./lib/studio-release.json" with {type:"json"}; console.log(process.cwd()+"/studio-build/release/"+r.binaries[process.platform+"-"+process.arch].asset)')"
           # The macOS-only Task route and older Web fixtures assume POSIX.
           # Exercise the complete Studio suite on Windows, plus the real binary above.
           if [[ "$RUNNER_OS" == "Windows" ]]; then

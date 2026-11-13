@@ -10,10 +10,9 @@ import {
   cleanStudio,
   hasStudioAssets,
   ensureStudioConfig,
-  STUDIO_VERSION,
-  PINNED_ARCHIVES,
   computeFileHash
 } from '../lib/studio-native.mjs';
+import { STUDIO_VERSION, PINNED_ARCHIVES } from './helpers/studio-legacy.mjs';
 import {
   cleanBackend,
   stopBackend,

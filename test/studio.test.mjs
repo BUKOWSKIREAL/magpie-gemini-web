@@ -7,7 +7,8 @@ import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
 import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accountGroupEmail, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
-import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, PINNED_ARCHIVES, STUDIO_VERSION, CAMOUFOX_VERSION, ensureStudio } from '../lib/studio-native.mjs';
+import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, ensureStudio } from '../lib/studio-native.mjs';
+import { STUDIO_VERSION, PINNED_ARCHIVES, CAMOUFOX_VERSION } from './helpers/studio-legacy.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
   let mockServer;
@@ -399,12 +400,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
-  it('uses v0.2.17 model thinking levels and keeps the older catalog fallback', async () => {
+  it('uses catalog thinking levels, including v0.3.7 Extra High, and keeps the older fallback', async () => {
     const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/studio-catalog-v0.2.12.json', import.meta.url), 'utf8'));
     const base = catalog.data.find(m => m.id === 'gemini-4-argon');
     serverResponses['/v1/models'] = { status: 200, body: JSON.stringify({ data: [
       { ...base, id: 'gemini-two-levels', thinking_levels: ['low', 'high'] },
       { ...base, id: 'gemini-no-levels', thinking_levels: [] },
+      { ...base, id: 'gemini-extra-high', thinking_levels: ['low', 'high', 'extra_high'] },
       { ...base, id: 'gemini-invalid-levels', thinking_levels: ['high', '__proto__', null, 'high'] },
       base
     ] }) };
@@ -412,6 +414,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const models = await listStudioModels({ baseURL: serverURL, key: 'test-key' }, studioSettings());
       assert.deepEqual(models['gemini-two-levels'].variants, { low: {}, high: {} });
       assert.deepEqual(models['gemini-no-levels'].variants, {});
+      assert.deepEqual(models['gemini-extra-high'].variants, { low: {}, high: {}, xhigh: {} });
       assert.deepEqual(models['gemini-invalid-levels'].variants, { high: {} });
       assert.deepEqual(models[base.id].variants, { minimal: {}, low: {}, medium: {}, high: {} });
     } finally {
@@ -1177,7 +1180,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       serverResponses['/api/accounts'] = accountsResponse([]);
       serverResponses['/api/accounts/tasks'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ tasks: [], magpie_signin: 1 }) };
       const pending = await google.authorize({});
-      assert.match(pending.instructions, /Chrome 导入、粘贴 Cookie 或浏览器登录/);
+      assert.match(pending.instructions, /Chrome 导入或粘贴 Cookie/);
       const callback = pending.callback();
       const post = (path, body = {}) => fetch(`${pending.url}${path}`, {
         method: 'POST', redirect: 'manual', headers: { Origin: new URL(pending.url).origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -1216,9 +1219,83 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  for (const custom of [false, true]) it(`connects an official backend through ${custom ? 'the advanced path option' : 'normal Google login'} and retains account cards`, async () => {
+    const setup = standInSetup('managed-key');
+    const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-user-signin-'));
+    const binary = path.join(userDir, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
+    fs.writeFileSync(binary, 'user-owned backend', { mode: 0o755 });
+    const configPath = path.join(tempStudioDataDir, 'config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (custom) fs.writeFileSync(configPath, JSON.stringify({ ...config, backend: { mode: 'user', binaryPath: binary } }));
+    serverResponses['/api/status'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({
+      version: 'v99.0.0', state: 'RUNNING', running: true, ready: true, accounts: { total: 1, ready: 1 }
+    }) };
+    serverResponses['/api/accounts'] = accountsResponse([POOL[0]]);
+    serverResponses['/api/accounts/tasks'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ tasks: [] }) };
+    try {
+      const plugin = await AIStudioPlugin({});
+      const method = custom ? plugin.auth.methods.find(m => m.label === '指定 AIStudio2API 程序路径（高级）') : plugin.auth.methods[0];
+      if (custom) {
+        assert.equal(method.prompts[0].validate(binary), undefined);
+        assert.match(method.prompts[0].validate(''), /executable/);
+      } else {
+        assert.equal(method.prompts.some(p => p.key === 'binaryPath'), false);
+      }
+      const login = await method.authorize(custom ? { binaryPath: binary } : {});
+      assert.match(login.instructions, /返回连接页，选择账号并点「连接到 Magpie」/);
+      const pending = login.callback();
+      let ready = false;
+      for (let i = 0; i < 40; i++) {
+        if ((await (await fetch(login.url + '/status')).json()).ready) { ready = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.ok(ready);
+      const { url } = await (await fetch(login.url + '/manage', {
+        method: 'POST', headers: { Origin: new URL(login.url).origin }
+      })).json();
+      const selected = await fetch(url + '/select', {
+        method: 'POST', headers: { Origin: new URL(url).origin, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: POOL[0].id })
+      });
+      assert.equal(selected.status, 200);
+      const signed = await pending;
+      assert.deepEqual(signed, signInFor(POOL[0].id));
+      const auth = { type: 'api', key: signed.key, metadata: signed.metadata };
+      const loader = await plugin.auth.loader(async () => auth);
+      assert.equal(loader.apiKey, 'managed-key');
+      const usage = await plugin.auth.usage(async () => auth);
+      assert.equal(usage.signIn, 'kept');
+      assert.match(usage.windows.find(w => w.name === '后端管理')?.display, /版本与更新由你管理/);
+      for (const secret of [localStudio().binaryPath, localStudio().dataDir, 'config.json', 'adminPassword']) assert.ok(!JSON.stringify(usage.windows).includes(JSON.stringify(secret).slice(1, -1)));
+      assert.equal(fs.readFileSync(binary, 'utf8'), 'user-owned backend');
+    } finally {
+      delete serverResponses['/api/status'];
+      delete serverResponses['/api/accounts'];
+      delete serverResponses['/api/accounts/tasks'];
+      setup.remove();
+      fs.rmSync(userDir, { recursive: true, force: true });
+    }
+  });
+
+  it('directs an expired official account to re-login instead of adding it again', async () => {
+    const setup = standInSetup('managed-key');
+    serverResponses['/api/accounts'] = accountsResponse([POOL[1]]);
+    try {
+      const plugin = await AIStudioPlugin({});
+      const login = await plugin.auth.methods[0].authorize({ account: POOL[1].id });
+      assert.match(login.instructions, /b@example.com.*该账号的「重新登录」/);
+      assert.match(login.instructions, /选择原账号/);
+      await fetch(login.url + '/cancel', { method: 'POST', headers: { Origin: new URL(login.url).origin } });
+      assert.equal((await login.callback()).type, 'failed');
+    } finally {
+      delete serverResponses['/api/accounts'];
+      setup.remove();
+    }
+  });
+
   it('9d. one sign-in way asks nothing the first time, then offers a new account or a local one', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['用 Google 账号登录（推荐）', '直接打开 Google 登录窗口', '连接已有 AIStudio2API（地址 + API key）']);
+    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['添加账号并连接（推荐）', '直接打开 Google 登录窗口', '指定 AIStudio2API 程序路径（高级）', '连接已有 AIStudio2API（地址 + API key）']);
     const google = plugin.auth.methods[1];
 
     // Nothing set up: no question, and asking installs nothing (authorize sets it up)
@@ -1227,7 +1304,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
     // Nor does the sign-in before its instructions show: the download waits in the callback
     const first = await google.authorize({});
-    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*约 40 MB[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
+    assert.match(first.instructions, /^本地 AI Studio 服务还没启动[^\n]*下载官方最新版[^\n]*studio\.proxy[^\n]*\n下载和登录的进度显示在[^]*Camoufox/);
     assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'package')), false, 'authorize may not install');
     const shown = await (await fetch(`${first.url}/status`)).json();
     assert.deepEqual(shown.steps.map(s => [s.state, s.detail ?? '']), [['active', '正在检查'], ['pending', ''], ['pending', '']]);
@@ -1428,21 +1505,25 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         ] })
       };
       const a = await plugin.auth.usage(async () => authFor('a@example.com'));
-      const [cooldown, admin] = a.windows;
+      const [cooldown, admin, backend] = a.windows;
       assert.deepEqual({ ...a, windows: [cooldown] }, { user: 'a@example.com', windows: [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '冷却中：quota exhausted' }], signIn: 'kept' });
       // Below the account's own windows, where the service's admin page is (its proxy can't be read here)
-      assert.equal(a.windows.length, 2);
+      assert.equal(a.windows.length, 3);
+      assert.equal(backend.name, '后端管理');
+      assert.ok(!backend.display.includes(localStudio().binaryPath));
       assert.equal(admin.name, '管理页');
       assert.equal(Object.hasOwn(admin, 'used'), false, 'service information must not become a 100% remaining meter (#34)');
-      assert.ok(admin.display.startsWith(`${serverURL.replace(/\/v1$/, '')}（用户名 magpie，密码是 `) && admin.display.includes('config.json'));
+      assert.ok(admin.display.startsWith(serverURL.replace(/\/v1$/, '')));
+      assert.match(admin.display, /已认证的账号管理页/);
+      for (const secret of [localStudio().dataDir, 'adminPassword', 'config.json', '用户名']) assert.ok(!JSON.stringify(a.windows).includes(secret));
 
       serverResponses['/api/cooldowns'].body = JSON.stringify({ cooldowns: [] });
       const ready = await plugin.auth.usage(async () => authFor('a@example.com'));
       assert.equal(ready.error, undefined);
-      assert.deepEqual(ready.windows, [admin], 'without cooldowns only text remains, not an invented allowance');
+      assert.deepEqual(ready.windows, [admin, backend], 'without cooldowns only text remains, not an invented allowance');
 
       const b = await plugin.auth.usage(async () => authFor('b@example.com'));
-      assert.match(b.error, /这个 Google 账号需要重新登录.*用 Google 账号登录（推荐）.*再选这个账号/);
+      assert.match(b.error, /这个 Google 账号需要重新登录.*添加账号并连接（推荐）.*再选这个账号/);
       assert.equal(b.signIn, 'kept', 'signing the account in again fixes this card as it is');
 
       const gone = await plugin.auth.usage(async () => authFor('c@example.com'));
@@ -1478,7 +1559,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(card.error, undefined, 'a pool that serves is no error');
       assert.equal(card.signIn, 'kept');
       assert.equal(card.user, 'a@example.com +1（1 个需要重新登录）', 'the disabled account is left out');
-      const pool = card.windows.filter(w => w.name !== '管理页');
+      const pool = card.windows.filter(w => Object.hasOwn(w, 'used'));
       assert.deepEqual(pool, [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '1/1 个账号冷却中：quota exhausted' }]);
       const batchAuth = { ...managedAuth, metadata: { ...managedAuth.metadata, accounts: ['a@example.com'] } };
       const batch = await plugin.auth.usage(async () => batchAuth);
@@ -1497,19 +1578,19 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const proxyWindow = proxied.windows.find(w => w.name === '代理出口');
       assert.deepEqual(proxied.windows.filter(w => Object.hasOwn(w, 'used')), pool,
         'only real cooldowns have a percentage; proxy and admin information stay textual (#34)');
-      assert.match(proxyWindow.display, /^http:\/\/127\.0\.0\.1:9393（服务启动时的设置）；管理页设置的是 socks5:\/\/127\.0\.0\.1:7890，重启本地服务（.* stop.*，下一次请求会自动启动）后生效$/);
+      assert.equal(proxyWindow.display, 'http://127.0.0.1:9393（服务启动时的设置）；管理页设置的是 socks5://127.0.0.1:7890，停止并重新启动本地服务（操作步骤见插件说明）后生效');
       delete serverResponses['/api/config'];
 
       // Cooldowns that can't be read leave the rest of the card
       serverResponses['/api/cooldowns'] = { status: 500, headers: jsonHeaders, body: '{}' };
       const partial = await plugin.auth.usage(async () => managedAuth);
       assert.equal(partial.error, undefined);
-      assert.deepEqual(partial.windows.map(w => w.name), ['管理页']);
+      assert.deepEqual(partial.windows.map(w => w.name), ['管理页', '后端管理']);
 
       // No account can serve until one signs in again: say how to fix it
       serverResponses['/api/accounts'] = accountsResponse([POOL[1]]);
       const expired = await plugin.auth.usage(async () => managedAuth);
-      assert.match(expired.error, /1 个 Google 账号都需要重新登录.*用 Google 账号登录（推荐）/);
+      assert.match(expired.error, /1 个 Google 账号都需要重新登录.*添加账号并连接（推荐）/);
       assert.equal(expired.signIn, 'kept', 'signing the account in again fixes this card as it is');
 
       // The service isn't running: it starts on the next request
@@ -1570,7 +1651,11 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       { name: 'm1', used: 100, resetsAt: at(20), display: '冷却中：r1' }
     ] });
     assert.deepEqual(accountUsage({ id: 'u', state: 'unavailable', message: 'proxy down' }, [], now), { user: 'u', error: '这个 Google 账号暂时不可用：proxy down', windows: [] });
+    assert.deepEqual(accountUsage({ id: 'r', state: 'restricted', message: 'age requirement' }, [], now), { user: 'r', error: '这个 Google 账号服务受限：age requirement', windows: [] });
 
+    const restricted = poolUsage([{ id: 'r', label: 'r@x', state: 'restricted' }], [], now);
+    assert.equal(restricted.user, 'r@x（1 个服务受限）');
+    assert.match(restricted.error, /服务限制.*管理页查看/);
     const unavailable = poolUsage([{ id: 'u', label: 'u@x', state: 'unavailable' }], [], now);
     assert.equal(unavailable.user, 'u@x（1 个暂时不可用）');
     assert.match(unavailable.error, /暂时都不可用/);

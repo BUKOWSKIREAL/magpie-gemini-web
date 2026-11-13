@@ -17,7 +17,35 @@ permissions:
   contents: read
 
 jobs:
+  release-commit:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          assert.match(process.env.RELEASE_TAG, /^v\d+\.\d+\.\d+$/);
+          const release = JSON.parse(execFileSync('gh', ['release', 'view', process.env.RELEASE_TAG, '--repo', process.env.GITHUB_REPOSITORY, '--json', 'targetCommitish'], { encoding: 'utf8' }));
+          assert.match(release.targetCommitish, /^[0-9a-f]{40}$/);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'sha=' + release.targetCommitish + '\n');
+          JS
+  official-studio:
+    needs: release-commit
+    uses: ./.github/workflows/studio-official.yml
+    with:
+      ref: ${{ needs.release-commit.outputs.sha }}
   pack-and-upload:
+    needs: [release-commit, official-studio]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -34,6 +62,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          VERIFIED_COMMIT: ${{ needs.release-commit.outputs.sha }}
           PUBLISH_NPM: ${{ inputs.publish_npm }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -51,12 +80,14 @@ jobs:
 
           const rel = JSON.parse(execFileSync('gh', ['release', 'view', tag, '--repo', repo, '--json', 'isDraft,targetCommitish,assets'], { encoding: 'utf8' }));
           assert.match(rel.targetCommitish, /^[0-9a-f]{40}$/, 'Release targetCommitish must be an exact 40-char commit SHA');
+          assert.equal(rel.targetCommitish, process.env.VERIFIED_COMMIT, 'Release target changed after five-platform official verification');
 
           execFileSync('git', ['checkout', '--detach', rel.targetCommitish], { stdio: 'inherit' });
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           assert.equal(`v${pkg.version}`, tag, `package.json version (${pkg.version}) does not match tag ${tag}`);
 
-          // Ensure every pinned backend and AI Studio asset is already publicly downloadable and matches SHA-256
+          // Gemini Web still requires published pinned artifacts. AI Studio resolves official
+          // releases at first install; all five official integration jobs above must pass for this commit.
           const backendRelease = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
           for (const [key, pin] of Object.entries(backendRelease.binaries)) {
             const url = `https://github.com/${backendRelease.repository}/releases/download/${backendRelease.tag}/${pin.asset}`;
@@ -66,15 +97,6 @@ jobs:
             assert.equal(sha256, pin.sha256, `Public backend asset hash mismatch for ${key}`);
           }
 
-          const studioRelease = JSON.parse(fs.readFileSync('lib/studio-release.json', 'utf8'));
-          for (const [key, pin] of Object.entries(studioRelease.binaries)) {
-            const url = `https://github.com/${studioRelease.repository}/releases/download/${studioRelease.tag}/${pin.asset}`;
-            const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
-            assert.equal(res.status, 200, `Public Studio asset not reachable (${res.status}): ${url}`);
-            const sha256 = crypto.createHash('sha256').update(Buffer.from(await res.arrayBuffer())).digest('hex');
-            assert.equal(sha256, pin.sha256, `Public Studio asset hash mismatch for ${key}`);
-          }
-
           const tarball = `${pkg.name}-${pkg.version}.tgz`;
           const existing = rel.assets.find(a => a.name === tarball);
 
@@ -82,6 +104,12 @@ jobs:
             assert.equal(existing.state, 'uploaded');
             execFileSync('gh', ['release', 'download', tag, '--repo', repo, '--pattern', tarball, '--clobber'], { stdio: 'inherit' });
             assert.ok(fs.existsSync(tarball), `Failed to download existing release asset ${tarball}`);
+            const expectedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verified-package-'));
+            try {
+              execFileSync('npm', ['pack', '--pack-destination', expectedDir], { stdio: 'inherit' });
+              const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+              assert.equal(digest(tarball), digest(path.join(expectedDir, tarball)), 'Existing tarball does not match the verified release commit');
+            } finally { fs.rmSync(expectedDir, { recursive: true, force: true }); }
           } else {
             assert.equal(rel.isDraft, true, `Release ${tag} must be a private draft before uploading package tarball`);
             execFileSync('npm', ['test'], { stdio: 'inherit' });

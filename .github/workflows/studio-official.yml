@@ -1,0 +1,81 @@
+name: Verify official AI Studio integration
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact plugin commit to verify before publication
+        required: true
+        type: string
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'index.mjs'
+      - 'lib/studio*.mjs'
+      - 'scripts/studio*.mjs'
+      - 'test/studio*.mjs'
+      - 'test/helpers/studio*.mjs'
+      - 'package.json'
+      - '.github/workflows/studio-official.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  studio:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, target: darwin-arm64 }
+          - { runner: macos-15-intel, target: darwin-x64 }
+          - { runner: ubuntu-24.04, target: linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: linux-arm64 }
+          - { runner: windows-2025, target: win32-x64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.8.2'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Verify runner architecture
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.EXPECTED_TARGET)"
+      - name: Test installation, lifecycle and account integration with isolated fixtures
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            node --test test/studio*.test.mjs
+          else
+            npm test
+          fi
+      - name: Check connection pages in the Magpie plugin runtime
+        run: bun test test/studio-connect*.test.mjs --timeout 15000
+      - name: Pack and verify the actual installed package against the official CLI
+        run: |
+          PACKAGE_DIR="$(mktemp -d)"
+          npm pack --pack-destination "$PACKAGE_DIR" --json > "$PACKAGE_DIR/pack.json"
+          node --input-type=module - "$PACKAGE_DIR" <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { pathToFileURL } from 'node:url';
+          import { execFileSync } from 'node:child_process';
+          const root = process.argv[2];
+          const [packed] = JSON.parse(fs.readFileSync(path.join(root, 'pack.json'), 'utf8'));
+          execFileSync('tar', ['-xf', packed.filename], { cwd: root });
+          await import(pathToFileURL(path.join(root, 'package/index.mjs')));
+          execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-official-smoke.mjs')], { stdio: 'inherit' });
+          execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-update-smoke.mjs')], { stdio: 'inherit' });
+          execFileSync('bun', [path.join(root, 'package/scripts/studio-official-smoke.mjs')], { stdio: 'inherit' });
+          execFileSync('bun', [path.join(root, 'package/scripts/studio-update-smoke.mjs')], { stdio: 'inherit' });
+          JS
