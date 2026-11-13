@@ -112,7 +112,7 @@ export async function smokeStudioLifecycle(source) {
     }
   } finally {
     const stopped = !active || (await stopStudio({ dataDir: active }).catch(() => ({ stopped: false }))).stopped;
-    if (stopped) fs.rmSync(root, { recursive: true, force: true });
+    if (stopped) await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     else { console.error('Process exit not confirmed; kept ' + root); process.exitCode = 1; }
   }
 }
