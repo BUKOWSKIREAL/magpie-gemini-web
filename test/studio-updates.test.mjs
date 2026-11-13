@@ -187,12 +187,13 @@ describe('Automatic official backend updates', () => {
     const release = await acquireStudioUse({ dataDir: f.dataDir });
     const name = fs.readdirSync(f.dataDir).find(n => n.startsWith('.studio-use.'));
     const owner = JSON.parse(fs.readFileSync(path.join(f.dataDir, name)));
+    assert.ok(owner.started, 'this regression requires the current process start identity');
     release();
     const gate = path.join(f.dataDir, '.automatic-update.lock');
     fs.writeFileSync(gate, JSON.stringify(owner));
     await assert.rejects(acquireStudioUse({ dataDir: f.dataDir, timeoutMs: 30 }), /finishing an automatic update/);
     fs.writeFileSync(gate, JSON.stringify({ ...owner, started: 'not this process birth' }));
-    (await acquireStudioUse({ dataDir: f.dataDir }))();
+    (await acquireStudioUse({ dataDir: f.dataDir, timeoutMs: 1000 }))();
     assert.equal(fs.existsSync(gate), false);
   });
 
