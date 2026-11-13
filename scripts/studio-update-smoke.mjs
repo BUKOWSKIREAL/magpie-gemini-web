@@ -7,7 +7,9 @@ import path from 'node:path';
 import { removeSmokeData } from './studio-lifecycle-smoke.mjs';
 import { ensureStudio, studioAdmin, stopStudio, studioStatus, localStudio, computeFileHash, nodeFetch } from '../lib/studio-native.mjs';
 
-const from = process.argv[2] || 'v0.3.6';
+const args = process.argv.slice(2).filter(arg => arg !== '--defer-rate-limit');
+if (args.length > 1) throw new Error('Usage: studio-update-smoke.mjs [version] [--defer-rate-limit]');
+const from = args[0] || 'v0.3.6';
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-official-update-'));
 let done = false, watching, spawnAttempts = 0, probes = 0, closedWindows = 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -64,6 +66,12 @@ try {
   assert.equal((await studioStatus({ dataDir })).version, update.latest);
   assert.equal((await stopStudio({ dataDir })).stopped, true);
   console.log('PASS real official online update ' + from + ' -> ' + update.latest + '; ' + probes + ' healthy probes, ' + closedWindows + ' observed HTTP-down windows, no duplicate process, preserved settings and restart');
+} catch (err) {
+  // The unmodified upstream updater has no token support. Keep ordinary CLI
+  // acceptance strict; CI can report this specific external limit separately.
+  if (!process.argv.includes('--defer-rate-limit') || !/HTTP (403|429)\b[\s\S]*API rate limit exceeded/i.test(err.message || '')) throw err;
+  console.error('DEFERRED official built-in updater: GitHub anonymous API quota exhausted. This is not a passed update test.');
+  process.exitCode = 75;
 } finally {
   done = true;
   await watching;

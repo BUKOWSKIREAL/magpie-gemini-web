@@ -77,9 +77,17 @@ jobs:
           execFileSync('tar', ['-xf', packed.filename], { cwd: root });
           await import(pathToFileURL(path.join(root, 'package/index.mjs')));
           execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-official-smoke.mjs')], { stdio: 'inherit' });
-          execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-update-smoke.mjs')], { stdio: 'inherit' });
           execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-auto-update-smoke.mjs')], { stdio: 'inherit' });
           execFileSync('bun', [path.join(root, 'package/scripts/studio-official-smoke.mjs')], { stdio: 'inherit' });
-          execFileSync('bun', [path.join(root, 'package/scripts/studio-update-smoke.mjs')], { stdio: 'inherit' });
           execFileSync('bun', [path.join(root, 'package/scripts/studio-auto-update-smoke.mjs')], { stdio: 'inherit' });
+          for (const runtime of [process.execPath, 'bun']) {
+            try {
+              execFileSync(runtime, [path.join(root, 'package/scripts/studio-update-smoke.mjs'), '--defer-rate-limit'], { stdio: 'inherit' });
+            } catch (err) {
+              if (err.status !== 75) throw err;
+              const note = `${process.platform}-${process.arch}, ${path.basename(runtime)}: the official built-in updater check was deferred by GitHub's anonymous API quota. Plugin installation, automatic upgrade and rollback passed.`;
+              console.log('::warning::' + note);
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '- ' + note + '\n');
+            }
+          }
           JS
