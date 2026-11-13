@@ -13,7 +13,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const args = process.argv.slice(2);
 const candidate = args.find(arg => arg.startsWith('--manifest='))?.slice(11);
 const pinPath = candidate ? path.resolve(candidate) : path.join(root, 'lib/studio-release.json');
-// A candidate manifest overrides release identity/patches, but keeps the pinned toolchains.
+// A candidate manifest can override release identity, patches and toolchains independently.
 // Candidate hashes are written only to that file, never over the installed release's pins.
 const release = { ...JSON.parse(fs.readFileSync(path.join(root, 'lib/studio-release.json'), 'utf8')),
   ...JSON.parse(fs.readFileSync(pinPath, 'utf8')) };

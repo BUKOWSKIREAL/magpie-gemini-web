@@ -16,29 +16,53 @@ The plugin provides two independent providers that can be used individually or t
 | :--- | :--- | :--- |
 | **Best for** | **Coding agents (recommended)** | General chat, web-only models & web quota |
 | **Tool calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
-| **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
+| **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` / `xhigh` (Hydrogen) | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
 | **Image input** | On by default; chat models read images | On by default; chat models read images (needs a signed-in cookie) |
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
-| **Sign-in method** | Chrome / cookie / browser import with automatic configuration | Copy `cookie` from a private/incognito window |
+| **Sign-in method** | Automatic official installation; confirm an imported account | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (`v0.3.5`) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (automatic installation and stable updates) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
 
 ---
 
 ## Quick Start
 
-Install **magpie-gemini-web** from the Magpie plugin market, then sign in to either (or both) providers below. The plugin automatically downloads the corresponding backend, verifies its SHA-256 checksum, and runs it in the background—no Go installation or extra setup required.
+Install **magpie-gemini-web** from the Magpie plugin market, then sign in to either (or both) providers below. By default, the plugin downloads the backend, verifies its SHA-256 checksum, and runs it in the background, with no Go installation required. AI Studio automatically follows official stable releases by default. You can disable automatic updates, select your own executable or connect an independent service.
 
 ### Option 1: Google AI Studio (`ai-studio`)
 
-1. Sign in to **Google AI Studio** in Magpie and choose **「用 Google 账号登录（推荐）」** (Sign in with a Google account).
-2. Once the plugin prepares the local service, the same tab automatically opens **account import / sign-in**. Choose **Chrome import, paste cookies, or browser login**. No separate installation or API key copying is needed; select multiple accounts once in the import UI.
-3. When every item in this sign-in task succeeds, the plugin **automatically configures Magpie**. A single import saves that account; a batch saves the imported group, retaining earlier successes when only failed accounts are retried. There is no return-and-select step, and the existing `ai-studio` provider, models, image generation and usage cards remain available.
-4. **Managing accounts:** Sign in again to add an account, create a separate card for an existing account, or re-authenticate. **「直接打开 Google 登录窗口」** (Open Google login window directly) retains the isolated browser login flow.
+1. Sign in to **Google AI Studio** in Magpie and choose **「添加账号并连接（推荐）」** (Add an account and connect).
+2. On first use, the plugin **automatically downloads, verifies and starts the latest stable official AIStudio2API backend**. No manual download, executable path, API key copying or administrator credentials are needed.
+3. Click **「打开账号管理页」** (Open account management) on the connection page, then add a Google account using Chrome import, cookie import or browser login.
+4. Return to the connection page, select the account and click **「连接到 Magpie」** (Connect to Magpie). The existing `ai-studio` provider, models, image generation and usage cards remain available. Repeat sign-in to add more accounts.
 
-The local service (~40 MB) is downloaded on first use. Browser login and the dedicated reauthentication entry require Camoufox (~300 MB). You can also use Add Google Account to import the same account from Chrome, cookies, or a debugging browser, updating its login state while preserving file bindings and renewal credentials. Magpie waits up to 10 minutes, downloads included. In the automatic flow, timeout or cancellation stops this sign-in's unfinished tasks and preserves imported accounts; tasks from other windows are unaffected. Set `studio.proxy` first if GitHub is unreachable.
+If an existing account needs to sign in again, select that account in Magpie, use its **Re-login** action in account management, then return to confirm the connection.
 
-Bundled backend `0.3.5-magpie.1` includes automatic sign-in. An older running backend retains the manual connection flow; after it is stopped, the next managed startup upgrades it.
+Subsequent starts reuse the installed executable. **Automatic stable updates are enabled by default:** while Magpie is running, the plugin checks in the background, caching successful release checks for an hour. After downloading and verifying an update, it waits for generation requests (including streams), account login and browser preparation to finish before upgrading and restarting. Accounts, port, credentials and settings remain in place; no new plugin release is needed. Failed checks or downloads leave the current version running. A failed new executable triggers an attempted rollback and blocks repeated attempts to install that archive.
+
+Use `npm run studio:updates -- manual` to manage versions yourself, or `npm run studio:updates -- auto` to resume automatic updates. Custom executables and independent services remain user-managed.
+
+Browser login downloads Camoufox (about 1.3 GB with v0.3.7); Chrome / cookie import can use existing sessions. Magpie limits each connection attempt to 10 minutes. On slow connections, finish preparation in the official account management page: its background download and login tasks continue after Magpie times out. Then start a new connection in Magpie and select the imported account. Alternatively, run `npm run studio:prepare-browser` from the plugin directory before signing in. It waits up to an hour; closing the command does not cancel the backend download. Set `studio.proxy` or `AI_STUDIO_PROXY` if GitHub is unreachable. **「直接打开 Google 登录窗口」** still opens an isolated browser login window. Existing backends with Magpie task correlation can still complete the account connection automatically.
+
+Automatic installation supports macOS / Linux x64 and arm64, and Windows x64. macOS / Linux use official CLI archives. The official Windows archive contains a desktop executable, installed beside `.env` and `runtime/` in the data directory to retain its settings. Windows arm64 currently needs a compatible executable selected through the advanced path option (for example, an x64 executable supported by the system), or an independent backend. Unsupported targets receive guidance before a release lookup.
+
+**Existing installations and version selection:**
+
+- Accounts, port, credentials and Magpie cards are preserved. The plugin can also automatically replace an older `-magpie` build in the default directory with a newer official stable release. Its compiled updater restriction does not prevent this. Automatic replacement is deferred if an older backend lacks the APIs needed to confirm idle status. To switch immediately, quit Magpie, run these commands from the plugin directory, then reopen Magpie:
+
+  ```bash
+  npm run studio:stop
+  npm run studio:install                 # Current official stable release
+  npm run studio:start
+  ```
+
+- To choose an official version, stop the service and run `npm run studio:install -- --version v0.3.7`. This verifies the official SHA-256 and selects manual updates to preserve your choice. Run `npm run studio:updates -- auto` to follow stable releases again. Historical installation hashes do not force file restoration, and automatic updates never downgrade a newer running version. Back up the entire data directory before downgrading: older versions may not read data migrated by newer ones.
+- **Advanced option:** Select 「指定 AIStudio2API 程序路径（高级）」 (Specify executable path) or run `npm run studio:use -- "/absolute/path/to/aistudio2api"`. Use an executable extracted from an [official archive](https://github.com/Mag1cFall/AIStudio2API/releases), outside the plugin and AI Studio data directories; stop the old service before switching. A missing custom executable produces an error and is never replaced by a download. `studio:use-default` returns to the default directory, reusing its executable or installing the official CLI if absent.
+- Existing configurations receive a one-time migration of missing legacy defaults: `SEARCH_MODEL_ALIASES=false`, per-account concurrency / warm worker limit / maximum workers / warm startup concurrency all `1`, `ROUTING_STRATEGY=fill-first`, and `REQUEST_TIMEOUT=30m`, along with the earlier disabled hedging policy. Explicit settings and unknown keys remain intact. Later admin choices, including defaults omitted by upstream Save, are not seeded again.
+- Fresh installations follow upstream defaults. With v0.3.7 this enables search model aliases, per-account concurrency 2, 10 warm / 20 maximum workers, round-robin routing, and SpiderMonkey generation. A future version changing the `WAA_BACKEND` default could also require Camoufox or other browser components for generation; choose explicit settings in the admin page if needed.
+- The plugin maintains the local connection and account access. Other settings belong to the backend, including future configuration keys. Uninstall or `studio:clean` removes downloaded programs from the default directory while retaining accounts and settings. With a custom path, the process, executable and entire data directory are preserved; use `studio:stop` to stop it.
+
+For an independently running service, choose **Connect an existing AIStudio2API (URL + API key)**. With official v0.3.7, Hydrogen Extra High maps to Magpie's `xhigh` variant.
 
 ### Option 2: Gemini Web (`gemini-web`)
 
@@ -125,7 +149,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `studio.imageModels` | `true` | `ai-studio` only | List the Nano Banana image models, for Magpie's image generation; `false` lists text models only |
 
 **Using a proxy to reach Google:**
-- **AI Studio:** Preferably set it in the local admin page. Open the address on the usage card's "管理页" (admin page) line (default `http://127.0.0.1:2048`) and sign in as `magpie` with `adminPassword` from `config.json` in the data directory. Save the proxy, then restart the service from the admin page. The plugin keeps the saved value when it restarts the backend.
+- **AI Studio:** Preferably set it in the local admin page. Choose 「添加账号并连接（推荐）」 in Magpie, select the new-account option, and open the authenticated account management page from the connection page. Save the proxy, then restart the service from the admin page. The plugin keeps the saved value when it restarts the backend. Usage cards show the management address without administrator details, credential file locations or executable paths.
   - Alternatively, `studio.proxy` or `AI_STUDIO_PROXY` take precedence over the saved proxy. A change applies after the local service restarts (`npm run studio:stop`; the next request starts it again).
   - With none set, the backend goes out directly, or through the system proxy on macOS and Windows.
   - **The backend uses neither Magpie's proxies (including the provider proxy set for `ai-studio`) nor `HTTPS_PROXY` and similar variables**: it keeps running after Magpie quits, when a proxy borrowed from Magpie may be gone. Use one of the options above. A backend started by a plugin version from before this fix may still be using a proxy from the environment it was started in (Magpie's, for example); the "代理出口" line marks it and says what a restart changes.
@@ -143,14 +167,14 @@ After upgrading the plugin, run `magpie provider models gemini-web` to refresh a
 </details>
 
 <details>
-<summary><b>🛠️ AI Studio CLI Commands</b> (service status, re-login, offline install)</summary>
+<summary><b>🛠️ AI Studio CLI Commands</b> (service status, browser preparation, version management)</summary>
 
 <br>
 
 **When the local service starts and stops:**
 - It starts in the background when the plugin loads (when Magpie opens, for example); after that, a request or a usage card refresh starts it again if it isn't running.
 - It is a process of its own: **quitting Magpie doesn't stop it**, and Magpie picks it up again the next time it opens.
-- To stop it, use `studio:stop` below (or the full command the card or an error gives). A stop lasts until the next request, which starts it again.
+- To stop it, use `studio:stop` below (or the full command an error gives). A stop lasts until the next request, which starts it again.
 
 When a plugin error asks you to run a command, it includes the full ready-to-copy path. From the plugin directory, you can also run:
 
@@ -158,10 +182,18 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 | :--- | :--- |
 | `npm run studio:status` | Show local service and account status |
 | `npm run studio:start` / `studio:stop` | Start / stop the local service |
-| `npm run studio:clean` | Stop the service and remove downloaded binaries & Camoufox (keeps accounts & config) |
+| `npm run studio:clean` | Clean downloaded programs in the default directory, keeping accounts/config; skipped for custom paths |
+| `npm run studio:use -- <executable>` | Select an official or custom executable; stop the current service before switching |
+| `npm run studio:use-default` | Return to the default directory; reuse its executable or install the official CLI if absent |
 | `npm run studio:login` | Add a Google account |
+| `npm run studio:prepare-browser` | Prepare the login browser before signing in; closing the command leaves the backend download running |
 | `npm run studio:relogin -- [<account>]` | Re-authenticate an expired account (argument optional if only one) |
-| `npm run studio:install -- --archive <file>` | Offline install from a pre-downloaded archive |
+| `npm run studio:install -- [--version v0.3.7]` | Install the latest or specified official release after stopping; keep accounts and settings |
+| `npm run studio:install -- --version v0.3.7 --archive <file>` | Install a local official archive; still fetch its checksum from GitHub |
+| `npm run studio:official:smoke` | Check installation, account paths, connection and live file replacement in disposable data, without real Google credentials |
+| `npm run studio:updates -- auto` / `manual` | Enable or disable automatic updates for the default backend; omit the argument to show the policy |
+| `npm run studio:auto-update:smoke` | Verify background upgrades, retained data and executable rollback in a disposable directory |
+| `npm run studio:update:smoke -- v0.3.6` | Explicitly update an isolated older official backend to the latest release and verify restart |
 | `node scripts/studio.mjs import <dir>` | Import existing accounts while the service is stopped |
 | `npm run studio:smoke` | Run a live acceptance check (consumes account quota) |
 
@@ -176,20 +208,18 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Both backends listen on `127.0.0.1` only. Cookies and sessions remain on your machine; Magpie stores only a locally generated API key.
 - **Gemini Web data directory:** `~/.local/share/magpie-gemini-web` (override with `GEMINI_WEB_DATA_DIR`), logs at `backend.log`. Supports macOS, Linux, and Windows (x64 / arm64).
 - **AI Studio data directory:** `~/.local/share/magpie-ai-studio` (override with `AI_STUDIO_DATA_DIR`), logs at `backend.log` (rotated on next start after exceeding 10 MB). Uses port 2048 by default (or picks a free port and saves it in `config.json`). Supports macOS, Linux (x64 / arm64), and Windows x64.
-- **Uninstalling & cleaning downloaded assets:** Removing the plugin in Magpie (or running `npm run studio:clean` / `npm run backend:clean`) stops the local services and deletes the downloaded `AIStudio2API`, `Camoufox`, and `gemini-web2api-go` binaries and archives.
+- **Uninstalling & cleaning downloaded assets:** Removing the plugin in Magpie (or running `npm run studio:clean` / `npm run backend:clean`) stops plugin-managed services and removes their downloaded binaries and archives. **User-managed AIStudio2API processes, executables and data directories are preserved**, for the user to stop and clean.
   - `auth/`, `gemini.db`, `config.json`, `.env`, and `secrets.json` are kept so reinstalling the plugin or sending a new request restores the backend on demand without signing in or importing cookies again; to prevent automatic reinstallation permanently, remove the sign-in in Magpie or delete `config.json` / `secrets.json`.
   - Default data directories are shared per OS user; set separate `AI_STUDIO_DATA_DIR` and `GEMINI_WEB_DATA_DIR` when running multiple isolated Magpie config directories so removing the plugin in one does not clean another's shared binaries.
 - Gemini Web takes at most 2 requests at once per sign-in (AI Studio 1), adjustable in Magpie's provider settings. Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- The plugin pins SHA-256-verified `v0.3.5-magpie.1`, based on upstream `v0.3.5`. Upgrade the plugin to update the backend. Official releases at or below that upstream version, and managed backends an older plugin installed, are upgraded on the next managed startup, preserving accounts, port and sign-in credentials.
-- Account priority ordering (`ACCOUNT_ORDER`) and per-model account bindings (`MODEL_ACCOUNTS`) from 0.3.3, as well as API key account bindings and hedge model selections from 0.2.19, are preserved. Settings saved in the admin page, including upstream defaults, survive plugin restarts. Hedge requests remain off by default; enable them and select models in the admin page if needed.
-- For users upgrading from 0.2.18 with `auto` enabled, hedging now applies only to `FIRST_EVENT_HEDGE_MODELS`, defaulting to Argon when that list is absent. Saving in the admin page fixes the current defaults in the file; later upstream default changes require manual adjustment. When taking over an official 0.2.19 sparse configuration, missing settings follow the plugin's initialization rules (for example, hedging becomes `off`). See the [upgrade compatibility notes](docs/studio-release.md#0219-升级兼容).
-- **Online updates are disabled in the managed backend on macOS, Linux, and Windows.** The admin page says updates are managed by magpie-gemini-web; the update endpoint returns HTTP 409 and update checks do not contact GitHub. Independently managed external servers are unaffected. See [docs/studio-release.md](docs/studio-release.md) for how the managed build is made and reproduced.
-- Managed Unix installs still attempt to set `package/` to `0555` as additional file protection. Permission failures do not block service, and disabling online updates does not depend on permissions. To reset by manually deleting the data directory, stop the service first, then run `chmod -R u+w "<data-dir>/package"` before deleting it; replace `<data-dir>` with the actual path.
-- If a newer or custom version is installed, the plugin reports a conflict with `stop`, `install`, and `start` commands carrying the correct `--data-dir`. Stop can recover a changed listener PID and verifies its executable path before signaling it. If HTTP is down but the process is still alive, the plugin refuses to reinstall or launch a second process.
-- When stopped, a replaced executable is restored from the verified pinned archive; failed verification never launches the replacement. Existing account and runtime data files are kept, but **an older backend may not read data migrated by a newer version**. Before manually downgrading, stop the service and back up the entire data directory, including `auth/` and `runtime/requests.db`. If data migration is known to have occurred, update the plugin to match the newer backend.
-- The backend's base request deadline and the plugin's default response/stream-idle timeout are 30 minutes (override via `studio.requestTimeoutMs`). This allows long non-streaming replies to finish collecting on the server. A stalled backend can also take 30 minutes to time out, and its single worker can hold up later requests. Cancel a request or choose a shorter timeout when needed; shorter limits can interrupt valid long replies. Upstream controls deadline scaling for automatic continuation.
+- Installation and automatic updates use the latest stable official release for macOS / Linux x64 or arm64, or Windows x64. Release metadata must identify the correct platform archive and SHA-256. Publishing the plugin does not require a custom backend build or pinned Studio artifacts.
+- With 0.3.7, `MAX_ACCOUNT_SWITCHES`, `DISCOVER_HIDDEN_MODELS`, account order, model bindings and all other valid `.env` keys are preserved. Explicit saved values remain in effect; omitted values use upstream defaults. The plugin no longer seeds fixed worker, hedge-request or generation-backend settings.
+- The default executable is `package/aistudio2api` in the data directory, or `aistudio2api.exe` at its root on Windows. Older managed builds retain their accounts and data and can be automatically replaced with official packages. Historical builds and the 0.3.7 candidate patches remain documented in [docs/studio-release.md](docs/studio-release.md); they do not select the default install or update version.
+- Stop discovers replacement PIDs and checks executable identity. Custom paths also check the account-directory argument to distinguish instances sharing a program. Unverified processes are never signaled; a live process with HTTP down blocks installation and duplicate startup.
+- A missing default executable is installed automatically; an existing one is updated in the background when idle. A missing custom path produces an error. Executable rollback does not undo the backend's own data migrations. Back up the entire data directory, including `auth/` and `runtime/requests.db`, before a manual downgrade.
+- The plugin's default response/stream-idle timeout is 30 minutes, adjustable with `studio.requestTimeoutMs`. Backend deadlines and concurrency follow its defaults or admin settings. Shorter limits can interrupt long replies; the selected backend controls automatic continuation deadlines.
 - Source review of the locally installed Magpie `v0.1.1285` (`d783df46`) found no shorter fixed total timeout on this plugin's generation path: `Provider.Do → plugin.Fetch → loader.fetch` bypasses the ordinary HTTP transport's 10-minute response-header timeout. The gateway's 5-minute `IdleTimeout` applies between requests. Clients or reverse proxies can impose shorter limits; this was not a 30-minute end-to-end waiting test.
 - Deep Research models (`deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`) are supported: listed when signed in with a Google AI Pro / Ultra account; the backend adapts asynchronous Interactions tasks onto `/v1/chat/completions` streaming (including reasoning and built-in server-side search), without client `tool_call` (Function Calling) or `temperature`.
 - Models with `-build` or `assistant_route` are filtered out: they inject the Build coding assistant's own system prompt and are not offered as ordinary Agent models. Refresh with `magpie provider models ai-studio` after upgrading.

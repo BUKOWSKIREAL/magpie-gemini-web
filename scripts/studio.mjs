@@ -4,10 +4,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {
   studioDataDir,
+  studioAutoUpdates,
+  setStudioAutoUpdate,
   localStudio,
   installStudio,
+  useStudioBinary,
+  useDefaultStudio,
   ensureStudio,
   studioLogin,
+  prepareStudioBrowser,
   studioAccounts,
   stopStudio,
   cleanStudio,
@@ -31,11 +36,15 @@ Usage:
   node scripts/studio.mjs <command> [options]
 
 Commands:
-  install [--archive <path>] [--proxy <url>]   Install AIStudio2API binary and configure environment
+  install [--version <tag>] [--archive <path>] Download the official CLI (latest stable by default); stop the service first
+  use <executable>                            Select a custom executable; stop the old service first
+  use-default                                 Select the default local directory; first start installs if missing
+  updates [auto|manual]                       Show or change automatic updates for the default official backend
   start [--proxy <url>]                        Start local AIStudio2API service in the background
   status                                       Check service and accounts status
   stop                                         Stop local AIStudio2API service
   clean                                        Stop service and remove downloaded binaries & Camoufox (keeps accounts & config)
+  prepare-browser                              Download Camoufox before signing in (outside Magpie’s 10-minute wait)
   login                                        Open isolated browser login for a new Google account
   relogin [<account>]                          Sign an account that needs it in again (its label or id)
   import <auth-directory>                      Import accounts from an existing auth directory (service must be stopped)
@@ -43,7 +52,8 @@ Commands:
 Options:
   --data-dir <path>                            Custom data directory
   --proxy <url>                                HTTP, HTTPS, or SOCKS5 proxy URL ("" clears the saved one)
-  --archive <path>                             Local release archive file (.tar.gz or .zip)
+  --version <tag>                              Install a specific official release and keep updates manual (install only)
+  --archive <path>                             Local official archive; verify against the selected GitHub release
 `);
 }
 
@@ -53,7 +63,7 @@ function parseArgs(args) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') {
       flags.help = true;
-    } else if (arg === '--data-dir' || arg === '--proxy' || arg === '--archive') {
+    } else if (arg === '--data-dir' || arg === '--proxy' || arg === '--archive' || arg === '--version') {
       const next = args[i + 1];
       // An empty --proxy clears the proxy saved for the service.
       if (next === undefined || next.startsWith('--') || (!next && arg !== '--proxy')) {
@@ -114,19 +124,53 @@ async function main() {
   }
 
   const command = flags._[0];
+  if (command !== 'install' && (flags.version !== undefined || flags.archive !== undefined)) {
+    throw new Error('--version and --archive apply to install only; start reuses the selected executable');
+  }
   const dataDir = flags.dataDir ? path.resolve(flags.dataDir) : studioDataDir();
 
   switch (command) {
+    case 'updates': {
+      const policy = flags._[1];
+      if (flags._.length > 2 || (policy !== undefined && !['auto', 'manual'].includes(policy))) {
+        throw new Error('Usage: updates [auto|manual]');
+      }
+      if (policy !== undefined) await setStudioAutoUpdate(policy === 'auto', { dataDir });
+      const local = localStudio({ dataDir });
+      if (local?.backendMode === 'user') console.log('Custom executables remain user-managed.');
+      else if (!fs.existsSync(path.join(dataDir, 'config.json'))) console.log('Not installed; automatic updates are enabled by default after installation.');
+      else console.log(studioAutoUpdates(dataDir)
+        ? 'Automatic updates enabled. While Magpie is open, it checks official stable releases and updates when requests, sign-in and browser preparation are idle.'
+        : 'Automatic updates disabled. Update from the backend management page or install an official release explicitly.');
+      break;
+    }
+    case 'use': {
+      if (flags._.length !== 2) throw new Error('Usage: use <path-to-extracted-aistudio2api-executable>');
+      const local = await useStudioBinary(flags._[1], { dataDir, proxy: flags.proxy });
+      saveProxy(dataDir, flags.proxy);
+      console.log(`User-managed AIStudio2API selected: ${local.binaryPath}`);
+      console.log(`Data directory: ${dataDir}`);
+      console.log('You control this executable and its updates. Plugin cleanup preserves this backend and its runtime.');
+      console.log(`Start it with: ${studioCommand('start', { dataDir })}`);
+      break;
+    }
+    case 'use-default': {
+      if (flags._.length !== 1) throw new Error('Usage: use-default');
+      await useDefaultStudio({ dataDir });
+      console.log('Default local AIStudio2API directory selected. Your custom executable has been kept.');
+      console.log(`Start it with: ${studioCommand('start', { dataDir })}`);
+      break;
+    }
     case 'install': {
       const status = await studioStatus({ dataDir });
-      if (status.status === 'version_conflict') throw new Error(status.reason);
-      if (status.status === 'running' || status.status === 'outdated' || status.status === 'unresponsive') {
+      if (status.status === 'running' || status.status === 'unresponsive') {
         throw new Error('Cannot install or update AI Studio while service is running. Stop the service first.');
       }
       console.log(`Installing AIStudio2API into ${dataDir}...`);
       const local = await installStudio({
         dataDir,
         archivePath: flags.archive,
+        version: flags.version,
         proxy: flags.proxy
       });
       saveProxy(dataDir, flags.proxy);
@@ -135,9 +179,22 @@ async function main() {
       console.log(`Data directory: ${local.dataDir}`);
       break;
     }
+    case 'prepare-browser': {
+      const local = await ensureStudio({ dataDir, proxy: flags.proxy, managementOnly: true });
+      saveProxy(dataDir, flags.proxy);
+      console.log('Preparing the login browser. This can take longer than ten minutes; the backend keeps downloading if this command is closed.');
+      let last;
+      await prepareStudioBrowser(local, { fetchFn: nodeFetch, onProgress: state => {
+        const message = state.ready ? 'Camoufox is ready. Return to Magpie and connect your Google account.' : state.download
+          ? 'Downloading Camoufox: ' + Math.floor(state.download.received / 1048576) + ' / ' + Math.floor(state.download.total / 1048576) + ' MB'
+          : 'Preparing Camoufox…';
+        if (message !== last) console.log(message);
+        last = message;
+      } });
+      break;
+    }
     case 'start': {
       const status = await studioStatus({ dataDir });
-      if (status.status === 'version_conflict') throw new Error(status.reason);
       if (status.status === 'running') {
         if (flags.proxy !== undefined) {
           throw new Error('Cannot update proxy while service is running. Stop the service first.');
@@ -147,9 +204,6 @@ async function main() {
         console.log(`API Base URL: ${local.baseURL}`);
         console.log(`Management URL: ${local.origin}`);
         return;
-      }
-      if (status.status === 'outdated') {
-        console.log(`Replacing AIStudio2API ${status.version} from an earlier install with ${status.expected}...`);
       }
       console.log(`Starting AIStudio2API service in ${dataDir}...`);
       // --proxy is saved as the service's own, as its admin page saves one, not set over it
@@ -161,7 +215,14 @@ async function main() {
     }
     case 'status': {
       const status = await studioStatus({ dataDir });
+      const automatic = !fs.existsSync(path.join(dataDir, 'config.json')) || studioAutoUpdates(dataDir);
       console.log(`Service status: ${status.status}`);
+      console.log(`Backend: ${status.backendMode === 'user' ? 'custom executable' : 'local installation'}; updates: ${automatic ? 'automatic official stable releases while Magpie is open' : 'user-controlled'}`);
+      if (status.binaryPath) console.log(`Executable: ${status.binaryPath}`);
+      if (status.version) console.log(`Version: ${status.version}`);
+      if (status.version?.includes('-magpie.')) console.log(automatic
+        ? 'Legacy managed build: automatic updates can switch to a newer official stable release when idle. Accounts and settings are kept.'
+        : 'Legacy managed build: its built-in updater is restricted. You can replace it with an official executable while stopped. Accounts and settings are kept.');
       if (status.status === 'running') {
         console.log(`State: ${status.state || 'RUNNING'}`);
         console.log(`Listen port: ${status.port}`);
@@ -198,12 +259,6 @@ async function main() {
             console.log(`  - ${a.label || a.id} (${a.state || 'active'})`);
           }
         }
-      } else if (status.status === 'version_conflict') {
-        console.log(status.reason);
-      } else if (status.status === 'outdated') {
-        console.log(`Running version: ${status.version} from an earlier install (this plugin uses ${status.expected})`);
-        console.log(`To replace it, run: ${studioCommand('start', { dataDir })}`);
-        console.log(`To stop it, run: ${studioCommand('stop', { dataDir })}`);
       } else if (status.status === 'unresponsive') {
         console.log(`Port ${status.port} answers but not properly (${status.reason})`);
         console.log(`If the service is stuck, run: ${studioCommand('stop', { dataDir })}`);
@@ -226,7 +281,11 @@ async function main() {
     case 'clean': {
       console.log(`Cleaning downloaded AI Studio assets in ${dataDir}...`);
       const res = await cleanStudio({ dataDir });
-      console.log(`Cleaned AI Studio assets (preserved accounts & config): ${res.removed.length ? res.removed.join(', ') : 'nothing to remove'}`);
+      if (res.skipped === 'user_backend') {
+        console.log('User-managed AIStudio2API and its runtime were kept. Use stop to stop the service; manage its files yourself.');
+      } else {
+        console.log(`Cleaned AI Studio assets (preserved accounts & config): ${res.removed.length ? res.removed.join(', ') : 'nothing to remove'}`);
+      }
       break;
     }
     case 'login': {

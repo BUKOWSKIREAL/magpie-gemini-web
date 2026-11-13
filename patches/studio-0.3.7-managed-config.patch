@@ -1,0 +1,121 @@
+diff --git a/internal/config/config.go b/internal/config/config.go
+index d65e9fb..2843043 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -68,6 +68,11 @@ var configKeys = [...]string{
+ 	"CONTINUATION_PROMPT",
+ }
+ 
++// managedBy is set at link time by a distributor that owns configuration defaults.
++// Its saved values must remain explicit so a missing default cannot be mistaken
++// for a setting the distributor still needs to initialize.
++var managedBy string
++
+ // LogFileMB 是单个日志文件的轮转大小
+ const LogFileMB = 10
+ 
+@@ -424,7 +429,7 @@ func Load(path string) (Config, error) {
+ 	if err != nil {
+ 		return Config{}, err
+ 	}
+-	if !commented && upgradeEnv(values) {
++	if managedBy == "" && !commented && upgradeEnv(values) {
+ 		if err := writeEnv(path, values); err != nil {
+ 			return Config{}, err
+ 		}
+@@ -443,7 +448,7 @@ func Load(path string) (Config, error) {
+ 			}
+ 		}
+ 	}
+-	if _, ok := values["WAA_BACKEND"]; !ok {
++	if _, ok := values["WAA_BACKEND"]; managedBy == "" && !ok {
+ 		if camoufoxOnlyAccounts(cfg.AuthStates) {
+ 			cfg.WAABackend = WAABackendCamoufox
+ 		}
+@@ -612,8 +617,8 @@ func (c Config) Save(path string) error {
+ 			}
+ 		case key == "WAA_BACKEND":
+ 			file[key] = values[key]
+-		case slices.Contains(workerDefaultKeys, key) && !inFile && values[key] == previousDefaults[key]:
+-		case values[key] != defaults[key]:
++		case managedBy == "" && slices.Contains(workerDefaultKeys, key) && !inFile && values[key] == previousDefaults[key]:
++		case managedBy != "" || values[key] != defaults[key]:
+ 			file[key] = values[key]
+ 		}
+ 	}
+diff --git a/internal/config/managed_test.go b/internal/config/managed_test.go
+new file mode 100644
+index 0000000..c5d9991
+--- /dev/null
++++ b/internal/config/managed_test.go
+@@ -0,0 +1,70 @@
++package config
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++func managedConfigForTest(t *testing.T) {
++	t.Helper()
++	previous := managedBy
++	managedBy = "magpie-gemini-web"
++	t.Cleanup(func() { managedBy = previous })
++}
++
++func TestManagedConfigPreservesLegacyChoices(t *testing.T) {
++	managedConfigForTest(t)
++	path := filepath.Join(t.TempDir(), ".env")
++	cfg := Default()
++	cfg.FirstEventHedge = FirstEventHedgeOff
++	cfg.RequestTimeout = 5 * time.Minute
++	cfg.UpstreamChannels = []string{"playground", "build"}
++	if err := writeEnv(path, cfg.envValues()); err != nil {
++		t.Fatal(err)
++	}
++	before, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	loaded, err := Load(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	after, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(before) != string(after) || loaded.FirstEventHedge != FirstEventHedgeOff || loaded.RequestTimeout != 5*time.Minute || len(loaded.UpstreamChannels) != 2 {
++		t.Fatal("managed startup rewrote the distributor's saved choices")
++	}
++}
++
++func TestManagedSaveKeepsDefaultsExplicitAndEnvironmentLocked(t *testing.T) {
++	managedConfigForTest(t)
++	path := writeTestEnv(t, "LISTEN_ADDR=127.0.0.1:2049\n")
++	t.Setenv("LISTEN_ADDR", "127.0.0.1:2051")
++	saved, err := Load(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	update := Default().KeepEnvironment(saved)
++	if err := update.Save(path); err != nil {
++		t.Fatal(err)
++	}
++	text := readTestEnv(t, path)
++	for _, want := range []string{"WARM_WORKER_LIMIT=10\n", "MAX_ACTIVE_WORKERS=20\n", "SEARCH_MODEL_ALIASES=true\n", "DISCOVER_HIDDEN_MODELS=false\n", "PER_ACCOUNT_CONCURRENCY=2\n", "ROUTING_STRATEGY=round-robin\n", "MAX_ACCOUNT_SWITCHES=3\n", "FIRST_EVENT_HEDGE=off\n", "STRIP_THOUGHT_SIGNATURES=false\n", "LISTEN_ADDR=127.0.0.1:2049\n"} {
++		if !strings.Contains(text, want) {
++			t.Fatalf("saved config is missing %q", want)
++		}
++	}
++	loaded, err := Load(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if loaded.ListenAddr != "127.0.0.1:2051" || loaded.FirstEventHedge != FirstEventHedgeOff || !loaded.SearchModelAliases || loaded.DiscoverHiddenModels || loaded.PerAccountConcurrency != 2 || loaded.RoutingStrategy != "round-robin" || loaded.MaxAccountSwitches != 3 {
++		t.Fatal("managed settings changed across save/load")
++	}
++}

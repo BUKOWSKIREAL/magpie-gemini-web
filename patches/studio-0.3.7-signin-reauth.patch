@@ -1,0 +1,25 @@
+diff --git a/web/src/components/AccountsPanel.vue b/web/src/components/AccountsPanel.vue
+--- a/web/src/components/AccountsPanel.vue
++++ b/web/src/components/AccountsPanel.vue
+@@ -982,8 +982,8 @@
+       </p>
+       <template v-else-if="signInAccount">
+         <p class="mt-5 text-sm text-gray-400">
+-          已有账号重新登录目前仅支持浏览器；首次使用需下载 Camoufox（约 300 MB）。此版本不能用
+-          Chrome 或 Cookie 重复导入已有账号。
++          此入口使用隔离浏览器重新登录；首次使用需下载 Camoufox（约 1.3 GB）。也可返回 Magpie
++          选择添加 Google 账号，通过 Chrome、Cookie 或调试浏览器导入同一账号，更新已有登录状态并保留文件绑定。
+         </p>
+         <button
+           type="button"
+diff --git a/web/tests/magpie-ui.test.ts b/web/tests/magpie-ui.test.ts
+--- a/web/tests/magpie-ui.test.ts
++++ b/web/tests/magpie-ui.test.ts
+@@ -91,6 +91,6 @@
+   assert.match(await headerHTML({}), /目标账号已不存在/)
+   const ready = await headerHTML({ signInAccount: { id: 'one', label: 'One' } })
+   assert.match(ready, /Camoufox/)
+-  assert.match(ready, /不能用 Chrome 或 Cookie 重复导入/)
++  assert.match(ready, /导入同一账号，更新已有登录状态并保留文件绑定/)
+   assert.match(ready, /重新登录 One/)
+ })

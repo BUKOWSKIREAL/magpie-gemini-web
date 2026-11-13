@@ -26,8 +26,6 @@ import {
   validateProxy,
   verifyProcessIdentity,
   computeFileHash,
-  PINNED_ARCHIVES,
-  STUDIO_VERSION,
   checkStudioHealth,
   isConnectRefused,
   pickStudioPort,
@@ -37,12 +35,13 @@ import {
   setupStep,
   downloadProgress,
   camoufoxState,
-  CAMOUFOX_VERSION,
   parseAccountOrder,
   validateAccountOrder,
   parseModelAccounts,
   validateModelAccounts
 } from '../lib/studio-native.mjs';
+import { STUDIO_VERSION, PINNED_ARCHIVES, CAMOUFOX_VERSION } from './helpers/studio-legacy.mjs';
+import { officialArchive } from './helpers/studio-official.mjs';
 import { proxyLine } from '../lib/studio.mjs';
 import { openProgressPage } from '../lib/studio-page.mjs';
 
@@ -115,15 +114,16 @@ function writeValidManifest(dataDir, bin) {
 }
 
 describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
-  let tmpRoot;
+  let tmpRoot, official;
 
   before(() => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-native-test-'));
+    official = officialArchive(path.join(tmpRoot, 'official-fixture'));
   });
 
   after(() => {
     if (tmpRoot) {
-      // Production packages are intentionally not writable on Unix.
+      // Some fixtures simulate historical read-only package directories.
       for (const entry of fs.readdirSync(tmpRoot)) {
         const pkg = path.join(tmpRoot, entry, 'package');
         if (fs.existsSync(pkg)) fs.chmodSync(pkg, 0o755);
@@ -132,23 +132,14 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     }
   });
 
-  it('1. fixed env recipe SpiderMonkey/playground/loopback + no inherited WAA', () => {
+  it('1. connection settings are private and upstream owns generation defaults', () => {
     const dataDir = path.join(tmpRoot, 'env-recipe-test');
     const config = ensureStudioConfig(dataDir);
     const envContent = fs.readFileSync(path.join(dataDir, '.env'), 'utf8');
 
-    assert.ok(envContent.includes('WAA_BACKEND=spidermonkey'), 'WAA_BACKEND must be spidermonkey');
-    assert.ok(envContent.includes('UPSTREAM_CHANNELS=playground'), 'UPSTREAM_CHANNELS must be playground');
-    assert.ok(envContent.includes('BUILD_NATIVE_NONSTREAM=false'));
-    assert.ok(envContent.includes('NONSTREAM_KEEPALIVE=false'));
-    assert.equal(envContent.includes('TEMPORARY_CHAT='), false);
-    assert.ok(envContent.includes('PER_ACCOUNT_CONCURRENCY=1'));
-    assert.ok(envContent.includes('WARM_WORKER_LIMIT=1'));
-    assert.ok(envContent.includes('MAX_ACTIVE_WORKERS=1'));
-    assert.ok(envContent.includes('REQUEST_TIMEOUT=30m'));
-    assert.ok(envContent.includes('INIT_TIMEOUT=2m'));
-    assert.ok(envContent.includes('SEARCH_MODEL_ALIASES=false'), 'no <id>-search copies of the models');
-    assert.ok(envContent.includes('FIRST_EVENT_HEDGE=off'), 'do not add quota-consuming hedge requests by default');
+    for (const key of ['WAA_BACKEND', 'UPSTREAM_CHANNELS', 'BUILD_NATIVE_NONSTREAM', 'NONSTREAM_KEEPALIVE', 'PER_ACCOUNT_CONCURRENCY', 'WARM_WORKER_LIMIT', 'MAX_ACTIVE_WORKERS', 'REQUEST_TIMEOUT', 'INIT_TIMEOUT', 'SEARCH_MODEL_ALIASES', 'FIRST_EVENT_HEDGE']) {
+      assert.equal(readStudioEnv(dataDir)[key], undefined, `${key} must use the backend default`);
+    }
     assert.ok(envContent.includes(`LISTEN_ADDR=127.0.0.1:${config.port}`));
     assert.ok(envContent.includes('PREVIEW_LISTEN_ADDR=127.0.0.1:2050'));
     assert.ok(envContent.includes(`PROXY_API_KEY=${config.apiKey}`));
@@ -178,6 +169,8 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       FIRST_EVENT_HEDGE_MODELS: 'gemini-4-argon,gemini-3.8-flash',
       API_KEY_ACCOUNTS: `${config.apiKey}:test@example.com`,
       ACCOUNT_ORDER: 'b@example.com,a@example.com',
+      MAX_ACCOUNT_SWITCHES: '5',
+      DISCOVER_HIDDEN_MODELS: 'true',
       MODEL_ACCOUNTS: 'gemini-3.1-pro-preview:b@example.com|a@example.com',
       MODEL_MAPPING: 'a=b',
       LISTEN_ADDR: '127.0.0.1:1',
@@ -198,6 +191,8 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal(after.FIRST_EVENT_HEDGE_MODELS, saved.FIRST_EVENT_HEDGE_MODELS);
     assert.equal(after.API_KEY_ACCOUNTS, saved.API_KEY_ACCOUNTS);
     assert.equal(after.ACCOUNT_ORDER, saved.ACCOUNT_ORDER, 'admin-saved ACCOUNT_ORDER is kept over initial option');
+    assert.equal(after.MAX_ACCOUNT_SWITCHES, '5');
+    assert.equal(after.DISCOVER_HIDDEN_MODELS, 'true');
     assert.equal(after.MODEL_ACCOUNTS, saved.MODEL_ACCOUNTS, 'admin-saved MODEL_ACCOUNTS is kept over initial option');
     assert.equal(after.MODEL_MAPPING, 'a=b');
     assert.equal(after.ROUTING_STRATEGY, 'round robin');
@@ -213,6 +208,8 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal(readStudioEnv(dataDir).FIRST_EVENT_HEDGE_MODELS, saved.FIRST_EVENT_HEDGE_MODELS);
     assert.equal(readStudioEnv(dataDir).API_KEY_ACCOUNTS, saved.API_KEY_ACCOUNTS);
     assert.equal(readStudioEnv(dataDir).ACCOUNT_ORDER, saved.ACCOUNT_ORDER);
+    assert.equal(readStudioEnv(dataDir).MAX_ACCOUNT_SWITCHES, '5');
+    assert.equal(readStudioEnv(dataDir).DISCOVER_HIDDEN_MODELS, 'true');
     assert.equal(readStudioEnv(dataDir).MODEL_ACCOUNTS, saved.MODEL_ACCOUNTS);
   });
 
@@ -222,7 +219,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ version: 1, port: 2048, apiKey: 'k', adminUsername: 'u', adminPassword: 'p', proxy: 'http://127.0.0.1:1082' }));
     ensureStudioConfig(dataDir);
     assert.equal(readStudioEnv(dataDir).PROXY, 'http://127.0.0.1:1082');
-    assert.equal(readStudioEnv(dataDir).PER_ACCOUNT_CONCURRENCY, '1', 'missing settings get their defaults');
+    assert.equal(readStudioEnv(dataDir).PER_ACCOUNT_CONCURRENCY, '1', 'an existing configuration retains legacy defaults');
 
     const fresh = path.join(tmpRoot, 'env-seed-proxy-test');
     ensureStudioConfig(fresh, 'socks5://127.0.0.1:7890', {
@@ -542,7 +539,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       assert.equal(kill(unrelatedPid, 0), true, 'unrelated process survives startup');
 
       fs.writeFileSync(pidFile, `${unrelatedPid}\n`);
-      await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /offline fixture/);
+      await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /ECONNREFUSED/);
       assert.equal(fs.existsSync(pidFile), false, 'install also discards the reused PID before attempting download');
       assert.equal(kill(unrelatedPid, 0), true, 'unrelated process survives install');
     } finally {
@@ -552,7 +549,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     }
   });
 
-  it('8. changed binary is never launched when verified recovery is unavailable', async () => {
+  it('8. a user-updated local binary starts unchanged without downloading or rewriting install history', async () => {
     const dataDir = path.join(tmpRoot, 'mutated-binary-test');
     ensureStudioConfig(dataDir);
     const pkgDir = path.join(dataDir, 'package');
@@ -573,34 +570,42 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     // Mutate 1 byte of the binary
     fs.appendFileSync(bin, '# mutated\n');
 
+    const updatedHash = computeFileHash(bin);
     let spawned = false;
-    await assert.rejects(async () => {
-      await ensureStudio({ dataDir, startTimeoutMs: 1000, fetchFn: offlineFetch,
-        spawnFn: () => { spawned = true; throw new Error('must not execute changed binary'); } });
-    }, /offline fixture/);
-    assert.equal(spawned, false);
+    await ensureStudio({ dataDir, startTimeoutMs: 1000,
+      fetchFn: (url, init) => {
+        assert.ok(!url.includes('github.com'), 'restart must not check for updates');
+        return spawned ? adminFetch(() => runningStatus({ total: 0 }))(url, init) : offlineFetch();
+      },
+      spawnFn: file => {
+        spawned = true;
+        assert.equal(computeFileHash(file), updatedHash);
+        return { on() {}, unref() {} };
+      }
+    });
+    assert.equal(spawned, true);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'install-manifest.json'))).binarySha256, manifest.binarySha256);
   });
 
-  it('the official upstream base and older managed builds need this managed build, while the exact managed version is current', async () => {
+  it('older official and historical managed versions remain usable without migration', async () => {
     const { dataDir } = installedStandIn('managed-version-upgrade');
     const local = localStudio({ dataDir });
-    // An earlier plugin's managed build is replaced like an official one, not reported as custom
-    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.18', 'v0.2.19', 'v0.2.20', 'v0.3.0', 'v0.3.1', 'v0.3.2', 'v0.3.3', 'v0.3.4', STUDIO_VERSION.replace(/-magpie\.\d+$/, ''), 'v0.3.4-magpie.1', 'v0.3.3-magpie.1', 'v0.3.2-magpie.1', 'v0.3.0-magpie.1', 'v0.3.0-magpie.2', 'v0.2.19-magpie.1', 'v0.2.19-magpie.2', 'v0.3.1-magpie.1', 'v0.2.18-magpie.1', 'v0.2.18-magpie.2', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.17-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
+    // Authentication and capabilities, rather than a version comparison, govern reuse.
+    for (const version of ['v0.2.12', 'v0.2.14', 'v0.2.15', 'v0.2.16', 'v0.2.17', 'v0.2.18', 'v0.2.19', 'v0.2.20', 'v0.3.0', 'v0.3.1', 'v0.3.2', 'v0.3.3', 'v0.3.4', 'v0.3.5', STUDIO_VERSION.replace(/-magpie\.\d+$/, ''), 'v0.3.4-magpie.1', 'v0.3.3-magpie.1', 'v0.3.2-magpie.1', 'v0.3.0-magpie.1', 'v0.3.0-magpie.2', 'v0.2.19-magpie.1', 'v0.2.19-magpie.2', 'v0.3.1-magpie.1', 'v0.2.18-magpie.1', 'v0.2.18-magpie.2', 'v0.2.16-magpie.1', 'v0.2.16-magpie.2', 'v0.2.17-magpie.1', 'v0.2.17-magpie.2', 'v0.2.13-magpie.1', 'v0.2.14-magpie.1', 'v0.2.15-magpie.9', 'v0.1.99-magpie.3']) {
       const fetchFn = adminFetch(() => ({ ...runningStatus({ total: 0 }), version }));
-      assert.equal((await checkStudioHealth(local, fetchFn)).state, 'outdated');
+      assert.equal((await checkStudioHealth(local, fetchFn)).state, 'up');
     }
     const fetchFn = adminFetch(() => runningStatus({ total: 0 }));
     assert.equal((await checkStudioHealth(local, fetchFn)).state, 'up');
   });
 
-  it('newer or custom admin-updated versions report recovery without stopping or installing', async () => {
+  it('newer or custom admin-updated versions are reused without stopping or installing', async () => {
     const dataDir = path.join(tmpRoot, 'admin-update-conflict');
     ensureStudioConfig(dataDir);
     fs.mkdirSync(path.join(dataDir, 'package'));
     fs.writeFileSync(path.join(dataDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'stand-in');
     let mutations = 0;
-    // This test also runs against candidate manifests: "next" must stay newer than that pin.
+    // Cover official upgrades, rebuilt forks and unknown version formats.
     const [, major, minor, patch, revision] = STUDIO_VERSION.match(/^v(\d+)\.(\d+)\.(\d+)-magpie\.(\d+)$/);
     const nextUpstream = `v${major}.${minor}.${Number(patch) + 1}`;
     const nextManaged = `v${major}.${minor}.${patch}-magpie.${Number(revision) + 1}`;
@@ -610,15 +615,10 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
         return adminFetch(() => ({ ...runningStatus({ total: 0 }), version }))(url, init);
       };
       const status = await studioStatus({ dataDir, fetchFn });
-      assert.equal(status.status, 'version_conflict');
-      assert.match(status.reason, /online updater/);
-      assert.match(status.reason, /studio\.mjs.*install/);
-      for (const action of ['stop', 'install', 'start']) {
-        assert.ok(status.reason.includes(studioCommand(action, { dataDir })));
-      }
-      assert.match(status.reason, /may not read data migrated/);
-      await assert.rejects(ensureStudio({ dataDir, fetchFn, spawnFn: () => { mutations++; } }), /Update magpie-gemini-web/);
-      await assert.rejects(installStudio({ dataDir, fetchFn }), /Update magpie-gemini-web/);
+      assert.equal(status.status, 'running');
+      assert.equal(status.version, version);
+      assert.equal((await ensureStudio({ dataDir, fetchFn, spawnFn: () => { mutations++; } })).port, status.port);
+      await assert.rejects(installStudio({ dataDir, fetchFn }), /while service is running/);
     }
     assert.equal(mutations, 0);
   });
@@ -663,11 +663,11 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       assert.equal(fs.readFileSync(manifest, 'utf8'), manifestBytes);
       child.send('serve');
       const deadline = Date.now() + 10000;
-      while ((await studioStatus({ dataDir })).status !== 'version_conflict') {
+      while ((await studioStatus({ dataDir })).status !== 'running') {
         assert.ok(Date.now() < deadline, 'replacement did not begin listening');
         await new Promise(r => setTimeout(r, 50));
       }
-      await assert.rejects(ensureStudio({ dataDir }), /online updater/);
+      assert.equal((await ensureStudio({ dataDir })).port, localStudio({ dataDir }).port);
       // Exited as stopStudio tells it, by asking the OS (process.kill(pid, 0)). On Windows that
       // answers before this process's loop has taken the child's exit, so exitCode alone can still
       // be null at stopStudio's first request after it, and no reset was made (Windows CI, #28).
@@ -710,7 +710,8 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const run = (...args) => { calls.push(args); return '123\r\n123\r\n456\r\n'; };
     assert.deepEqual(studioProcessPids('/custom dir/package/aistudio2api.exe', 'win32', run), [123, 456]);
     assert.equal(calls[0][2].env.TARGET_BINARY, path.resolve('/custom dir/package/aistudio2api.exe'));
-    assert.match(calls[0][1].at(-1), /Get-CimInstance Win32_Process -Filter "Name='aistudio2api\.exe'"/);
+    assert.match(calls[0][1].at(-1), /Get-CimInstance Win32_Process \| Where-Object/);
+    assert.ok(!calls[0][1].at(-1).includes('aistudio2api.exe'), 'filenames are passed through environment variables, never interpolated into PowerShell');
     assert.match(calls[0][1].at(-1), /ExecutablePath -eq \$env:TARGET_BINARY/);
     assert.equal(calls[0][2].timeout, 20000);
     assert.deepEqual(studioListenerPids(2048, 'win32', run), [123, 456]);
@@ -734,10 +735,11 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     }
   });
 
-  it('package permission hardening failures do not block a healthy service', { skip: process.platform === 'win32' }, async t => {
+  it('unlocking old package permissions is best effort for an already healthy service', { skip: process.platform === 'win32' }, async t => {
     const { dataDir } = installedStandIn('best-effort-protection');
     const pkg = path.join(dataDir, 'package');
     const chmod = fs.chmodSync;
+    chmod(pkg, 0o555);
     let attempts = 0;
     const patch = t.mock.method(fs, 'chmodSync', (file, mode) => {
       if (file === pkg) {
@@ -751,9 +753,9 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       const local = await ensureStudio({ dataDir, fetchFn });
       assert.equal(local.dataDir, dataDir);
       assert.equal(attempts, 1);
-      chmod(pkg, 0o555);
+      chmod(pkg, 0o755);
       await ensureStudio({ dataDir, fetchFn });
-      assert.equal(attempts, 1, 'an already protected package does not need chmod again');
+      assert.equal(attempts, 1, 'an already writable package does not need chmod again');
     } finally { patch.mock.restore(); }
   });
 
@@ -875,7 +877,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(corruptArchive, 'bad-bytes', { mode: 0o600 });
 
     await assert.rejects(async () => {
-      await installStudio({ dataDir, archivePath: corruptArchive, fetchFn: offlineFetch });
+      await installStudio({ dataDir, archivePath: corruptArchive, fetchFn: official.fetchFn });
     }, /SHA256 checksum mismatch/);
 
     assert.equal(computeFileHash(bin), originalHash, 'Previous binary must be preserved');
@@ -1182,7 +1184,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.ok(fs.existsSync(fixtureTarget), 'Source fixture must be unchanged');
   });
 
-  it('17. an earlier install still running is reported outdated, not foreign, and install refuses', async () => {
+  it('17. an earlier install is usable and explicit installation requires it to stop', async () => {
     const dataDir = path.join(tmpRoot, 'outdated-status-test');
     ensureStudioConfig(dataDir);
     const pkgDir = path.join(dataDir, 'package');
@@ -1190,21 +1192,19 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     fs.writeFileSync(path.join(pkgDir, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
     const health = await checkStudioHealth(localStudio({ dataDir }), earlierVersionFetch);
-    assert.equal(health.state, 'outdated');
-    assert.match(health.reason, /v0\.2\.11/);
+    assert.equal(health.state, 'up');
 
     const status = await studioStatus({ dataDir, fetchFn: earlierVersionFetch });
-    assert.equal(status.status, 'outdated');
+    assert.equal(status.status, 'running');
     assert.equal(status.version, 'v0.2.11');
-    assert.equal(status.expected, STUDIO_VERSION);
 
     await assert.rejects(
       installStudio({ dataDir, fetchFn: earlierVersionFetch }),
-      /while v0\.2\.11 from an earlier install is running/
+      /while service is running/
     );
   });
 
-  it('18. ensureStudio stops an earlier install still running and starts the pinned version', async () => {
+  it('18. ensureStudio reuses a running legacy install without changing its PID or credentials', async () => {
     const dataDir = path.join(tmpRoot, 'outdated-replace-test');
     const port = await freePort();
     const pkgDir = path.join(dataDir, 'package');
@@ -1226,44 +1226,29 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     const earlierExit = new Promise(resolve => earlier.on('exit', resolve));
     fs.writeFileSync(path.join(dataDir, 'backend.pid'), `${earlier.pid}\n`, { mode: 0o600 });
 
-    let pinned;
     let spawned = 0;
     try {
       const deadline = Date.now() + 10000;
-      while ((await studioStatus({ dataDir })).status !== 'outdated') {
+      while ((await studioStatus({ dataDir })).status !== 'running') {
         assert.ok(Date.now() < deadline, 'stand-in for the earlier install did not come up');
         await new Promise(r => setTimeout(r, 100));
       }
 
-      const spawnPinned = () => {
-        spawned++;
-        pinned = http.createServer((req, res) => {
-          if (req.url === '/api/auth/login') {
-            res.writeHead(200, { 'Set-Cookie': 'aistudio_admin=p; Path=/', 'Content-Type': 'application/json' });
-            return res.end('{}');
-          }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          if (req.url === '/api/status') {
-            return res.end(JSON.stringify({ version: STUDIO_VERSION, ready: true, running: true, state: 'RUNNING', accounts: { total: 1, ready: 1 } }));
-          }
-          res.end(JSON.stringify({ object: 'list', data: [] }));
-        }).listen(port, '127.0.0.1');
-        return { pid: 999999, on: () => {}, unref: () => {} };
-      };
-
-      const local = await ensureStudio({ dataDir, spawnFn: spawnPinned });
+      const before = fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8');
+      const local = await ensureStudio({ dataDir, spawnFn: () => { spawned++; } });
       assert.equal(local.port, port);
-      assert.equal(spawned, 1, 'the pinned version must be started once');
-      await earlierExit;
+      assert.equal(spawned, 0);
+      assert.equal(earlier.exitCode, null);
+      assert.equal(fs.readFileSync(path.join(dataDir, 'backend.pid'), 'utf8').trim(), String(earlier.pid));
+      assert.equal(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'), before);
       assert.equal((await studioStatus({ dataDir })).status, 'running');
     } finally {
       try { earlier.kill('SIGKILL'); } catch {}
-      pinned?.closeAllConnections?.();
-      if (pinned) await new Promise(r => pinned.close(r));
+      await earlierExit;
     }
   });
 
-  it('19. an earlier install whose process cannot be verified is left running with a clear error', async () => {
+  it('19. authenticated legacy service is reused without a PID; installation still refuses', async () => {
     const dataDir = path.join(tmpRoot, 'outdated-unverified-test');
     ensureStudioConfig(dataDir);
     const pkgDir = path.join(dataDir, 'package');
@@ -1274,10 +1259,8 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     // No backend.pid: nothing says which process to stop
 
     let spawned = false;
-    await assert.rejects(
-      ensureStudio({ dataDir, fetchFn: earlierVersionFetch, spawnFn: () => { spawned = true; return { pid: 1, on: () => {}, unref: () => {} }; } }),
-      /v0\.2\.11 from an earlier install is still running and could not be stopped/
-    );
+    await ensureStudio({ dataDir, fetchFn: earlierVersionFetch, spawnFn: () => { spawned = true; } });
+    await assert.rejects(installStudio({ dataDir, fetchFn: earlierVersionFetch }), /while service is running/);
     assert.equal(spawned, false, 'nothing may be started while the earlier install holds the port');
   });
 
@@ -1407,24 +1390,28 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
 
   it('25. a download goes through the proxy saved in .env', { skip: process.platform === 'win32' }, async () => {
     const dataDir = path.join(tmpRoot, 'saved-proxy-test');
-    ensureStudioConfig(dataDir, 'http://127.0.0.1:1082');
+    ensureStudioConfig(dataDir, 'http://127.0.0.1:1082', { port: await freePort() });
 
     // A curl that records its arguments and fails like a refused download
     const fakeBin = path.join(tmpRoot, 'fake-curl-bin');
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, 'curl'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$CURL_ARGS"\necho "curl: (7) Failed to connect to 127.0.0.1 port 1082" >&2\nexit 7\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(fakeBin, 'curl'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$CURL_ARGS"\nfor arg do case "$arg" in https://api.github.com/*) cp "$CURL_ARGS" "$CURL_ARGS.api"; cat "$CURL_RELEASE"; exit 0;; esac; done\necho "curl: (7) Failed to connect to 127.0.0.1 port 1082" >&2\nexit 7\n', { mode: 0o755 });
     const argsFile = path.join(tmpRoot, 'curl-args.txt');
     const curlArgs = () => fs.readFileSync(argsFile, 'utf8').split('\n');
 
-    const saved = { PATH: process.env.PATH, AI_STUDIO_PROXY: process.env.AI_STUDIO_PROXY, CURL_ARGS: process.env.CURL_ARGS };
+    const saved = { PATH: process.env.PATH, AI_STUDIO_PROXY: process.env.AI_STUDIO_PROXY, CURL_ARGS: process.env.CURL_ARGS, CURL_RELEASE: process.env.CURL_RELEASE };
     try {
       process.env.PATH = `${fakeBin}${path.delimiter}${process.env.PATH}`;
       delete process.env.AI_STUDIO_PROXY;
       process.env.CURL_ARGS = argsFile;
+      process.env.CURL_RELEASE = path.join(tmpRoot, 'curl-release.json');
+      fs.writeFileSync(process.env.CURL_RELEASE, JSON.stringify(official.release));
 
       // The error says why curl failed
       await assert.rejects(installStudio({ dataDir }), /via curl \(status: 7\): curl: \(7\) Failed to connect to 127\.0\.0\.1 port 1082/);
       assert.equal(curlArgs()[curlArgs().indexOf('--proxy') + 1], 'http://127.0.0.1:1082');
+      const metadataArgs = fs.readFileSync(`${argsFile}.api`, 'utf8').split('\n');
+      assert.equal(metadataArgs[metadataArgs.indexOf('--proxy') + 1], 'http://127.0.0.1:1082');
 
       // An explicit empty proxy turns it off
       await assert.rejects(installStudio({ dataDir, proxy: '' }), /via curl/);
@@ -1516,7 +1503,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
         if (!spawned) throw Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
         return adminFetch(() => runningStatus({ total: 0, ready: 0, busy: 0, cooldown: 0, auth_required: 0 }))(url);
       };
-      const local = await ensureStudio({ dataDir, fetchFn, preferredPort: busy, spawnFn: () => { spawned++; return { pid: 1, on: () => {}, unref: () => {} }; } });
+      const local = await ensureStudio({ dataDir, fetchFn, preferredPort: busy, spawnFn: () => { spawned++; return { on: () => {}, unref: () => {} }; } });
       assert.ok(fs.existsSync(bin));
       assert.notEqual(local.port, busy);
       assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8')).port, local.port);
@@ -1534,7 +1521,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       fs.writeFileSync(envPath, fs.readFileSync(envPath, 'utf8').replace(/PREVIEW_LISTEN_ADDR=.*/, `PREVIEW_LISTEN_ADDR=127.0.0.1:${busy}`));
       fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(config) + '\n', { mode: 0o600 });
       spawned = 0;
-      await ensureStudio({ dataDir, fetchFn, spawnFn: () => { spawned++; return { pid: 1, on: () => {}, unref: () => {} }; } });
+      await ensureStudio({ dataDir, fetchFn, spawnFn: () => { spawned++; return { on: () => {}, unref: () => {} }; } });
       assert.notEqual(readStudioEnv(dataDir).PREVIEW_LISTEN_ADDR, `127.0.0.1:${busy}`);
       assert.notEqual(readStudioEnv(dataDir).PREVIEW_LISTEN_ADDR, `127.0.0.1:${config.port}`);
     } finally {
@@ -1580,23 +1567,18 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     await assert.rejects(ensureStudio({ dataDir, fetchFn: signedOut }), err => err.message.includes('用 Google 账号登录（推荐）') && err.message.includes(studioCommand('relogin', { dataDir })));
   });
 
-  // The release archive this machine installed, if any, to install again from without a download.
-  const pin = PINNED_ARCHIVES[`${process.platform}-${process.arch}`];
-  const realArchive = pin && (process.env.AI_STUDIO_TEST_ARCHIVE || path.join(studioDataDir(), pin.asset));
-  const haveRealArchive = Boolean(realArchive && fs.existsSync(realArchive) && computeFileHash(realArchive) === pin.sha256);
-
   it('30. an install takes the archive an earlier one kept only when it checks out', async () => {
     const dataDir = path.join(tmpRoot, 'kept-archive-test');
     ensureStudioConfig(dataDir, '');
     // A damaged copy is downloaded again (here: offline, so the install fails saying so)
-    fs.writeFileSync(path.join(dataDir, pin.asset), 'damaged', { mode: 0o600 });
-    await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /offline fixture/);
+    fs.writeFileSync(path.join(dataDir, official.name), 'damaged', { mode: 0o600 });
+    await assert.rejects(installStudio({ dataDir, fetchFn: url => url.includes('api.github.com') ? official.fetchFn(url) : offlineFetch() }), /offline fixture/);
   });
 
-  it('30c. a sign-in\'s progress page answers while the archive unpacks', { skip: process.platform === 'win32' || !haveRealArchive }, async () => {
+  it('30c. a sign-in\'s progress page answers while the archive unpacks', { skip: process.platform === 'win32' }, async () => {
     const dataDir = path.join(tmpRoot, 'unpack-progress-test');
     ensureStudioConfig(dataDir, '');
-    fs.copyFileSync(realArchive, path.join(dataDir, pin.asset));
+    fs.copyFileSync(official.archive, path.join(dataDir, official.name));
     // A tar that says when it starts to unpack, and takes a second
     const realTar = execFileSync('sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
     const slowBin = path.join(tmpRoot, 'slow-tar-bin');
@@ -1608,7 +1590,7 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     try {
       process.env.PATH = `${slowBin}${path.delimiter}${savedPath}`;
       let installed = false;
-      const install = installStudio({ dataDir, fetchFn: offlineFetch }).finally(() => { installed = true; });
+      const install = installStudio({ dataDir, fetchFn: official.fetchFn }).finally(() => { installed = true; });
       while (!installed && !fs.existsSync(unpacking)) await new Promise(r => setTimeout(r, 20));
       const status = await (await fetch(`${page.url}/status`)).json();
       assert.equal(installed, false, 'the page answered while the archive unpacked');
@@ -1620,35 +1602,37 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     }
   });
 
-  it('30b. a kept archive installs offline, and older versions\' archives are removed', { skip: process.platform === 'win32' || !haveRealArchive }, async t => {
+  it('30b. a verified official archive is reused; updates persist and explicit installs roll back safely', { skip: process.platform === 'win32' }, async t => {
     const dataDir = path.join(tmpRoot, 'kept-archive-ok-test');
     ensureStudioConfig(dataDir, '');
-    fs.copyFileSync(realArchive, path.join(dataDir, pin.asset));
-    const older = pin.asset.replace(`v${STUDIO_VERSION.slice(1)}`, 'v0.2.11');
+    fs.copyFileSync(official.archive, path.join(dataDir, official.name));
+    const older = official.name.replace('v0.3.7', 'v0.2.11');
     fs.writeFileSync(path.join(dataDir, older), 'old');
     fs.writeFileSync(path.join(dataDir, 'notes.tar.gz'), 'not ours');
-    // Offline: only the kept archive can install it
-    const local = await installStudio({ dataDir, fetchFn: offlineFetch });
+    // Metadata is resolved, but the verified local archive avoids a second asset download
+    const local = await installStudio({ dataDir, fetchFn: official.fetchFn });
     assert.ok(local && fs.existsSync(path.join(dataDir, 'package')));
-    assert.ok(fs.existsSync(path.join(dataDir, pin.asset)));
+    assert.ok(fs.existsSync(path.join(dataDir, official.name)));
     assert.equal(fs.existsSync(path.join(dataDir, older)), false);
     assert.ok(fs.existsSync(path.join(dataDir, 'notes.tar.gz')));
 
-    // Simulate a stopped admin-updated executable. Recovery must reinstall from the
-    // verified archive, preserving accounts/config and refusing to execute changed bytes.
+    // Simulate an upstream update. Normal startup preserves it and the installation history.
     const bin = path.join(dataDir, 'package', 'aistudio2api');
     const verifiedHash = computeFileHash(bin);
     const configBefore = fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8');
     fs.mkdirSync(path.join(dataDir, 'auth'), { recursive: true });
     fs.writeFileSync(path.join(dataDir, 'auth', 'sentinel'), 'account data');
     fs.appendFileSync(bin, '\nchanged by updater');
+    const updatedHash = computeFileHash(bin);
+    fs.chmodSync(path.join(dataDir, 'package'), 0o555); // old plugin permissions
     let spawned = false;
     const fetchFn = async (url, init) => {
+      assert.ok(!url.includes('github.com'));
       if (!spawned) return offlineFetch();
       return adminFetch(() => runningStatus({ total: 0 }))(url, init);
     };
     await ensureStudio({ dataDir, fetchFn, spawnFn: file => {
-      assert.equal(computeFileHash(file), verifiedHash);
+      assert.equal(computeFileHash(file), updatedHash);
       spawned = true;
       return { on() {}, unref() {} };
     } });
@@ -1656,11 +1640,11 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'), configBefore);
     assert.equal(fs.readFileSync(path.join(dataDir, 'auth', 'sentinel'), 'utf8'), 'account data');
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'install-manifest.json'))).binarySha256, verifiedHash);
-    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
-    assert.throws(() => fs.writeFileSync(path.join(dataDir, 'package', '.aistudio2api.new'), 'update'), /EACCES|EPERM/);
+    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o755);
+    fs.writeFileSync(path.join(dataDir, 'package', '.aistudio2api.new'), 'upstream updater can write here');
     // An explicit install can replace a protected package and remove its backup.
-    await installStudio({ dataDir, fetchFn: offlineFetch });
-    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
+    await installStudio({ dataDir, fetchFn: official.fetchFn });
+    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o755);
     assert.equal(fs.readdirSync(dataDir).some(n => n.startsWith('.package.backup.')), false);
 
     // Failure after swapping must restore the previous protected directory and manifest.
@@ -1675,18 +1659,18 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
       return chmod(file, mode);
     });
     try {
-      await assert.rejects(installStudio({ dataDir, fetchFn: offlineFetch }), /simulated manifest permission failure/);
+      await assert.rejects(installStudio({ dataDir, fetchFn: official.fetchFn }), /simulated manifest permission failure/);
     } finally { patch.mock.restore(); }
     assert.equal(computeFileHash(bin), verifiedHash);
     assert.equal(fs.readFileSync(path.join(dataDir, 'install-manifest.json'), 'utf8'), previousManifest);
-    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o555);
+    assert.equal(fs.statSync(path.join(dataDir, 'package')).mode & 0o777, 0o755);
     assert.equal(fs.readdirSync(dataDir).some(n => n.startsWith('.package.backup.')), false);
   });
 
   it('31. the service is started with no proxy of its starter\'s, and empty ones the plugin host keeps', async t => {
     const { dataDir } = installedStandIn('proxy-env-test');
     // What Magpie's plugin host or a shell may have
-    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', FIRST_EVENT_HEDGE: '1', FIRST_EVENT_HEDGE_MODELS: 'gemini-3.8-flash', API_KEY_ACCOUNTS: 'host-key:host@example.com', ACCOUNT_ORDER: 'host@example.com', MODEL_ACCOUNTS: 'gemini-3.1-pro-preview:host@example.com', SEARCH_MODEL_ALIASES: 'true', STRIP_THOUGHT_SIGNATURES: 'true', HIDE_DOCK_ICON: 'true', AI_STUDIO_PROXY: undefined })) {
+    for (const [k, v] of Object.entries({ HTTPS_PROXY: 'http://127.0.0.1:9393', https_proxy: 'http://127.0.0.1:9393', ALL_PROXY: 'socks5://127.0.0.1:9394', FIRST_EVENT_HEDGE: '1', FIRST_EVENT_HEDGE_MODELS: 'gemini-3.8-flash', API_KEY_ACCOUNTS: 'host-key:host@example.com', ACCOUNT_ORDER: 'host@example.com', MAX_ACCOUNT_SWITCHES: '9', DISCOVER_HIDDEN_MODELS: 'true', MODEL_ACCOUNTS: 'gemini-3.1-pro-preview:host@example.com', SEARCH_MODEL_ALIASES: 'true', STRIP_THOUGHT_SIGNATURES: 'true', HIDE_DOCK_ICON: 'true', AI_STUDIO_PROXY: undefined })) {
       const saved = process.env[k];
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -1710,6 +1694,8 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.equal('FIRST_EVENT_HEDGE_MODELS' in env, false);
     assert.equal('API_KEY_ACCOUNTS' in env, false);
     assert.equal('ACCOUNT_ORDER' in env, false);
+    assert.equal('MAX_ACCOUNT_SWITCHES' in env, false);
+    assert.equal('DISCOVER_HIDDEN_MODELS' in env, false);
     assert.equal('MODEL_ACCOUNTS' in env, false);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'backend.launch.json'), 'utf8')).proxyEnv, 'none');
 
@@ -1745,38 +1731,44 @@ describe('Sign-in progress sources', () => {
     assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: false, received: 0, total: 0, unpacking: false });
 
     fs.mkdirSync(runtime, { recursive: true });
-    const part = path.join(runtime, 'camoufox-152.0.4-beta.29-lin.x86_64.zip.part');
+    const part = path.join(runtime, `camoufox-${CAMOUFOX_VERSION}-lin.x86_64.zip.part`);
     fs.writeFileSync(part, Buffer.alloc(3 * 1048576 + 5));
     assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: false, received: 3 * 1048576 + 5, total: 0, unpacking: false });
     // The size comes from the service's log, the last download's
     fs.writeFileSync(path.join(data, 'backend.log'), [
       JSON.stringify({ level: 'INFO', msg: 'Camoufox 下载已开始', size_mib: 1, resume_mib: 0 }),
-      JSON.stringify({ level: 'INFO', msg: '正在下载 Camoufox', version: '152.0.4-beta.29' }),
+      JSON.stringify({ level: 'INFO', msg: '正在下载 Camoufox', version: CAMOUFOX_VERSION }),
       JSON.stringify({ level: 'INFO', msg: 'Camoufox 下载已开始', size_mib: 300, resume_mib: 0 }),
       'not json',
       ''
     ].join('\n'));
     assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: false, received: 3 * 1048576 + 5, total: 300 * 1048576, unpacking: false });
+    // Official builds can emit English logs. A different component's size is unrelated.
+    fs.appendFileSync(path.join(data, 'backend.log'), [
+      JSON.stringify({ level: 'INFO', msg: 'Camoufox download started', size_mib: 301, resume_mib: 0 }),
+      JSON.stringify({ level: 'INFO', msg: 'SpiderMonkey download started', size_mib: 10 })
+    ].join('\n') + '\n');
+    assert.equal(camoufoxState(data, 'linux', {}).total, 301 * 1048576);
     // which it rounds down to a MiB: the bytes received past it are the size
-    fs.writeFileSync(part, Buffer.alloc(300 * 1048576 + 7));
-    assert.equal(camoufoxState(data, 'linux', {}).total, 300 * 1048576 + 7);
+    fs.writeFileSync(part, Buffer.alloc(301 * 1048576 + 7));
+    assert.equal(camoufoxState(data, 'linux', {}).total, 301 * 1048576 + 7);
 
     fs.mkdirSync(path.join(runtime, '.camoufox-stage-123'));
     assert.equal(camoufoxState(data, 'linux', {}).unpacking, true);
   });
 
-  it('takes Camoufox as ready only at the version the service pins, as the service does', () => {
+  it('reports installed browser files while letting each backend select its own version', () => {
     const data = path.join(dir, 'versions');
     const folder = path.join(data, 'runtime', 'camoufox');
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, 'camoufox-bin'), '');
     const ini = path.join(folder, 'application.ini');
-    // No version to read, or an older one: the service downloads it again
-    assert.equal(camoufoxState(data, 'linux', {}).ready, false, 'no application.ini');
+    // The plugin has no pinned browser version; upstream performs its own validation.
+    assert.equal(camoufoxState(data, 'linux', {}).ready, true, 'no application.ini');
     fs.writeFileSync(ini, '[App]\nName=Camoufox\n');
-    assert.equal(camoufoxState(data, 'linux', {}).ready, false, 'no Version in it');
+    assert.equal(camoufoxState(data, 'linux', {}).ready, true, 'no Version in it');
     fs.writeFileSync(ini, '[App]\nVersion=135.0.1-beta.24\n');
-    assert.equal(camoufoxState(data, 'linux', {}).ready, false, 'an older version');
+    assert.equal(camoufoxState(data, 'linux', {}).ready, true, 'an older version');
     fs.writeFileSync(ini, `[App]\r\nName=Camoufox\r\nVersion=${CAMOUFOX_VERSION}\r\n`);
     assert.deepEqual(camoufoxState(data, 'linux', {}), { ready: true });
     assert.equal(camoufoxState(data, 'win32', {}).ready, false, 'each platform has its own executable');
