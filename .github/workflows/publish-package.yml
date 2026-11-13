@@ -19,6 +19,9 @@ permissions:
 jobs:
   release-commit:
     runs-on: ubuntu-24.04
+    # GitHub only exposes draft releases to tokens with push access.
+    permissions:
+      contents: write
     outputs:
       sha: ${{ steps.release.outputs.sha }}
     steps:
