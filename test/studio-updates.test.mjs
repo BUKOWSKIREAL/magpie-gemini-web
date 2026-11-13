@@ -219,18 +219,27 @@ describe('Automatic official backend updates', () => {
     } finally { fs.readFileSync = read; }
   });
 
-  it('respects another plugin host and removes its abandoned leases after exit', { timeout: 30000 }, async t => {
+  it('respects another host in a different timezone and removes its abandoned leases', { timeout: 30000 }, async t => {
     const f = fixture(t);
     f.status.version = 'v0.3.7';
     const script = path.join(f.dataDir, 'holder.mjs');
     fs.writeFileSync(script, `import { acquireStudioUse } from ${JSON.stringify(new URL('../lib/studio-updates.mjs', import.meta.url).href)};\nawait acquireStudioUse({ dataDir: process.argv[2] });\nconsole.log('held');\nsetInterval(() => {}, 1000);\n`);
-    const child = spawn(process.execPath, [script, f.dataDir], { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
+    const zone = process.env.TZ;
+    const child = spawn(process.execPath, [script, f.dataDir], {
+      stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true, env: { ...process.env, TZ: 'Asia/Shanghai' }
+    });
     const exit = once(child, 'exit');
     try {
       const [ready] = await once(child.stdout, 'data', { signal: AbortSignal.timeout(15000) });
       assert.match(String(ready), /held/);
+      process.env.TZ = 'UTC';
       assert.equal((await f.run()).state, 'busy');
-    } finally { child.kill(); await exit; }
+    } finally {
+      if (zone === undefined) delete process.env.TZ;
+      else process.env.TZ = zone;
+      child.kill();
+      await exit;
+    }
     assert.equal((await f.run()).state, 'current');
     assert.equal(fs.readdirSync(f.dataDir).filter(n => n.startsWith('.studio-use.')).length, 0);
   });
