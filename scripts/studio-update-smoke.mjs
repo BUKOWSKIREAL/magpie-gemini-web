@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { removeSmokeData } from './studio-lifecycle-smoke.mjs';
 import { ensureStudio, studioAdmin, stopStudio, studioStatus, localStudio, computeFileHash, nodeFetch } from '../lib/studio-native.mjs';
 
 const from = process.argv[2] || 'v0.3.6';
@@ -68,6 +69,6 @@ try {
   await watching;
   const local = localStudio({ dataDir });
   const stopped = !local || (await stopStudio({ dataDir }).catch(() => ({ stopped: false }))).stopped;
-  if (stopped) fs.rmSync(dataDir, { recursive: true, force: true });
+  if (stopped) await removeSmokeData(dataDir);
   else { console.error('Backend exit not confirmed; kept ' + dataDir); process.exitCode = 1; }
 }

@@ -55,8 +55,8 @@ export async function smokeStudioLifecycle(source) {
       const next = path.join(path.dirname(bin), '.' + path.basename(bin) + '.new');
       fs.copyFileSync(bin, next);
       fs.chmodSync(next, 0o755);
-      fs.renameSync(bin, old);
-      fs.renameSync(next, bin);
+      await renameProbe(bin, old);
+      await renameProbe(next, bin);
       if (process.platform !== 'win32') fs.rmSync(old);
       if (process.platform === 'darwin') console.log('Live official image after replacement: ' + execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8' }).trim());
       assert.equal(verifyProcessIdentity(pid, bin), true, mode + ' replaced image identity');
@@ -104,9 +104,9 @@ export async function smokeStudioLifecycle(source) {
       }
       // Also stop while the updater has moved the old image but not placed the new file yet.
       fs.rmSync(old, { force: true });
-      fs.renameSync(bin, old);
+      await renameProbe(bin, old);
       assert.deepEqual(await stopStudio({ dataDir }), { stopped: true });
-      fs.renameSync(old, bin);
+      await renameProbe(old, bin);
       active = undefined;
       console.log('PASS official ' + mode + ': effective absolute account directory, live image replacement, HTTP-down checks with/without PID, verified stop and restart');
     }
@@ -114,6 +114,17 @@ export async function smokeStudioLifecycle(source) {
     const stopped = !active || (await stopStudio({ dataDir: active }).catch(() => ({ stopped: false }))).stopped;
     if (stopped) await removeSmokeData(root);
     else { console.error('Process exit not confirmed; kept ' + root); process.exitCode = 1; }
+  }
+}
+
+async function renameProbe(from, to) {
+  const deadline = Date.now() + 12000;
+  for (;;) {
+    try { await fs.promises.rename(from, to); return; }
+    catch (err) {
+      if (process.platform !== 'win32' || !['EPERM', 'EBUSY'].includes(err.code) || Date.now() >= deadline) throw err;
+      await sleep(250);
+    }
   }
 }
 

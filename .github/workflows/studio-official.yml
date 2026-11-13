@@ -61,7 +61,7 @@ jobs:
           fi
       - name: Check connection pages in the Magpie plugin runtime
         run: bun test test/studio-connect*.test.mjs --timeout 15000
-      - name: Pack and verify the actual installed package against the official CLI
+      - name: Pack and verify the actual installed package against the official backend
         run: |
           PACKAGE_DIR="$(mktemp -d)"
           npm pack --pack-destination "$PACKAGE_DIR" --json > "$PACKAGE_DIR/pack.json"
@@ -76,6 +76,8 @@ jobs:
           await import(pathToFileURL(path.join(root, 'package/index.mjs')));
           execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-official-smoke.mjs')], { stdio: 'inherit' });
           execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-update-smoke.mjs')], { stdio: 'inherit' });
+          execFileSync(process.execPath, [path.join(root, 'package/scripts/studio-auto-update-smoke.mjs')], { stdio: 'inherit' });
           execFileSync('bun', [path.join(root, 'package/scripts/studio-official-smoke.mjs')], { stdio: 'inherit' });
           execFileSync('bun', [path.join(root, 'package/scripts/studio-update-smoke.mjs')], { stdio: 'inherit' });
+          execFileSync('bun', [path.join(root, 'package/scripts/studio-auto-update-smoke.mjs')], { stdio: 'inherit' });
           JS

@@ -21,13 +21,13 @@
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 自动安装官方后端，导入账号后确认连接 | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API（首次自动安装官方版，后续自行更新） | gemini-web2api-go (`4.28.0-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.28.0-magpie.1` 优化版) |
 
 ---
 
 ## 快速开始
 
-在 Magpie 插件市场安装 **magpie-gemini-web** 后，按需登录以下任一（或两个）Provider。默认由插件下载对应后端、校验 SHA-256 并在后台自启，无需安装 Go 或其它依赖。AI Studio 后续版本由你决定，也可指定自己的程序或连接独立服务。
+在 Magpie 插件市场安装 **magpie-gemini-web** 后，按需登录以下任一（或两个）Provider。默认由插件下载对应后端、校验 SHA-256 并在后台自启，无需安装 Go 或其它依赖。AI Studio 默认自动跟随官方最新稳定版，也可关闭自动更新、指定自己的程序或连接独立服务。
 
 ### 方式一：Google AI Studio (`ai-studio`)
 
@@ -38,15 +38,17 @@
 
 已有账号提示登录过期时，在 Magpie 中选择该账号，再按连接页指引到管理页点击原账号的「重新登录」，完成后返回确认。
 
-以后启动直接复用已安装的程序，**后端更新由你决定**：可在官方管理页更新，也可停止服务后替换程序。插件升级不强制升级、降级或恢复旧版后端。默认程序位于 AI Studio 数据目录的 `package/aistudio2api`（Windows 为 `package/aistudio2api.exe`）。
+以后启动先复用已安装的程序。**默认自动跟随官方最新稳定版**：Magpie 运行期间在后台检查更新，成功检查后缓存一小时；下载校验完成后，等待生成请求（包括流式响应）、账号登录和浏览器准备结束，再更新并重启。账号、端口、凭据和设置保留，无需等待插件发布新版。检查或下载失败时继续使用旧版；新程序启动失败时尝试回滚，并暂停重试该发行包。
+
+需要自行决定版本时，运行 `npm run studio:updates -- manual`；恢复自动更新用 `npm run studio:updates -- auto`。高级路径和独立服务始终由用户管理。
 
 浏览器登录需要下载 Camoufox（v0.3.7 约 1.3 GB）；Chrome / Cookie 导入可直接使用已有登录状态。Magpie 的单次连接等待上限为 10 分钟。网络较慢时，可先在已打开的官方账号管理页完成下载和登录；该页的后台任务不会因 Magpie 连接超时而取消，准备完成后再回到 Magpie 发起连接并选择已有账号。也可先在插件目录运行 `npm run studio:prepare-browser`，把浏览器下载放在登录计时之外；命令最多等待一小时，退出命令不会停止后端下载。连不上 GitHub 时先设置 `studio.proxy` 或 `AI_STUDIO_PROXY`。**「直接打开 Google 登录窗口」**仍可用于独立浏览器登录。已有后端若提供 Magpie 任务关联能力，仍可自动完成账号连接。
 
-自动安装支持 macOS / Linux 的 x64、arm64 和 Windows x64。Windows arm64 尚无官方原生 CLI 包，请用高级路径选择系统可以运行的兼容程序（例如 x64 程序），或连接独立后端；插件会在查询下载前提示。
+自动安装支持 macOS / Linux 的 x64、arm64 和 Windows x64。macOS / Linux 使用官方 CLI 包；Windows 官方包是桌面可执行文件，默认放在数据目录根部，与 `.env` 和 `runtime/` 相邻，以保留其设置。Windows arm64 尚无官方原生包，请用高级路径选择系统可以运行的兼容程序（例如 x64 程序），或连接独立后端；插件会在查询下载前提示。
 
 **已有安装与版本选择：**
 
-- 已有账号、端口、连接凭据和 Magpie 卡片继续使用。旧 `-magpie` 构建可继续运行，但其自身的在线更新限制仍在。要换成官方版，先退出 Magpie，在插件目录执行以下命令，再重新打开 Magpie：
+- 已有账号、端口、连接凭据和 Magpie 卡片继续使用。默认目录的旧 `-magpie` 构建也可由插件自动迁移到较新的官方稳定版；其内置更新限制无需用户解除。若旧版缺少用于确认空闲的管理接口，插件会暂缓自动更新。需要立即手动切换时，先退出 Magpie，在插件目录执行以下命令，再重新打开 Magpie：
 
   ```bash
   npm run studio:stop
@@ -54,8 +56,8 @@
   npm run studio:start
   ```
 
-- 指定官方版本：停止后执行 `npm run studio:install -- --version v0.3.7`。显式安装会校验 GitHub 提供的安装包 SHA-256；正常启动不查询版本或校验旧安装哈希。降级前应备份整个数据目录，因为旧版未必能读取新版迁移的数据。
-- **高级选项**：已有自己的程序时，可选「指定 AIStudio2API 程序路径（高级）」或运行 `npm run studio:use -- "/完整路径/aistudio2api"`。使用 [官方 CLI 安装包](https://github.com/Mag1cFall/AIStudio2API/releases) 解压后的程序，放在插件和 AI Studio 数据目录之外；切换前停止原服务。缺失的自备程序会明确报错，不会被重新下载覆盖。`studio:use-default` 可切回默认安装目录，已有程序继续复用，尚无程序时自动下载官方版。
+- 指定官方版本：停止后执行 `npm run studio:install -- --version v0.3.7`。这会校验官方 SHA-256 并切换为手动更新，保留你的版本选择；需要再次跟随最新版时运行 `npm run studio:updates -- auto`。不会按历史安装哈希恢复文件，也不会自动降级已运行的较新版本。降级前应备份整个数据目录，因为旧版未必能读取新版迁移的数据。
+- **高级选项**：已有自己的程序时，可选「指定 AIStudio2API 程序路径（高级）」或运行 `npm run studio:use -- "/完整路径/aistudio2api"`。使用 [官方安装包](https://github.com/Mag1cFall/AIStudio2API/releases) 解压后的程序，放在插件和 AI Studio 数据目录之外；切换前停止原服务。缺失的自备程序会明确报错，不会被重新下载覆盖。`studio:use-default` 可切回默认安装目录，已有程序继续复用，尚无程序时自动下载官方版。
 - 已有 `config.json` 的安装首次迁移时，仅补齐缺失的旧设置：`SEARCH_MODEL_ALIASES=false`、每账号并发／预热 Worker／最大 Worker／启动预热并发均为 `1`、`ROUTING_STRATEGY=fill-first`、`REQUEST_TIMEOUT=30m`，并保留原有关闭备用请求等默认行为；显式值和未知配置键原样保留。迁移只执行一次，之后管理页保存的选择（包括由上游省略的默认值）不会被重新补写。
 - 新安装沿用官方默认值。v0.3.7 默认开启搜索模型别名、每账号并发为 2、预热 10／最大 20 个 Worker、使用 round-robin；生成后端当前默认为 SpiderMonkey。以后选用的版本若改变 `WAA_BACKEND` 默认值，生成也可能需要 Camoufox 等浏览器组件；可在管理页明确指定设置。
 - 插件维护本地连接和账号访问，其余设置由后端管理页控制，包括新版新增的配置项。卸载或 `studio:clean` 会清理默认目录中下载的程序、保留账号与配置；选择自备路径时会保留该进程、程序和整个数据目录，停止请使用 `studio:stop`。
@@ -189,6 +191,8 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `npm run studio:install -- [--version v0.3.7]` | 停止服务后安装官方最新版或指定版本，保留账号与配置 |
 | `npm run studio:install -- --version v0.3.7 --archive <文件>` | 从本地官方包安装，仍从 GitHub 查询该版本的校验值 |
 | `npm run studio:official:smoke` | 在临时目录验证官方安装、账号目录、连接及运行中替换，不使用真实 Google 凭据 |
+| `npm run studio:updates -- auto` / `manual` | 开启或关闭默认官方后端的自动更新；不带参数查看策略 |
+| `npm run studio:auto-update:smoke` | 在临时目录验证后台自动升级、保留数据和启动失败后的程序回滚 |
 | `npm run studio:update:smoke -- v0.3.6` | 在临时目录将旧官方版实际在线升级到最新版，验证进程与重启 |
 | `node scripts/studio.mjs import <目录>` | 在服务停止状态下导入已有账号 |
 | `npm run studio:smoke` | 发起真实请求验收（会消耗账号额度） |
@@ -210,11 +214,11 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - Gemini Web 每个登录同时最多 2 个请求（AI Studio 为 1），可在 Magpie 的 provider 设置里调整。这是 Magpie 每张卡片的并发限制，后端 Worker 数由上述迁移规则或管理页设置决定；仍无法完全排除 Google 账号风控风险，请自行评估使用。
 
 **AI Studio 升级与模型范围：**
-- 首次安装来自官方最新稳定版，支持 macOS / Linux x64、arm64 与 Windows x64。下载前读取官方发布元数据，只接受对应平台的 CLI 包及其 SHA-256；更新由用户主动执行，插件发布不再依赖定制后端构建或固定发行哈希。
+- 安装和自动更新来自官方最新稳定版，支持 macOS / Linux x64、arm64 与 Windows x64。读取官方发布元数据，只接受对应平台的安装包及 SHA-256；插件发布不依赖定制后端构建或固定发行哈希。
 - 连接 0.3.7 时，`MAX_ACCOUNT_SWITCHES`、`DISCOVER_HIDDEN_MODELS`、账号顺序、模型账号绑定及其他合法 `.env` 键会保留。已有显式设置继续生效，未设置项使用后端默认值；插件不再补入固定的并发、备用请求或生成后端设置。
-- 旧托管构建继续使用原账号与数据；其编译时的在线更新限制需通过显式安装官方版解除。默认 `package/` 会尝试恢复用户写权限，便于官方更新器替换程序。历史构建和 0.3.7 候选补丁保留在 [docs/studio-release.md](docs/studio-release.md)，不参与默认安装。
+- 默认程序为数据目录中的 `package/aistudio2api`，Windows 为根部的 `aistudio2api.exe`。旧托管构建的账号和数据继续保留，自动更新可将其替换为官方包。历史构建和 0.3.7 候选补丁保留在 [docs/studio-release.md](docs/studio-release.md)，不参与默认安装和更新决策。
 - 停止时会发现更新后的 PID 并核对程序身份；自备路径还核对账号目录参数，以区分共用同一程序的实例。无法核实身份就不会发送终止信号；HTTP 已关闭但仍有进程运行时，禁止安装替换或重复启动。
-- 默认目录的程序仅在缺失时自动安装，自备路径缺失时明确报错。升级或降级不会主动删除账号和运行数据，但后端自己的迁移规则可能变化；操作前应备份整个数据目录，包括 `auth/`、`runtime/requests.db` 等。
+- 默认目录缺少程序时自动安装；已有程序在后台按空闲状态更新。自备路径缺失时明确报错。程序回滚不会撤销后端自身的数据迁移；手动降级前应备份整个数据目录，包括 `auth/`、`runtime/requests.db` 等。
 - 插件默认单次响应等待／流空闲超时为 30 分钟，可用 `studio.requestTimeoutMs` 调整；后端的请求期限与并发数由其默认值或管理页设置决定。较短期限可能中断长回复，上游自动续写期限按所选版本的规则计算。
 - 已核对本机 Magpie `v0.1.1285`（`d783df46`）源码：插件请求走 `Provider.Do → plugin.Fetch → loader.fetch`，绕过普通 HTTP transport 的 10 分钟响应头限制；此插件生成路径没有发现更短的固定总超时。网关 5 分钟 `IdleTimeout` 仅针对请求之间的空闲连接。客户端或反向代理仍可设置更短期限；这不是一次实等 30 分钟的端到端验证。
 - 支持 Deep Research 模型（`deep-research-preview-04-2026`、`deep-research-max-preview-04-2026`）：需要登录 Google AI Pro / Ultra 账号才会在列表中出现；由后端将异步 Interactions 任务适配到 `/v1/chat/completions` 流式返回（含思考过程与服务端内置联网搜索），不支持客户端 `tool_call`（Function Calling）或 `temperature`。

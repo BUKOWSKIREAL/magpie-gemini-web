@@ -1265,7 +1265,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       assert.equal(loader.apiKey, 'managed-key');
       const usage = await plugin.auth.usage(async () => auth);
       assert.equal(usage.signIn, 'kept');
-      assert.match(usage.windows.find(w => w.name === '后端管理')?.display, /版本与更新由你管理/);
+      assert.match(usage.windows.find(w => w.name === '后端管理')?.display, custom ? /版本与更新由你管理/ : /自动跟随官方最新稳定版/);
       for (const secret of [localStudio().binaryPath, localStudio().dataDir, 'config.json', 'adminPassword']) assert.ok(!JSON.stringify(usage.windows).includes(JSON.stringify(secret).slice(1, -1)));
       assert.equal(fs.readFileSync(binary, 'utf8'), 'user-owned backend');
     } finally {

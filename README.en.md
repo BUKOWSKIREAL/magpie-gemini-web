@@ -21,32 +21,34 @@ The plugin provides two independent providers that can be used individually or t
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Automatic official installation; confirm an imported account | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (automatic official installation; user-controlled updates) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (automatic installation and stable updates) | gemini-web2api-go (`4.28.0-magpie.1` optimized build) |
 
 ---
 
 ## Quick Start
 
-Install **magpie-gemini-web** from the Magpie plugin market, then sign in to either (or both) providers below. By default, the plugin downloads the backend, verifies its SHA-256 checksum, and runs it in the background, with no Go installation required. You control subsequent AI Studio updates, and can also select your own executable or connect an independent service.
+Install **magpie-gemini-web** from the Magpie plugin market, then sign in to either (or both) providers below. By default, the plugin downloads the backend, verifies its SHA-256 checksum, and runs it in the background, with no Go installation required. AI Studio automatically follows official stable releases by default. You can disable automatic updates, select your own executable or connect an independent service.
 
 ### Option 1: Google AI Studio (`ai-studio`)
 
 1. Sign in to **Google AI Studio** in Magpie and choose **「添加账号并连接（推荐）」** (Add an account and connect).
-2. On first use, the plugin **automatically downloads, verifies and starts the latest stable official AIStudio2API CLI**. No manual download, executable path, API key copying or administrator credentials are needed.
+2. On first use, the plugin **automatically downloads, verifies and starts the latest stable official AIStudio2API backend**. No manual download, executable path, API key copying or administrator credentials are needed.
 3. Click **「打开账号管理页」** (Open account management) on the connection page, then add a Google account using Chrome import, cookie import or browser login.
 4. Return to the connection page, select the account and click **「连接到 Magpie」** (Connect to Magpie). The existing `ai-studio` provider, models, image generation and usage cards remain available. Repeat sign-in to add more accounts.
 
 If an existing account needs to sign in again, select that account in Magpie, use its **Re-login** action in account management, then return to confirm the connection.
 
-Subsequent starts reuse the installed executable. **You control backend updates:** use the official admin page's updater, or stop the service and replace the executable. Plugin upgrades do not force an upgrade, downgrade or restoration. The default executable is `package/aistudio2api` inside the AI Studio data directory (`package/aistudio2api.exe` on Windows).
+Subsequent starts reuse the installed executable. **Automatic stable updates are enabled by default:** while Magpie is running, the plugin checks in the background, caching successful release checks for an hour. After downloading and verifying an update, it waits for generation requests (including streams), account login and browser preparation to finish before upgrading and restarting. Accounts, port, credentials and settings remain in place; no new plugin release is needed. Failed checks or downloads leave the current version running. A failed new executable triggers an attempted rollback and blocks repeated attempts to install that archive.
+
+Use `npm run studio:updates -- manual` to manage versions yourself, or `npm run studio:updates -- auto` to resume automatic updates. Custom executables and independent services remain user-managed.
 
 Browser login downloads Camoufox (about 1.3 GB with v0.3.7); Chrome / cookie import can use existing sessions. Magpie limits each connection attempt to 10 minutes. On slow connections, finish preparation in the official account management page: its background download and login tasks continue after Magpie times out. Then start a new connection in Magpie and select the imported account. Alternatively, run `npm run studio:prepare-browser` from the plugin directory before signing in. It waits up to an hour; closing the command does not cancel the backend download. Set `studio.proxy` or `AI_STUDIO_PROXY` if GitHub is unreachable. **「直接打开 Google 登录窗口」** still opens an isolated browser login window. Existing backends with Magpie task correlation can still complete the account connection automatically.
 
-Automatic installation supports macOS / Linux x64 and arm64, and Windows x64. Windows arm64 currently needs a compatible executable selected through the advanced path option (for example, an x64 executable supported by the system), or an independent backend. Unsupported targets receive guidance before a release lookup.
+Automatic installation supports macOS / Linux x64 and arm64, and Windows x64. macOS / Linux use official CLI archives. The official Windows archive contains a desktop executable, installed beside `.env` and `runtime/` in the data directory to retain its settings. Windows arm64 currently needs a compatible executable selected through the advanced path option (for example, an x64 executable supported by the system), or an independent backend. Unsupported targets receive guidance before a release lookup.
 
 **Existing installations and version selection:**
 
-- Accounts, port, credentials and Magpie cards are preserved. Older `-magpie` builds remain usable, but their compiled update restriction remains. To switch to the official CLI, quit Magpie, run these commands from the plugin directory, then reopen Magpie:
+- Accounts, port, credentials and Magpie cards are preserved. The plugin can also automatically replace an older `-magpie` build in the default directory with a newer official stable release. Its compiled updater restriction does not prevent this. Automatic replacement is deferred if an older backend lacks the APIs needed to confirm idle status. To switch immediately, quit Magpie, run these commands from the plugin directory, then reopen Magpie:
 
   ```bash
   npm run studio:stop
@@ -54,8 +56,8 @@ Automatic installation supports macOS / Linux x64 and arm64, and Windows x64. Wi
   npm run studio:start
   ```
 
-- To choose an official version, stop the service and run `npm run studio:install -- --version v0.3.7`. Explicit installs verify GitHub's archive SHA-256. Normal starts do not check releases or enforce historical installation hashes. Back up the entire data directory before downgrading: older versions may not read data migrated by newer ones.
-- **Advanced option:** Select 「指定 AIStudio2API 程序路径（高级）」 (Specify executable path) or run `npm run studio:use -- "/absolute/path/to/aistudio2api"`. Use an executable extracted from an [official CLI archive](https://github.com/Mag1cFall/AIStudio2API/releases), outside the plugin and AI Studio data directories; stop the old service before switching. A missing custom executable produces an error and is never replaced by a download. `studio:use-default` returns to the default directory, reusing its executable or installing the official CLI if absent.
+- To choose an official version, stop the service and run `npm run studio:install -- --version v0.3.7`. This verifies the official SHA-256 and selects manual updates to preserve your choice. Run `npm run studio:updates -- auto` to follow stable releases again. Historical installation hashes do not force file restoration, and automatic updates never downgrade a newer running version. Back up the entire data directory before downgrading: older versions may not read data migrated by newer ones.
+- **Advanced option:** Select 「指定 AIStudio2API 程序路径（高级）」 (Specify executable path) or run `npm run studio:use -- "/absolute/path/to/aistudio2api"`. Use an executable extracted from an [official archive](https://github.com/Mag1cFall/AIStudio2API/releases), outside the plugin and AI Studio data directories; stop the old service before switching. A missing custom executable produces an error and is never replaced by a download. `studio:use-default` returns to the default directory, reusing its executable or installing the official CLI if absent.
 - Existing configurations receive a one-time migration of missing legacy defaults: `SEARCH_MODEL_ALIASES=false`, per-account concurrency / warm worker limit / maximum workers / warm startup concurrency all `1`, `ROUTING_STRATEGY=fill-first`, and `REQUEST_TIMEOUT=30m`, along with the earlier disabled hedging policy. Explicit settings and unknown keys remain intact. Later admin choices, including defaults omitted by upstream Save, are not seeded again.
 - Fresh installations follow upstream defaults. With v0.3.7 this enables search model aliases, per-account concurrency 2, 10 warm / 20 maximum workers, round-robin routing, and SpiderMonkey generation. A future version changing the `WAA_BACKEND` default could also require Camoufox or other browser components for generation; choose explicit settings in the admin page if needed.
 - The plugin maintains the local connection and account access. Other settings belong to the backend, including future configuration keys. Uninstall or `studio:clean` removes downloaded programs from the default directory while retaining accounts and settings. With a custom path, the process, executable and entire data directory are preserved; use `studio:stop` to stop it.
@@ -189,7 +191,9 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 | `npm run studio:install -- [--version v0.3.7]` | Install the latest or specified official release after stopping; keep accounts and settings |
 | `npm run studio:install -- --version v0.3.7 --archive <file>` | Install a local official archive; still fetch its checksum from GitHub |
 | `npm run studio:official:smoke` | Check installation, account paths, connection and live file replacement in disposable data, without real Google credentials |
-| `npm run studio:update:smoke -- v0.3.6` | Explicitly update an isolated older official CLI to the latest release and verify restart |
+| `npm run studio:updates -- auto` / `manual` | Enable or disable automatic updates for the default backend; omit the argument to show the policy |
+| `npm run studio:auto-update:smoke` | Verify background upgrades, retained data and executable rollback in a disposable directory |
+| `npm run studio:update:smoke -- v0.3.6` | Explicitly update an isolated older official backend to the latest release and verify restart |
 | `node scripts/studio.mjs import <dir>` | Import existing accounts while the service is stopped |
 | `npm run studio:smoke` | Run a live acceptance check (consumes account quota) |
 
@@ -210,11 +214,11 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - Gemini Web takes at most 2 requests at once per sign-in (AI Studio 1), adjustable in Magpie's provider settings. Google account rate-limiting or flagging cannot be completely ruled out—use at your own risk.
 
 **AI Studio upgrades and model selection:**
-- Initial installation uses the latest stable official CLI for macOS / Linux x64 or arm64, or Windows x64. Release metadata must identify the correct platform archive and its SHA-256. Later updates are explicit user actions; publishing the plugin no longer requires a custom backend build or pinned Studio artifacts.
+- Installation and automatic updates use the latest stable official release for macOS / Linux x64 or arm64, or Windows x64. Release metadata must identify the correct platform archive and SHA-256. Publishing the plugin does not require a custom backend build or pinned Studio artifacts.
 - With 0.3.7, `MAX_ACCOUNT_SWITCHES`, `DISCOVER_HIDDEN_MODELS`, account order, model bindings and all other valid `.env` keys are preserved. Explicit saved values remain in effect; omitted values use upstream defaults. The plugin no longer seeds fixed worker, hedge-request or generation-backend settings.
-- Historical managed builds keep using their accounts and data. Their compiled update restriction requires an explicit switch to the official CLI. The default `package/` directory is made writable where possible for upstream updates. Historical builds and the 0.3.7 candidate patches remain documented in [docs/studio-release.md](docs/studio-release.md), separate from default installation.
+- The default executable is `package/aistudio2api` in the data directory, or `aistudio2api.exe` at its root on Windows. Older managed builds retain their accounts and data and can be automatically replaced with official packages. Historical builds and the 0.3.7 candidate patches remain documented in [docs/studio-release.md](docs/studio-release.md); they do not select the default install or update version.
 - Stop discovers replacement PIDs and checks executable identity. Custom paths also check the account-directory argument to distinguish instances sharing a program. Unverified processes are never signaled; a live process with HTTP down blocks installation and duplicate startup.
-- A missing executable in the default directory is installed automatically; a missing custom path produces an error. Installation preserves account and runtime files, but the backend's own migrations can change. Back up the entire data directory, including `auth/` and `runtime/requests.db`, before changing versions.
+- A missing default executable is installed automatically; an existing one is updated in the background when idle. A missing custom path produces an error. Executable rollback does not undo the backend's own data migrations. Back up the entire data directory, including `auth/` and `runtime/requests.db`, before a manual downgrade.
 - The plugin's default response/stream-idle timeout is 30 minutes, adjustable with `studio.requestTimeoutMs`. Backend deadlines and concurrency follow its defaults or admin settings. Shorter limits can interrupt long replies; the selected backend controls automatic continuation deadlines.
 - Source review of the locally installed Magpie `v0.1.1285` (`d783df46`) found no shorter fixed total timeout on this plugin's generation path: `Provider.Do → plugin.Fetch → loader.fetch` bypasses the ordinary HTTP transport's 10-minute response-header timeout. The gateway's 5-minute `IdleTimeout` applies between requests. Clients or reverse proxies can impose shorter limits; this was not a 30-minute end-to-end waiting test.
 - Deep Research models (`deep-research-preview-04-2026`, `deep-research-max-preview-04-2026`) are supported: listed when signed in with a Google AI Pro / Ultra account; the backend adapts asynchronous Interactions tasks onto `/v1/chat/completions` streaming (including reasoning and built-in server-side search), without client `tool_call` (Function Calling) or `temperature`.

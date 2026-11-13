@@ -4,6 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {
   studioDataDir,
+  studioAutoUpdates,
+  setStudioAutoUpdate,
   localStudio,
   installStudio,
   useStudioBinary,
@@ -37,6 +39,7 @@ Commands:
   install [--version <tag>] [--archive <path>] Download the official CLI (latest stable by default); stop the service first
   use <executable>                            Select a custom executable; stop the old service first
   use-default                                 Select the default local directory; first start installs if missing
+  updates [auto|manual]                       Show or change automatic updates for the default official backend
   start [--proxy <url>]                        Start local AIStudio2API service in the background
   status                                       Check service and accounts status
   stop                                         Stop local AIStudio2API service
@@ -49,7 +52,7 @@ Commands:
 Options:
   --data-dir <path>                            Custom data directory
   --proxy <url>                                HTTP, HTTPS, or SOCKS5 proxy URL ("" clears the saved one)
-  --version <tag>                              Official release to install, e.g. v0.3.7 (install only)
+  --version <tag>                              Install a specific official release and keep updates manual (install only)
   --archive <path>                             Local official archive; verify against the selected GitHub release
 `);
 }
@@ -127,6 +130,20 @@ async function main() {
   const dataDir = flags.dataDir ? path.resolve(flags.dataDir) : studioDataDir();
 
   switch (command) {
+    case 'updates': {
+      const policy = flags._[1];
+      if (flags._.length > 2 || (policy !== undefined && !['auto', 'manual'].includes(policy))) {
+        throw new Error('Usage: updates [auto|manual]');
+      }
+      if (policy !== undefined) await setStudioAutoUpdate(policy === 'auto', { dataDir });
+      const local = localStudio({ dataDir });
+      if (local?.backendMode === 'user') console.log('Custom executables remain user-managed.');
+      else if (!fs.existsSync(path.join(dataDir, 'config.json'))) console.log('Not installed; automatic updates are enabled by default after installation.');
+      else console.log(studioAutoUpdates(dataDir)
+        ? 'Automatic updates enabled. While Magpie is open, it checks official stable releases and updates when requests, sign-in and browser preparation are idle.'
+        : 'Automatic updates disabled. Update from the backend management page or install an official release explicitly.');
+      break;
+    }
     case 'use': {
       if (flags._.length !== 2) throw new Error('Usage: use <path-to-extracted-aistudio2api-executable>');
       const local = await useStudioBinary(flags._[1], { dataDir, proxy: flags.proxy });
