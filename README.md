@@ -4,9 +4,9 @@
 
 中文 | [English](README.en.md)
 
-让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 **Google AI Studio** 与 **Gemini 网页版**。插件在本机自动运行 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 与 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go)，将网页端能力转为 OpenAI 兼容接口。
+让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 **Google AI Studio** 与 **Gemini 网页版**。插件在本机自动运行 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 与 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go)，提供对话、原生工具调用、Nano Banana 图片生成与 Deep Research 等能力。
 
-> **2026-10-16 更新**：正价支付的 Google AI Pro 现可直接在 Antigravity 中使用 `gemini-4-argon`，同理也可直接用 Magpie 反代。
+> **新模型支持说明**：**Google AI Studio (`ai-studio`)** 默认自动跟随官方最新稳定版后端，现已直接支持 **`gemini-4-hydrogen`**（含 `xhigh` 思考档位）、**`gemini-4-carbon`**（需账号具备对应权益，如 Google AI Ultra）与 **`gemini-4-argon`**。**Gemini Web (`gemini-web`)** 上游暂未正式收录 Carbon 与 Hydrogen（付费账号请求 `gemini-3.8-flash` 在网页端实际路由至 `4 Hydrogen`，需保持 `strict_model` 关闭；登录态 `gemini-4-argon` 仍存在生成挂起已知问题 [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53)，建议优先使用 `ai-studio`）。
 
 ## 怎么选？
 
@@ -14,7 +14,8 @@
 
 | 对比项 | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
 | :--- | :--- | :--- |
-| **适用场景** | **推荐 Coding Agent 使用** | 日常对话、使用网页版专属模型与额度 |
+| **适用场景** | **推荐主力与 Coding Agent 使用** | 日常对话、使用网页版额度 |
+| **主要模型** | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-3.8-flash`（付费号上游实为 `4 Hydrogen`）、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-pro`、`gemini-4-argon`（见 [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53)） |
 | **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
 | **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` / `xhigh`（Hydrogen）中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
 | **图片输入** | 默认开启，对话模型可以读图 | 默认开启，对话模型可以读图（需登录态挂 Cookie） |
@@ -42,7 +43,7 @@
 
 需要自行决定版本时，运行 `npm run studio:updates -- manual`；恢复自动更新用 `npm run studio:updates -- auto`。高级路径和独立服务始终由用户管理。
 
-浏览器登录需要下载 Camoufox（v0.3.7 约 1.3 GB）；Chrome / Cookie 导入可直接使用已有登录状态。Magpie 的单次连接等待上限为 10 分钟。网络较慢时，可先在已打开的官方账号管理页完成下载和登录；该页的后台任务不会因 Magpie 连接超时而取消，准备完成后再回到 Magpie 发起连接并选择已有账号。也可先在插件目录运行 `npm run studio:prepare-browser`，把浏览器下载放在登录计时之外；命令最多等待一小时，退出命令不会停止后端下载。连不上 GitHub 时先设置 `studio.proxy` 或 `AI_STUDIO_PROXY`。**「直接打开 Google 登录窗口」**仍可用于独立浏览器登录。已有后端若提供 Magpie 任务关联能力，仍可自动完成账号连接。
+浏览器登录需要下载 Camoufox（v0.3.7+ 约 1.3 GB）；Chrome / Cookie 导入可直接使用已有登录状态。Magpie 的单次连接等待上限为 10 分钟。网络较慢时，可先在已打开的官方账号管理页完成下载和登录；该页的后台任务不会因 Magpie 连接超时而取消，准备完成后再回到 Magpie 发起连接并选择已有账号。也可先在插件目录运行 `npm run studio:prepare-browser`，把浏览器下载放在登录计时之外；命令最多等待一小时，退出命令不会停止后端下载。连不上 GitHub 时先设置 `studio.proxy` 或 `AI_STUDIO_PROXY`。**「直接打开 Google 登录窗口」**仍可用于独立浏览器登录。已有后端若提供 Magpie 任务关联能力，仍可自动完成账号连接。
 
 自动安装支持 macOS / Linux 的 x64、arm64 和 Windows x64。macOS / Linux 使用官方 CLI 包；Windows 官方包是桌面可执行文件，默认放在数据目录根部，与 `.env` 和 `runtime/` 相邻，以保留其设置。Windows arm64 尚无官方原生包，请用高级路径选择系统可以运行的兼容程序（例如 x64 程序），或连接独立后端；插件会在查询下载前提示。
 
@@ -59,10 +60,10 @@
 - 指定官方版本：停止后执行 `npm run studio:install -- --version v0.3.7`。这会校验官方 SHA-256 并切换为手动更新，保留你的版本选择；需要再次跟随最新版时运行 `npm run studio:updates -- auto`。不会按历史安装哈希恢复文件，也不会自动降级已运行的较新版本。降级前应备份整个数据目录，因为旧版未必能读取新版迁移的数据。
 - **高级选项**：已有自己的程序时，可选「指定 AIStudio2API 程序路径（高级）」或运行 `npm run studio:use -- "/完整路径/aistudio2api"`。使用 [官方安装包](https://github.com/Mag1cFall/AIStudio2API/releases) 解压后的程序，放在插件和 AI Studio 数据目录之外；切换前停止原服务。缺失的自备程序会明确报错，不会被重新下载覆盖。`studio:use-default` 可切回默认安装目录，已有程序继续复用，尚无程序时自动下载官方版。
 - 已有 `config.json` 的安装首次迁移时，仅补齐缺失的旧设置：`SEARCH_MODEL_ALIASES=false`、每账号并发／预热 Worker／最大 Worker／启动预热并发均为 `1`、`ROUTING_STRATEGY=fill-first`、`REQUEST_TIMEOUT=30m`，并保留原有关闭备用请求等默认行为；显式值和未知配置键原样保留。迁移只执行一次，之后管理页保存的选择（包括由上游省略的默认值）不会被重新补写。
-- 新安装沿用官方默认值。v0.3.7 默认开启搜索模型别名、每账号并发为 2、预热 10／最大 20 个 Worker、使用 round-robin；生成后端当前默认为 SpiderMonkey。以后选用的版本若改变 `WAA_BACKEND` 默认值，生成也可能需要 Camoufox 等浏览器组件；可在管理页明确指定设置。
+- 新安装沿用官方默认值。v0.3.7+ 默认开启搜索模型别名、每账号并发为 2、预热 10／最大 20 个 Worker、使用 round-robin；生成后端当前默认为 SpiderMonkey。以后选用的版本若改变 `WAA_BACKEND` 默认值，生成也可能需要 Camoufox 等浏览器组件；可在管理页明确指定设置。
 - 插件维护本地连接和账号访问，其余设置由后端管理页控制，包括新版新增的配置项。卸载或 `studio:clean` 会清理默认目录中下载的程序、保留账号与配置；选择自备路径时会保留该进程、程序和整个数据目录，停止请使用 `studio:stop`。
 
-如果希望独立运行服务，也可选 **「连接已有 AIStudio2API（地址 + API key）」**。连接官方 v0.3.7 时，Hydrogen Extra High 会映射为 Magpie 的 `xhigh` 档位。
+如果希望独立运行服务，也可选 **「连接已有 AIStudio2API（地址 + API key）」**。连接官方 v0.3.7+ 时，Hydrogen Extra High 会映射为 Magpie 的 `xhigh` 档位。
 
 ### 方式二：Gemini Web (`gemini-web`)
 
@@ -215,17 +216,18 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 
 **AI Studio 升级与模型范围：**
 - 安装和自动更新来自官方最新稳定版，支持 macOS / Linux x64、arm64 与 Windows x64。读取官方发布元数据，只接受对应平台的安装包及 SHA-256；插件发布不依赖定制后端构建或固定发行哈希。
-- 连接 0.3.7 时，`MAX_ACCOUNT_SWITCHES`、`DISCOVER_HIDDEN_MODELS`、账号顺序、模型账号绑定及其他合法 `.env` 键会保留。已有显式设置继续生效，未设置项使用后端默认值；插件不再补入固定的并发、备用请求或生成后端设置。
+- 连接 0.3.7+ 时，`MAX_ACCOUNT_SWITCHES`、`DISCOVER_HIDDEN_MODELS`、账号顺序、模型账号绑定及其他合法 `.env` 键会保留。已有显式设置继续生效，未设置项使用后端默认值；插件不再补入固定的并发、备用请求或生成后端设置。
 - 默认程序为数据目录中的 `package/aistudio2api`，Windows 为根部的 `aistudio2api.exe`。旧托管构建的账号和数据继续保留，自动更新可将其替换为官方包。历史构建和 0.3.7 候选补丁保留在 [docs/studio-release.md](docs/studio-release.md)，不参与默认安装和更新决策。
 - 停止时会发现更新后的 PID 并核对程序身份；自备路径还核对账号目录参数，以区分共用同一程序的实例。无法核实身份就不会发送终止信号；HTTP 已关闭但仍有进程运行时，禁止安装替换或重复启动。
 - 默认目录缺少程序时自动安装；已有程序在后台按空闲状态更新。自备路径缺失时明确报错。程序回滚不会撤销后端自身的数据迁移；手动降级前应备份整个数据目录，包括 `auth/`、`runtime/requests.db` 等。
 - 插件默认单次响应等待／流空闲超时为 30 分钟，可用 `studio.requestTimeoutMs` 调整；后端的请求期限与并发数由其默认值或管理页设置决定。较短期限可能中断长回复，上游自动续写期限按所选版本的规则计算。
 - 已核对本机 Magpie `v0.1.1285`（`d783df46`）源码：插件请求走 `Provider.Do → plugin.Fetch → loader.fetch`，绕过普通 HTTP transport 的 10 分钟响应头限制；此插件生成路径没有发现更短的固定总超时。网关 5 分钟 `IdleTimeout` 仅针对请求之间的空闲连接。客户端或反向代理仍可设置更短期限；这不是一次实等 30 分钟的端到端验证。
+- 支持 `gemini-4-hydrogen` 与 `gemini-4-carbon`（随官方 v0.3.5–v0.3.8+ 模型目录自动同步）：`gemini-4-hydrogen` 的 `extra_high` 思考档位自动映射为 Magpie 的 `xhigh`；`gemini-4-carbon` 需要已登录账号具备对应权益（如 Google AI Ultra）才会在目录中列出可用通道，无权账号会自动隐藏以避免返回 403（若官网前端已配置但尚未对账号公开列出，可在管理页开启 `DISCOVER_HIDDEN_MODELS`）。
 - 支持 Deep Research 模型（`deep-research-preview-04-2026`、`deep-research-max-preview-04-2026`）：需要登录 Google AI Pro / Ultra 账号才会在列表中出现；由后端将异步 Interactions 任务适配到 `/v1/chat/completions` 流式返回（含思考过程与服务端内置联网搜索），不支持客户端 `tool_call`（Function Calling）或 `temperature`。
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
-- [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) 的多账号索引漏传已修复，需重新导入受影响的 Cookie 或在后端账号管理中修正索引。账号检测通过不保证生成成功；登录态 Argon 挂起仍待验证修复。当前优化版仍使用 StreamGenerate，启用 `web_channel` 会在日志提示被忽略。
+- [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) 的多账号索引漏传已修复，需重新导入受影响的 Cookie 或在后端账号管理中修正索引。账号检测通过不保证生成成功；登录态 `gemini-4-argon` 生成挂起仍待上游完善协议修复（当前优化版仍固定走 StreamGenerate，启用 `web_channel` 会在日志提示被忽略），建议暂用 `ai-studio` 调用 Argon。此外，上游 `v4.28.0` 尚未正式收录 `gemini-4-carbon` 与 `gemini-4-hydrogen` 模型 ID；付费账号请求 `gemini-3.8-flash` 时 Google 网页端实际已路由至 `4 Hydrogen`，需保持后端 `strict_model` 关闭（默认关闭），否则会因显示名变化返回 `429 model_downgraded`。
 - 插件默认使用本仓库发布的 [4.28.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.28.0-magpie.1)（基于上游 v4.28.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：

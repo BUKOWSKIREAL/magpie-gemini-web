@@ -1,7 +1,7 @@
 {
   "name": "magpie-gemini-web",
   "version": "0.14.0",
-  "description": "Gemini Web and Google AI Studio provider for Magpie, backed by gemini-web2api-go and AIStudio2API",
+  "description": "Google AI Studio and Gemini Web provider for Magpie (Gemini 4 Carbon / Hydrogen / Argon, Nano Banana image generation, Deep Research), backed by AIStudio2API and gemini-web2api-go",
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",
