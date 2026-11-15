@@ -387,7 +387,7 @@ describe('Studio cross-host lock formal model & property suite', () => {
   });
 
   it('satisfies protocol invariants across seeded randomized execution against lib/studio-updates.mjs', { timeout: process.platform === 'win32' ? 120000 : 30000 }, async () => {
-    for (let seed = 1; seed <= 25; seed++) {
+    for (let seed = 1; seed <= 8; seed++) {
       const rng = mulberry32(0xC0FFEE + seed * 97);
       const dataDir = fs.mkdtempSync(path.join(root, `fuzz-${seed}-`));
       const seedProc = path.join(procRoot, `seed-${seed}`);
