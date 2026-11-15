@@ -62,6 +62,9 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check-guardrails.mjs",
+    "interrogate": "node scripts/interrogate-diff.mjs",
+    "release:plugin": "node scripts/release-plugin.mjs",
     "backend:install": "node scripts/backend.mjs install",
     "backend:install:upstream": "node scripts/backend.mjs install-upstream",
     "backend:release:build": "node scripts/backend-release.mjs --verify",

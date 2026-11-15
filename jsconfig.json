@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2024",
+    "checkJs": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "index.mjs",
+    "lib/**/*.mjs",
+    "scripts/**/*.mjs",
+    "test/**/*.mjs"
+  ]
+}
