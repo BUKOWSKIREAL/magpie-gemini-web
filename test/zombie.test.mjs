@@ -91,11 +91,14 @@ describe('a zombie AI Studio process has exited', () => {
       assert.equal(fs.existsSync(pidFile), false);
 
       fs.writeFileSync(pidFile, `${child.pid}\n`);
+      const lockFile = path.join(dataDir, '.setup.lock');
+      fs.writeFileSync(lockFile, `${child.pid}\n${Date.now()}\nzombie-lock\n`);
       let spawned = false;
       await assert.rejects(
         ensureStudio({ dataDir, fetchFn: offlineFetch, startTimeoutMs: 200, spawnFn: () => { spawned = true; throw new Error('spawn fixture'); } }),
         err => !/still be running or restarting/.test(err.message)
       );
+      assert.equal(fs.existsSync(lockFile), false);
       assert.equal(spawned, true, 'a new AI Studio was not started');
       assert.equal(localStudio({ dataDir }).port > 0, true);
     } finally {
