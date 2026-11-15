@@ -8,25 +8,25 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
-import { ensureBackend, installBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
+import { binaryPath, ensureBackend, installBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
 import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
 
 const LOGIN_CAPABILITIES = { capabilities: { account_proxy_binding: true } };
 
 const SIGNED_IN = REQUIRED_COOKIES.map(n => `${n}=v-${n}`).join('; ');
 
-function makeDataDir({ port = 8083, binary = 'fake backend' } = {}) {
+function makeDataDir({ port = 8083, binary = 'fake backend', platform = 'darwin' } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-gemini-web-setup-'));
   fs.mkdirSync(path.join(dir, 'bin'));
-  if (binary !== null) fs.writeFileSync(path.join(dir, 'bin', 'gemini-web2api-go'), binary, { mode: 0o700 });
+  if (binary !== null) fs.writeFileSync(binaryPath(dir, platform), binary, { mode: 0o700 });
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ host: '127.0.0.1', port }));
   fs.writeFileSync(path.join(dir, 'secrets.json'), JSON.stringify({ apiKey: 'gw_test', adminToken: 'admin_test' }));
   return dir;
 }
 
 // trustBinary marks the fake binary as a known local build, the way backend:install:argon does.
-function trustBinary(dir) {
-  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, 'bin', 'gemini-web2api-go'))).digest('hex');
+function trustBinary(dir, platform = 'darwin') {
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(binaryPath(dir, platform))).digest('hex');
   fs.writeFileSync(path.join(dir, 'argon-build.json'), JSON.stringify({ sha256 }));
 }
 
@@ -405,7 +405,7 @@ describe('27. One-click sign-in through the plugin', () => {
   // The backend's database, which the plugin reads the pool from: the fake backend keeps its
   // accounts there too.
   let db;
-  const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'];
+  const PROXY_ENV = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy', 'GEMINI_WEB_PROXY'];
   const savedEnv = {};
 
   before(async () => {
@@ -464,7 +464,7 @@ describe('27. One-click sign-in through the plugin', () => {
       });
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    dataDir = makeDataDir({ port: server.address().port });
+    dataDir = makeDataDir({ port: server.address().port, platform: process.platform });
     db = new DatabaseSync(path.join(dataDir, 'gemini.db'));
     db.exec(`CREATE TABLE proxies (id INTEGER PRIMARY KEY, name TEXT, url TEXT, enabled INTEGER);
       CREATE TABLE accounts (id INTEGER PRIMARY KEY, label TEXT, cookie TEXT, status TEXT, proxy_id INTEGER,
@@ -477,10 +477,13 @@ describe('27. One-click sign-in through the plugin', () => {
   after(() => {
     server.close();
     db.close();
-    PROXY_ENV.forEach(k => { if (savedEnv[k] !== undefined) process.env[k] = savedEnv[k]; });
+    PROXY_ENV.forEach(k => {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    });
     if (previousDataDir === undefined) delete process.env.GEMINI_WEB_DATA_DIR;
     else process.env.GEMINI_WEB_DATA_DIR = previousDataDir;
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   async function oauthMethod() {
@@ -623,7 +626,7 @@ describe('27. One-click sign-in through the plugin', () => {
 
   it('shows the cookie steps while a first download runs, and fails in the callback if it does', { timeout: 5000 }, async () => {
     // Magpie gives authorize one minute, less than a first download can take.
-    const fresh = makeDataDir({ binary: null });
+    const fresh = makeDataDir({ binary: null, platform: process.platform });
     process.env.GEMINI_WEB_DATA_DIR = fresh;
     let finish;
     const download = new Promise(resolve => { finish = resolve; });
@@ -639,7 +642,7 @@ describe('27. One-click sign-in through the plugin', () => {
     } finally {
       globalThis.fetch = realFetch;
       process.env.GEMINI_WEB_DATA_DIR = dataDir;
-      fs.rmSync(fresh, { recursive: true, force: true });
+      fs.rmSync(fresh, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 

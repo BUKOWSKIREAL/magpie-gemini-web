@@ -20,14 +20,17 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
   let tempWebDataDir;
   let origStudioDataDir;
   let origWebDataDir;
+  let origDockerContainer;
 
   before(async () => {
     origStudioDataDir = process.env.AI_STUDIO_DATA_DIR;
     origWebDataDir = process.env.GEMINI_WEB_DATA_DIR;
+    origDockerContainer = process.env.DOCKER_CONTAINER;
     tempStudioDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-data-test-'));
     tempWebDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-web-data-test-'));
     process.env.AI_STUDIO_DATA_DIR = tempStudioDataDir;
     process.env.GEMINI_WEB_DATA_DIR = tempWebDataDir;
+    process.env.DOCKER_CONTAINER = '0';
     mockServer = http.createServer((req, res) => {
       let reqBody = '';
       req.on('data', chunk => { reqBody += chunk; });
@@ -153,6 +156,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     else delete process.env.AI_STUDIO_DATA_DIR;
     if (origWebDataDir !== undefined) process.env.GEMINI_WEB_DATA_DIR = origWebDataDir;
     else delete process.env.GEMINI_WEB_DATA_DIR;
+    if (origDockerContainer !== undefined) process.env.DOCKER_CONTAINER = origDockerContainer;
+    else delete process.env.DOCKER_CONTAINER;
   });
 
   it('1. exported functions register both providers without overwriting Web', async () => {
@@ -1295,7 +1300,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
   it('9d. one sign-in way asks nothing the first time, then offers a new account or a local one', async () => {
     const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['添加账号并连接（推荐）', '直接打开 Google 登录窗口', '指定 AIStudio2API 程序路径（高级）', '连接已有 AIStudio2API（地址 + API key）']);
+    assert.deepEqual(plugin.auth.methods.map(m => m.label), ['添加账号并连接（推荐）', '直接打开 Google 登录窗口', '通过粘贴 Cookie 登录（无头 / 远程环境适用）', '指定 AIStudio2API 程序路径（高级）', '连接已有 AIStudio2API（地址 + API key）']);
     const google = plugin.auth.methods[1];
 
     // Nothing set up: no question, and asking installs nothing (authorize sets it up)
