@@ -11,9 +11,11 @@ on:
   pull_request:
     paths:
       - 'index.mjs'
+      - 'lib/proc.mjs'
       - 'lib/studio*.mjs'
       - 'scripts/studio*.mjs'
       - 'test/studio*.mjs'
+      - 'test/zombie.test.mjs'
       - 'test/helpers/studio*.mjs'
       - 'package.json'
       - '.github/workflows/studio-official.yml'
@@ -53,12 +55,7 @@ jobs:
           EXPECTED_TARGET: ${{ matrix.target }}
         run: node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.EXPECTED_TARGET)"
       - name: Test installation, lifecycle and account integration with isolated fixtures
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            node --test test/studio*.test.mjs
-          else
-            npm test
-          fi
+        run: npm test
       - name: Check connection pages in the Magpie plugin runtime
         run: bun test test/studio-connect*.test.mjs --timeout 15000
       - name: Pack and verify the actual installed package against the official backend

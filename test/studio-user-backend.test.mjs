@@ -32,7 +32,7 @@ function fixture(t, name = 'data with spaces') {
   const dataDir = path.join(root, name);
   const bin = path.join(root, process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api');
   fs.writeFileSync(bin, 'user version one', { mode: 0o755 });
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return { root, dataDir, bin, options: { dataDir, fetchFn: offline, preferredPort: 0 } };
 }
 
@@ -69,8 +69,22 @@ async function startStandIn(bin, dataDir, port, wait = false) {
   return child;
 }
 async function endChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise(resolve => { child.once('exit', resolve); child.kill('SIGKILL'); });
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  child.ref?.();
+  await new Promise(resolve => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, 5000);
+    child.once('exit', done);
+    child.once('error', done);
+    try { if (child.connected) child.disconnect(); } catch {}
+    try { child.kill('SIGKILL'); } catch { done(); }
+  });
 }
 
 // These tests use isolated data and never replace a real AIStudio2API installation.
@@ -260,15 +274,28 @@ describe('User-managed AIStudio2API', () => {
     }
     let child, ready;
     const libDir = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
-    await ensureStudio({ ...f.options, managementOnly: true, fetchFn: (url, init) => child ? responding()(url, init) : offline(),
-      spawnFn(file, args, options) {
-        child = spawn(file, ['-e', STAND_IN, '--', ...args], { ...options,
-          env: { ...options.env, WAIT_FOR_SERVE: '1', DYLD_LIBRARY_PATH: libDir, LD_LIBRARY_PATH: libDir }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-        ready = new Promise((resolve, reject) => { child.once('message', resolve); child.once('error', reject); });
-        return child;
-      }
-    });
-    await ready;
+    try {
+      await ensureStudio({ ...f.options, managementOnly: true, fetchFn: (url, init) => child ? responding()(url, init) : offline(),
+        spawnFn(file, args, options) {
+          child = spawn(file, ['-e', STAND_IN, '--', ...args], { ...options, detached: false,
+            env: { ...options.env, WAIT_FOR_SERVE: '1', DYLD_LIBRARY_PATH: libDir, LD_LIBRARY_PATH: libDir }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+          child.stderr?.resume();
+          ready = new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('stand-in did not become ready')), 10000);
+            const cleanup = () => clearTimeout(timer);
+            child.once('message', msg => { cleanup(); resolve(msg); });
+            child.once('error', err => { cleanup(); reject(err); });
+            child.once('exit', code => { cleanup(); reject(new Error(`stand-in exited early (${code})`)); });
+          });
+          return child;
+        }
+      });
+      child?.ref?.();
+      await ready;
+    } catch (err) {
+      await endChild(child);
+      throw err;
+    }
     let phase = 'identity';
     const exec = childProcess.execFileSync, readlink = fs.readlinkSync, read = fs.readFileSync;
     const denied = () => { throw Object.assign(new Error('fixture inspection denied'), { code: 'EACCES' }); };

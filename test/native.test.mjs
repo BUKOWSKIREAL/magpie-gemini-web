@@ -6,6 +6,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
+  binaryPath,
   installBackend,
   startBackend,
   statusBackend,
@@ -90,11 +91,14 @@ describe('23. Native helper config/secrets creation reuse modes 600 without valu
       });
 
       const configStat = fs.statSync(res.configPath);
-      // Check mode ends in 600 (permission rw-------)
-      assert.equal(configStat.mode & 0o777, 0o600);
-
       const secretsStat = fs.statSync(res.secretsPath);
-      assert.equal(secretsStat.mode & 0o777, 0o600);
+      assert.ok(configStat.isFile());
+      assert.ok(secretsStat.isFile());
+      if (process.platform !== 'win32') {
+        // Check mode ends in 600 (permission rw-------)
+        assert.equal(configStat.mode & 0o777, 0o600);
+        assert.equal(secretsStat.mode & 0o777, 0o600);
+      }
 
       const secrets = JSON.parse(fs.readFileSync(res.secretsPath, 'utf8'));
       assert.ok(secrets.apiKey.startsWith('gw_'));
@@ -130,7 +134,7 @@ describe('23. Native helper config/secrets creation reuse modes 600 without valu
     const validHash = crypto.createHash('sha256').update(validContent).digest('hex');
 
     fs.mkdirSync(path.join(dataDir, 'bin'), { recursive: true });
-    const binPath = path.join(dataDir, 'bin', 'gemini-web2api-go');
+    const binPath = binaryPath(dataDir);
     fs.writeFileSync(binPath, validContent, { mode: 0o700 });
 
     fs.writeFileSync(path.join(dataDir, 'secrets.json'), JSON.stringify({
@@ -180,7 +184,7 @@ describe('23. Native helper config/secrets creation reuse modes 600 without valu
     const validHash = crypto.createHash('sha256').update(validContent).digest('hex');
 
     fs.mkdirSync(path.join(dataDir, 'bin'), { recursive: true });
-    fs.writeFileSync(path.join(dataDir, 'bin', 'gemini-web2api-go'), validContent, { mode: 0o700 });
+    fs.writeFileSync(binaryPath(dataDir), validContent, { mode: 0o700 });
     fs.writeFileSync(path.join(dataDir, 'secrets.json'), JSON.stringify({
       apiKey: 'gw_key',
       adminToken: 'token'

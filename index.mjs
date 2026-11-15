@@ -3,6 +3,7 @@ import { ensureBackend, localBackend, localSetup } from './lib/native.mjs';
 import { registerMagpieCleanup, isPluginRemovedInActiveMagpie } from './lib/cleanup.mjs';
 import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
+import { isContainerEnv, dockerProxyHint } from './lib/proc.mjs';
 
 const ID = 'gemini-web';
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -85,11 +86,14 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
   const { studio: _studio, ...webOptions } = options;
   const opts = settings(webOptions);
   registerMagpieCleanup(_input);
+  const inContainer = isContainerEnv();
   const proxyPrompt = {
     type: 'text',
     key: 'proxy',
-    message: '访问 Google 的代理地址（无需代理或已在代理池配置可留空）',
-    placeholder: opts.proxy || 'http://127.0.0.1:7890',
+    message: inContainer
+      ? '访问 Google 的代理地址（容器 bridge 网络勿填 127.0.0.1，请填 http://host.docker.internal:<端口> 或宿主机局域网 IP；无需代理或已在代理池配置可留空）'
+      : '访问 Google 的代理地址（无需代理或已在代理池配置可留空）',
+    placeholder: opts.proxy || (inContainer ? 'http://host.docker.internal:7890' : 'http://127.0.0.1:7890'),
     validate: value => {
       try {
         validateProxyURL(value);
@@ -157,10 +161,11 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
           const loginURL = authuser ? `https://gemini.google.com/u/${authuser}/app` : GEMINI_URL;
           const ready = ensureBackend({ proxy });
           ready.catch(() => {});
+          const proxyHint = dockerProxyHint(proxy);
           return {
             url: loginURL,
             method: 'code',
-            instructions: COOKIE_STEPS.replaceAll(GEMINI_URL, loginURL),
+            instructions: COOKIE_STEPS.replaceAll(GEMINI_URL, loginURL) + (proxyHint ? `\n\n注意：${proxyHint}` : ''),
             async callback(code) {
               let local, cookie, added;
               try {
@@ -168,7 +173,8 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
                 local = await ready;
                 added = await importCookie(local, cookie, { authuser, ...(proxy ? { proxy } : {}) });
               } catch (err) {
-                return { type: 'failed', error: err.message };
+                const hint = dockerProxyHint(proxy);
+                return { type: 'failed', error: hint ? `${err.message}\n${hint}` : err.message };
               }
               const account = (await poolAccounts().catch(() => [])).find(a => a.id === added.id);
               return signInFor(local, account || { id: added.id });

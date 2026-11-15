@@ -43,7 +43,7 @@
 
 需要自行决定版本时，运行 `npm run studio:updates -- manual`；恢复自动更新用 `npm run studio:updates -- auto`。高级路径和独立服务始终由用户管理。
 
-浏览器登录需要下载 Camoufox（v0.3.7+ 约 1.3 GB）；Chrome / Cookie 导入可直接使用已有登录状态。Magpie 的单次连接等待上限为 10 分钟。网络较慢时，可先在已打开的官方账号管理页完成下载和登录；该页的后台任务不会因 Magpie 连接超时而取消，准备完成后再回到 Magpie 发起连接并选择已有账号。也可先在插件目录运行 `npm run studio:prepare-browser`，把浏览器下载放在登录计时之外；命令最多等待一小时，退出命令不会停止后端下载。连不上 GitHub 时先设置 `studio.proxy` 或 `AI_STUDIO_PROXY`。**「直接打开 Google 登录窗口」**仍可用于独立浏览器登录。已有后端若提供 Magpie 任务关联能力，仍可自动完成账号连接。
+浏览器登录需要下载 Camoufox（v0.3.7+ 约 1.3 GB）；Chrome / Cookie 导入可直接使用已有登录状态。在 Docker 或无图形界面的远程服务器上（无法直接打开 `127.0.0.1` 连接页），可直接选择 **「通过粘贴 Cookie 登录（无头 / 远程环境适用）」**（容器环境下会自动排在第一位并标为 **「粘贴 Cookie 无头登录（Docker / 远程服务器推荐）」**），按提示从本机浏览器 Network 面板复制 `aistudio.google.com` 请求头中的 `cookie` 值或 Cookie-Editor JSON 粘贴提交，全程无需打开 `127.0.0.1` 页面，也无需下载 Camoufox。Magpie 的单次连接等待上限为 10 分钟。网络较慢时，可先在已打开的官方账号管理页完成下载和登录；该页的后台任务不会因 Magpie 连接超时而取消，准备完成后再回到 Magpie 发起连接并选择已有账号。也可先在插件目录运行 `npm run studio:prepare-browser`，把浏览器下载放在登录计时之外；命令最多等待一小时，退出命令不会停止后端下载。连不上 GitHub 时先设置 `studio.proxy` 或 `AI_STUDIO_PROXY`。**「直接打开 Google 登录窗口」**仍可用于独立浏览器登录。已有后端若提供 Magpie 任务关联能力，仍可自动完成账号连接。
 
 自动安装支持 macOS / Linux 的 x64、arm64 和 Windows x64。macOS / Linux 使用官方 CLI 包；Windows 官方包是桌面可执行文件，默认放在数据目录根部，与 `.env` 和 `runtime/` 相邻，以保留其设置。Windows arm64 尚无官方原生包，请用高级路径选择系统可以运行的兼容程序（例如 x64 程序），或连接独立后端；插件会在查询下载前提示。
 
@@ -196,6 +196,7 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `npm run studio:auto-update:smoke` | 在临时目录验证后台自动升级、保留数据和启动失败后的程序回滚 |
 | `npm run studio:update:smoke -- v0.3.6` | 在临时目录将旧官方版实际在线升级到最新版，验证进程与重启 |
 | `node scripts/studio.mjs import <目录>` | 在服务停止状态下导入已有账号 |
+| `node scripts/studio.mjs import-cookie [<文件\|->]` | 无头导入 Google AI Studio Cookie（适合 Docker / 远程环境），支持 `--authuser` 与 `--proxy` |
 | `npm run studio:smoke` | 发起真实请求验收（会消耗账号额度） |
 
 </details>
@@ -238,6 +239,29 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 源码复现构建与发布流程见 [docs/backend-release.md](docs/backend-release.md)。
 
 </details>
+
+---
+
+## Docker / 远程服务器部署
+
+如果在 Docker 容器或无桌面的远程服务器中部署 Magpie：
+
+1. **为什么 `127.0.0.1` 页面打不开？**
+   出于安全考虑，连接引导页和本地 `AIStudio2API` / `gemini-web2api-go` 均只绑定在容器内部的 `127.0.0.1`。宿主机或外网浏览器访问 `127.0.0.1` 连向的是你本地电脑而不是容器内部（除非你额外做了端口转发或 SSH 隧道）。
+
+2. **推荐直接用「粘贴 Cookie 无头登录」：**
+   - **Google AI Studio (`ai-studio`)**：插件检测到容器环境时，会自动把 **「粘贴 Cookie 无头登录（Docker / 远程服务器推荐）」** 放在登录方式第一位。直接在你电脑自己的浏览器登录 <https://aistudio.google.com/prompts/new_chat>，打开 `F12 → Network`，复制任意 `aistudio.google.com` 请求头里完整的 `cookie` 值（或 Cookie-Editor JSON / Netscape `cookies.txt`），粘贴回 Magpie 即可无头完成校验和绑定——**无需打开 `127.0.0.1` 页面，也无需下载 1.3 GB 的 Camoufox**。
+   - **Gemini Web (`gemini-web`)**：本身即采用无头粘贴 Cookie 流程，在容器内同样无需访问 `127.0.0.1` 页面。
+   - **CLI 导入（可选）**：也可以在容器内执行 `printf '%s' "$COOKIE" | node scripts/studio.mjs import-cookie - --proxy http://host.docker.internal:7890`。
+
+3. **容器内如何填写代理地址？**
+   在默认的 bridge 网络中，容器内的 `127.0.0.1` 指向**容器自身**，无法访问宿主机上运行的代理软件：
+   - macOS / Windows Docker Desktop：填写 `http://host.docker.internal:<端口>`（或使用 `socks5://host.docker.internal:<端口>`）。
+   - Linux Docker：同样使用 `http://host.docker.internal:<端口>` 并为容器加上 `--add-host=host.docker.internal:host-gateway`（Compose 中写 `extra_hosts: ["host.docker.internal:host-gateway"]`），或直接填宿主机局域网 IP / `--network host`。
+
+4. **持久化数据与僵尸进程：**
+   - 挂载持久化卷，并通过环境变量固定 `AI_STUDIO_DATA_DIR` 和 `GEMINI_WEB_DATA_DIR`，避免重建容器丢失账号和 `.env` 配置。
+   - 若直接作为容器 `PID 1` 运行 Magpie，建议给 Docker 加上 `--init`（Compose 设 `init: true`），并升级到包含 `zombie` 进程判断修复的插件版本（`0.14.1`+），避免已退出的后端变成僵尸进程阻塞检测。
 
 ---
 

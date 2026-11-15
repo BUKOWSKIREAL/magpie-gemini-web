@@ -12,6 +12,9 @@ import {
   useDefaultStudio,
   ensureStudio,
   studioLogin,
+  studioImportCookie,
+  parseStudioCookieInput,
+  normalizeStudioProxy,
   prepareStudioBrowser,
   studioAccounts,
   stopStudio,
@@ -25,6 +28,7 @@ import {
   parseAccountOrder,
   parseModelAccounts
 } from '../lib/studio-native.mjs';
+import { parseAuthuser } from '../lib/setup.mjs';
 import { proxyLine, orderAccounts } from '../lib/studio.mjs';
 
 const LOGIN_TIMEOUT_MS = 15 * 60 * 1000;
@@ -48,10 +52,12 @@ Commands:
   login                                        Open isolated browser login for a new Google account
   relogin [<account>]                          Sign an account that needs it in again (its label or id)
   import <auth-directory>                      Import accounts from an existing auth directory (service must be stopped)
+  import-cookie [<cookie-file|->]              Import aistudio.google.com cookies headlessly (reads stdin when omitted or -)
 
 Options:
   --data-dir <path>                            Custom data directory
   --proxy <url>                                HTTP, HTTPS, or SOCKS5 proxy URL ("" clears the saved one)
+  --authuser <0-9>                             Google /u/N/ session index for import-cookie (default: 0)
   --version <tag>                              Install a specific official release and keep updates manual (install only)
   --archive <path>                             Local official archive; verify against the selected GitHub release
 `);
@@ -63,7 +69,7 @@ function parseArgs(args) {
     const arg = args[i];
     if (arg === '--help' || arg === '-h') {
       flags.help = true;
-    } else if (arg === '--data-dir' || arg === '--proxy' || arg === '--archive' || arg === '--version') {
+    } else if (arg === '--data-dir' || arg === '--proxy' || arg === '--authuser' || arg === '--archive' || arg === '--version') {
       const next = args[i + 1];
       // An empty --proxy clears the proxy saved for the service.
       if (next === undefined || next.startsWith('--') || (!next && arg !== '--proxy')) {
@@ -323,6 +329,43 @@ async function main() {
         throw new Error(account.message || 'Account still requires sign-in');
       }
       console.log(`Signed in again: ${account.label || account.id} (${account.state || 'unknown'})`);
+      break;
+    }
+    case 'import-cookie': {
+      if (flags._.length > 2) {
+        throw new Error('Usage: node scripts/studio.mjs import-cookie [<cookie-file|->] [--authuser <0-9>] [--proxy <url>]');
+      }
+      const authuser = parseAuthuser(flags.authuser);
+      const proxy = flags.proxy !== undefined ? normalizeStudioProxy(flags.proxy) : '';
+      const source = flags._[1];
+      let rawCookie = '';
+      if (!source || source === '-') {
+        if (!source && process.stdin.isTTY) {
+          throw new Error('Usage: node scripts/studio.mjs import-cookie <cookie-file|-> (or pipe cookies to stdin)');
+        }
+        const chunks = [];
+        for await (const chunk of process.stdin) chunks.push(chunk);
+        rawCookie = Buffer.concat(chunks).toString('utf8');
+      } else {
+        rawCookie = fs.readFileSync(path.resolve(source), 'utf8');
+      }
+      const parsedCookie = parseStudioCookieInput(rawCookie);
+      const local = await ensureStudio({
+        dataDir,
+        ...(flags.proxy !== undefined ? { proxy, savedProxy: proxy } : {}),
+        managementOnly: true
+      });
+      saveProxy(dataDir, flags.proxy !== undefined ? proxy : undefined);
+      const account = await studioImportCookie(local, parsedCookie, {
+        authuser,
+        proxy,
+        fetchFn: nodeFetch
+      });
+      if (!account || typeof account.id !== 'string' || !account.id || account.enabled === false) {
+        throw new Error('AIStudio2API did not return an enabled account');
+      }
+      console.log('Cookie import completed successfully.');
+      console.log(`Account: ${account.label || account.id}`);
       break;
     }
     case 'import': {

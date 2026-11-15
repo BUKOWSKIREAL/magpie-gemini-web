@@ -43,7 +43,7 @@ Subsequent starts reuse the installed executable. **Automatic stable updates are
 
 Use `npm run studio:updates -- manual` to manage versions yourself, or `npm run studio:updates -- auto` to resume automatic updates. Custom executables and independent services remain user-managed.
 
-Browser login downloads Camoufox (about 1.3 GB with v0.3.7+); Chrome / cookie import can use existing sessions. Magpie limits each connection attempt to 10 minutes. On slow connections, finish preparation in the official account management page: its background download and login tasks continue after Magpie times out. Then start a new connection in Magpie and select the imported account. Alternatively, run `npm run studio:prepare-browser` from the plugin directory before signing in. It waits up to an hour; closing the command does not cancel the backend download. Set `studio.proxy` or `AI_STUDIO_PROXY` if GitHub is unreachable. **「直接打开 Google 登录窗口」** still opens an isolated browser login window. Existing backends with Magpie task correlation can still complete the account connection automatically.
+Browser login downloads Camoufox (about 1.3 GB with v0.3.7+); Chrome / cookie import can use existing sessions. In Docker containers or headless remote servers where `127.0.0.1` pages are unreachable from your desktop browser, choose **「通过粘贴 Cookie 登录（无头 / 远程环境适用）」** (automatically promoted to first option as **「粘贴 Cookie 无头登录（Docker / 远程服务器推荐）」** inside containers): copy the `cookie` header from an `aistudio.google.com` request in your local browser DevTools Network tab (or Cookie-Editor JSON / Netscape `cookies.txt`) and paste it into Magpie for headless verification—no `127.0.0.1` web UI and no 1.3 GB Camoufox download required. Magpie limits each connection attempt to 10 minutes. On slow connections, finish preparation in the official account management page: its background download and login tasks continue after Magpie times out. Then start a new connection in Magpie and select the imported account. Alternatively, run `npm run studio:prepare-browser` from the plugin directory before signing in. It waits up to an hour; closing the command does not cancel the backend download. Set `studio.proxy` or `AI_STUDIO_PROXY` if GitHub is unreachable. **「直接打开 Google 登录窗口」** still opens an isolated browser login window. Existing backends with Magpie task correlation can still complete the account connection automatically.
 
 Automatic installation supports macOS / Linux x64 and arm64, and Windows x64. macOS / Linux use official CLI archives. The official Windows archive contains a desktop executable, installed beside `.env` and `runtime/` in the data directory to retain its settings. Windows arm64 currently needs a compatible executable selected through the advanced path option (for example, an x64 executable supported by the system), or an independent backend. Unsupported targets receive guidance before a release lookup.
 
@@ -196,6 +196,7 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 | `npm run studio:auto-update:smoke` | Verify background upgrades, retained data and executable rollback in a disposable directory |
 | `npm run studio:update:smoke -- v0.3.6` | Explicitly update an isolated older official backend to the latest release and verify restart |
 | `node scripts/studio.mjs import <dir>` | Import existing accounts while the service is stopped |
+| `node scripts/studio.mjs import-cookie [<file\|->]` | Headlessly import Google AI Studio cookies (ideal for Docker / remote hosts); supports `--authuser` and `--proxy` |
 | `npm run studio:smoke` | Run a live acceptance check (consumes account quota) |
 
 </details>
@@ -238,6 +239,29 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 - For reproducible builds and release procedures, see [docs/backend-release.md](docs/backend-release.md).
 
 </details>
+
+---
+
+## Docker & Remote Server Deployment
+
+When running Magpie inside a Docker container or on a headless remote server:
+
+1. **Why can't I open the `127.0.0.1` connection/admin page?**
+   For security, both the plugin's connection page and the local `AIStudio2API` / `gemini-web2api-go` backends bind strictly to `127.0.0.1` inside the container. Opening `127.0.0.1` in your desktop browser reaches your own machine rather than the container unless you forward ports over SSH or Docker port mapping.
+
+2. **Use headless cookie paste sign-in instead:**
+   - **Google AI Studio (`ai-studio`)**: When running inside a container, the plugin automatically promotes **「粘贴 Cookie 无头登录（Docker / 远程服务器推荐）」** to the top of the sign-in list. Open <https://aistudio.google.com/prompts/new_chat> in your local browser, copy the full `cookie` request header from DevTools Network (or a Cookie-Editor JSON / Netscape `cookies.txt` export), and paste it directly into Magpie—**no `127.0.0.1` browser UI and no 1.3 GB Camoufox download needed**.
+   - **Gemini Web (`gemini-web`)**: Already signs in via pasted cookies without needing any `127.0.0.1` UI.
+   - **CLI import (optional)**: You can also import cookies inside the container via `printf '%s' "$COOKIE" | node scripts/studio.mjs import-cookie - --proxy http://host.docker.internal:7890`.
+
+3. **Proxy addresses inside Docker:**
+   Inside a bridge-network container, `127.0.0.1` points to the container itself, not the host machine's proxy:
+   - Docker Desktop (macOS / Windows): use `http://host.docker.internal:<port>` (or `socks5://host.docker.internal:<port>`).
+   - Linux Docker: use `http://host.docker.internal:<port>` with `--add-host=host.docker.internal:host-gateway` (`extra_hosts: ["host.docker.internal:host-gateway"]` in Compose), your host's LAN IP, or `--network host`.
+
+4. **Persistent volumes & zombie reaping:**
+   - Mount persistent storage for `AI_STUDIO_DATA_DIR` and `GEMINI_WEB_DATA_DIR` so accounts and `.env` settings survive container recreations.
+   - Run Docker with `--init` (`init: true` in Compose) and update to plugin `0.14.1`+ so exited child processes inside PID 1 containers never remain as zombie processes blocking health checks.
 
 ---
 
