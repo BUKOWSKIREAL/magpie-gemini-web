@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import http from 'node:http';
 import { ensureStudioConfig, binaryPath, setStudioAutoUpdate } from '../lib/studio-native.mjs';
 import { acquireStudioUse, holdStudioResponse, newerStudioRelease, updateStudioAutomatically, watchStudioUpdates } from '../lib/studio-updates.mjs';
 import { officialArchive } from './helpers/studio-official.mjs';
@@ -41,7 +42,10 @@ function fixture(t) {
     if (pathname === '/api/auth/login') return new Response('{}', { headers: { 'Set-Cookie': 'aistudio_admin=fixture; Path=/' } });
     if (pathname === '/api/status') return Response.json(f.status);
     if (pathname === '/api/accounts/tasks') return Response.json({ tasks: f.tasks });
-    if (pathname === '/api/update') return Response.json({ updating: f.updating, current: f.status.version });
+    if (pathname === '/api/update') {
+      await f.onUpdateStatus?.(init);
+      return Response.json({ updating: f.updating, current: f.status.version });
+    }
     assert.fail('A protected/deferred update must not stop or start the service: ' + pathname);
   };
   f.run = options => updateStudioAutomatically({ dataDir, fetchFn: f.fetchFn, ...options });
@@ -76,6 +80,95 @@ describe('Automatic official backend updates', () => {
     assert.equal((await f.run()).state, 'busy');
     assert.equal(releaseLookups(f), 0);
     assert.equal(fs.readFileSync(f.bin, 'utf8'), 'current executable');
+  });
+
+  it('allows a cold upstream update-status lookup to take longer than five seconds', { timeout: 15000 }, async t => {
+    const f = fixture(t);
+    f.status.version = 'v0.3.7';
+    f.onUpdateStatus = async ({ signal }) => {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 5500);
+        signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+      });
+    };
+    assert.equal((await f.run()).state, 'current');
+  });
+
+  it('defers a real fetch timeout while reading the update-status body', async t => {
+    const f = fixture(t);
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.write('{'); // Headers arrive, but the JSON body never finishes.
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(() => { server.closeAllConnections(); server.close(); });
+    const original = f.fetchFn;
+    let receivedHeaders = false;
+    f.fetchFn = async (url, init) => {
+      if (new URL(url).pathname !== '/api/update') return original(url, init);
+      // Start the short timeout only once headers arrive, so slow CI connection
+      // setup cannot accidentally turn this into a pre-header timeout test.
+      const controller = new AbortController();
+      const response = await fetch(`http://127.0.0.1:${server.address().port}`, {
+        ...init, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])
+      });
+      receivedHeaders = true;
+      setTimeout(() => controller.abort(new DOMException('body deadline exceeded', 'TimeoutError')), 10);
+      return response;
+    };
+    assert.equal((await f.run()).state, 'busy');
+    assert.equal(receivedHeaders, true, 'exercise body consumption rather than connect timeout');
+    assert.equal(releaseLookups(f), 0);
+    assert.equal(fs.readFileSync(f.bin, 'utf8'), 'current executable');
+  });
+
+  for (const phase of ['before download', 'before replacement']) {
+    it('defers a timed-out update-status check ' + phase + ' and can recover', async t => {
+      const f = fixture(t);
+      let calls = 0;
+      f.onUpdateStatus = () => {
+        if (++calls === (phase === 'before download' ? 1 : 2)) {
+          throw new DOMException('upstream release lookup timed out', 'TimeoutError');
+        }
+      };
+      assert.equal((await f.run()).state, 'busy');
+      assert.equal(fs.readFileSync(f.bin, 'utf8'), 'current executable');
+      assert.equal(fs.readdirSync(f.dataDir).some(n => n.startsWith('.automatic-update.') && n.endsWith('.lock')), false);
+      assert.equal(f.requests.some(url => url.includes('/download/')), phase === 'before replacement');
+      const stateFile = path.join(f.dataDir, 'automatic-update.json');
+      const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile)) : {};
+      assert.ok(!state.error && !state.failedArchive && !state.retryAt);
+      f.onUpdateStatus = undefined;
+      f.status.version = 'v0.3.7';
+      assert.equal((await f.run()).state, 'current');
+    });
+  }
+
+  for (const activity of ['request', 'sign-in']) {
+    it('rechecks ' + activity + ' activity after a slow update-status lookup', async t => {
+      const f = fixture(t);
+      let calls = 0;
+      f.onUpdateStatus = () => {
+        if (++calls === 2) {
+          if (activity === 'request') f.status.active_requests = 1;
+          else f.tasks = [{ state: 'running' }];
+        }
+      };
+      assert.equal((await f.run()).state, 'busy');
+      assert.equal(calls, 2, 'exercise the final check while holding the maintenance gate');
+      assert.equal(fs.readFileSync(f.bin, 'utf8'), 'current executable');
+      assert.equal(fs.readdirSync(f.dataDir).some(n => n.startsWith('.automatic-update.') && n.endsWith('.lock')), false);
+    });
+  }
+
+  it('does not hide non-timeout failures from the update-status endpoint', async t => {
+    const f = fixture(t);
+    f.onUpdateStatus = () => { throw new Error('unexpected backend failure'); };
+    const result = await f.run();
+    assert.equal(result.state, 'failed');
+    assert.match(result.error, /unexpected backend failure/);
+    assert.equal((await f.run()).state, 'waiting');
   });
 
   it('keeps explicit manual policy and custom programs out of automatic installation', async t => {

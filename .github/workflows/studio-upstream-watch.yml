@@ -166,6 +166,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
       issues: write
     steps:
       - uses: actions/setup-node@v4
@@ -199,18 +200,21 @@ jobs:
           UPSTREAM_TAG: ${{ needs.resolve.outputs.tag }}
           VERIFY_RESULT: ${{ needs.verify.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           node --input-type=module <<'JS'
           const token = process.env.GH_TOKEN;
           const repo = process.env.REPO;
           const tag = (process.env.UPSTREAM_TAG || '').trim() || 'latest';
           const verifyResult = process.env.VERIFY_RESULT;
-          const runUrl = process.env.RUN_URL;
+          const runUrl = `${process.env.RUN_URL}/attempts/${process.env.RUN_ATTEMPT}`;
 
           if (!token || !repo) throw new Error('Missing GitHub token or repository context');
 
           const prefix = '[Upstream Watch] Official AIStudio2API ';
-          const targetTitle = `${prefix}${tag} compatibility check failed`;
+          const targetTitle = `${prefix}${tag} verification failed`;
+          const legacyTitle = `${prefix}${tag} compatibility check failed`;
           const headers = {
             Accept: 'application/vnd.github+json',
             Authorization: `Bearer ${token}`,
@@ -231,12 +235,14 @@ jobs:
             return res.json();
           }
 
-          async function apiAll(baseUrl) {
+          async function apiAll(baseUrl, collection) {
             const sep = baseUrl.includes('?') ? '&' : '?';
             const all = [];
             for (let page = 1; page <= 20; page += 1) {
-              const items = await api(`${baseUrl}${sep}per_page=100&page=${page}`);
-              if (!Array.isArray(items) || items.length === 0) break;
+              const payload = await api(`${baseUrl}${sep}per_page=100&page=${page}`);
+              const items = collection ? payload[collection] : payload;
+              if (!Array.isArray(items)) throw new Error(`Expected GitHub list response for ${baseUrl}`);
+              if (items.length === 0) break;
               all.push(...items);
               if (items.length < 100) break;
             }
@@ -263,7 +269,23 @@ jobs:
             }
             console.log(`Upstream watch passed for ${tag}; closed ${openIssues.length} open tracking issue(s).`);
           } else if (verifyResult === 'failure') {
-            const existing = openIssues.find(issue => issue.title === targetTitle);
+            const jobs = await apiAll(
+              `https://api.github.com/repos/${repo}/actions/runs/${process.env.RUN_ID}/attempts/${process.env.RUN_ATTEMPT}/jobs`, 'jobs'
+            );
+            const failures = jobs.filter(job => job.conclusion === 'failure' && job.name.startsWith('verify /'));
+            const details = failures.flatMap(job => {
+              const steps = (job.steps || []).filter(step => step.conclusion === 'failure');
+              return (steps.length ? steps : [{ name: 'Job failed before a test step was reported' }])
+                .map(step => `- [${job.name}](${job.html_url}): ${step.name}`);
+            });
+            const diagnosis = [
+              'The verification matrix failed; this alone does not establish an upstream compatibility regression.',
+              '',
+              ...details,
+              '',
+              'For isolated fixture failures, run `npm test`. For official backend failures, run `node scripts/studio-official-smoke.mjs` and `node scripts/studio-auto-update-smoke.mjs` on the affected platform.'
+            ].join('\n');
+            const existing = openIssues.find(issue => issue.title === targetTitle || issue.title === legacyTitle);
             if (existing) {
               const comments = await apiAll(`https://api.github.com/repos/${repo}/issues/${existing.number}/comments`);
               const alreadyLogged = String(existing.body || '').includes(runUrl) ||
@@ -273,7 +295,7 @@ jobs:
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    body: `Still failing on \`${tag}\`: ${runUrl}`
+                    body: `Still failing on \`${tag}\`: ${runUrl}\n\n${diagnosis}`
                   })
                 });
               }
@@ -285,11 +307,11 @@ jobs:
                 body: JSON.stringify({
                   title: targetTitle,
                   body: [
-                    `Daily upstream watch detected an official \`Mag1cFall/AIStudio2API\` compatibility failure for \`${tag}\`.`,
+                    `Daily upstream watch could not complete verification for official \`Mag1cFall/AIStudio2API\` \`${tag}\`.`,
                     '',
                     `- Workflow run: ${runUrl}`,
                     '',
-                    'Reproduce locally with `node scripts/studio-official-smoke.mjs` and `node scripts/studio-auto-update-smoke.mjs`.'
+                    diagnosis
                   ].join('\n')
                 })
               });
