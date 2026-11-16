@@ -1,23 +1,12 @@
-import { describe, it, before, after, afterEach } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
-import { setProcRoot } from '../lib/proc.mjs';
-import {
-  ensureStudioConfig,
-  binaryPath,
-  studioProcessStarted
-} from '../lib/studio-native.mjs';
+import { ensureStudioConfig, binaryPath } from '../lib/studio-native.mjs';
 import { supportsOfficialStudio } from '../lib/studio-upstream.mjs';
-import {
-  acquireStudioUse,
-  holdStudioResponse,
-  updateStudioAutomatically
-} from '../lib/studio-updates.mjs';
+import { lockRuntime } from './helpers/studio-lock-runtime.mjs';
 import { officialArchive } from './helpers/studio-official.mjs';
 
 // ---------------------------------------------------------------------------
@@ -322,49 +311,18 @@ function mulberry32(seed) {
 }
 
 describe('Studio cross-host lock formal model & property suite', () => {
-  let root, procRoot, archive, peerMaintChild, peerMaintStart, peerUseChild, peerUseStart, deadPid;
+  let root, archive, processes, acquireStudioUse, holdStudioResponse, updateStudioAutomatically;
+  // These PIDs exist only in the injected process table, never in OS probes.
+  const peerMaintPid = process.pid + 1, peerUsePid = process.pid + 2, deadPid = process.pid + 3;
+  const peerMaintStart = 'peer-maint-start', peerUseStart = 'peer-use-start';
 
   before(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-lock-model-'));
-    procRoot = path.join(root, 'proc');
-    fs.mkdirSync(procRoot, { recursive: true });
     archive = officialArchive(path.join(root, 'archive'));
-
-    peerMaintChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
-      windowsHide: true
-    });
-    peerUseChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
-      windowsHide: true
-    });
-    peerMaintStart = studioProcessStarted(peerMaintChild.pid);
-    peerUseStart = studioProcessStarted(peerUseChild.pid);
-    assert.ok(peerMaintStart && peerUseStart, 'expected non-empty peer start timestamps');
-
-    const deadChild = spawn(process.execPath, ['-e', 'process.exit(0)'], {
-      stdio: 'ignore',
-      windowsHide: true
-    });
-    deadPid = deadChild.pid;
-    await once(deadChild, 'exit');
+    ({ processes, acquireStudioUse, holdStudioResponse, updateStudioAutomatically } = await lockRuntime(root));
   });
 
-  afterEach(() => {
-    setProcRoot();
-  });
-
-  after(async () => {
-    setProcRoot();
-    for (const child of [peerMaintChild, peerUseChild]) {
-      if (child && child.exitCode === null) {
-        const done = once(child, 'exit');
-        child.kill('SIGKILL');
-        await done;
-      }
-    }
-    fs.rmSync(root, { recursive: true, force: true });
-  });
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it('exhaustively verifies TLA+ safety invariants across crashes, zombies, and PID reuse', () => {
     const res = runLockModel();
@@ -386,17 +344,31 @@ describe('Studio cross-host lock formal model & property suite', () => {
     assert.match(m3.violation, /NoLiveOwnerUnlinked|SingleMaintenance/);
   });
 
-  it('satisfies protocol invariants across seeded randomized execution against lib/studio-updates.mjs', { timeout: process.platform === 'win32' ? 120000 : 30000 }, async () => {
+  it('preserves an uninspectable owner until exit or a different start identity is proven', async () => {
+    for (const recovery of ['exit', 'reused']) {
+      const dataDir = fs.mkdtempSync(path.join(root, 'unknown-owner-'));
+      const gate = path.join(dataDir, '.automatic-update.peer.lock');
+      const owner = JSON.stringify({ pid: peerMaintPid, started: 'original-start', token: 'peer' });
+      processes.set(peerMaintPid, { state: 'alive', started: null });
+      fs.writeFileSync(gate, owner);
+      await assert.rejects(acquireStudioUse({ dataDir, timeoutMs: 0 }), /finishing an automatic update/);
+      assert.equal(fs.readFileSync(gate, 'utf8'), owner, 'a failed identity lookup must not authorize stale unlink');
+      assert.deepEqual(fs.readdirSync(dataDir), [path.basename(gate)]);
+      processes.set(peerMaintPid, recovery === 'exit'
+        ? { state: 'dead', started: null }
+        : { state: 'alive', started: 'successor-start' });
+      (await acquireStudioUse({ dataDir, timeoutMs: 0 }))();
+      assert.deepEqual(fs.readdirSync(dataDir), []);
+    }
+  });
+
+  it('satisfies protocol invariants across seeded randomized execution against lib/studio-updates.mjs', { timeout: process.platform === 'win32' ? 120000 : 30000 }, async t => {
     for (let seed = 1; seed <= 8; seed++) {
+      t.diagnostic(`lock protocol seed ${seed}`);
       const rng = mulberry32(0xC0FFEE + seed * 97);
       const dataDir = fs.mkdtempSync(path.join(root, `fuzz-${seed}-`));
-      const seedProc = path.join(procRoot, `seed-${seed}`);
-      const peerStatDirs = {
-        maint: path.join(seedProc, String(peerMaintChild.pid)),
-        use: path.join(seedProc, String(peerUseChild.pid))
-      };
-      fs.mkdirSync(seedProc, { recursive: true });
-      setProcRoot(seedProc);
+      processes.set(peerMaintPid, { state: 'alive', started: peerMaintStart });
+      processes.set(peerUsePid, { state: 'alive', started: peerUseStart });
 
       ensureStudioConfig(dataDir);
       const bin = binaryPath(dataDir);
@@ -441,28 +413,21 @@ describe('Studio cross-host lock formal model & property suite', () => {
       };
 
       const setPeerZombie = (kind, zombieOn) => {
-        const statDir = peerStatDirs[kind];
-        const peerPid = kind === 'maint' ? peerMaintChild.pid : peerUseChild.pid;
-        fs.rmSync(statDir, { recursive: true, force: true });
-        if (zombieOn) {
-          fs.mkdirSync(statDir, { recursive: true });
-          fs.writeFileSync(path.join(statDir, 'stat'), `${peerPid} (studio worker) Z 1 1 1 0\n`);
-        }
+        const peerPid = kind === 'maint' ? peerMaintPid : peerUsePid;
+        processes.get(peerPid).state = zombieOn ? 'zombie' : 'alive';
       };
 
       const makeOwnerPayload = (kind, state, token) => {
-        const peerPid = kind === 'maint' ? peerMaintChild.pid : peerUseChild.pid;
+        const peerPid = kind === 'maint' ? peerMaintPid : peerUsePid;
         const peerStart = kind === 'maint' ? peerMaintStart : peerUseStart;
         if (state === 'dead') return { pid: deadPid, started: 'dead-start', token };
         if (state === 'reused') return { pid: peerPid, started: 'stale-previous-boot', token };
-        // On win32, omit started for repeated live checks so Get-CimInstance powershell calls don't dominate fuzz time;
-        // 'reused' still exercises studioProcessStarted(pid) on Windows.
-        return { pid: peerPid, started: process.platform === 'win32' ? undefined : peerStart, token };
+        return { pid: peerPid, started: peerStart, token };
       };
 
       const writePeerFile = (kind, state) => {
         const token = `peer-${kind}-${crypto.randomUUID()}`;
-        const peerPid = kind === 'maint' ? peerMaintChild.pid : peerUseChild.pid;
+        const peerPid = kind === 'maint' ? peerMaintPid : peerUsePid;
         const pid = state === 'dead' ? deadPid : peerPid;
         const name = kind === 'maint' ? `.automatic-update.${token}.lock` : `.studio-use.${pid}.${token}.json`;
         setPeerZombie(kind, state === 'zombie');
@@ -643,7 +608,6 @@ describe('Studio cross-host lock formal model & property suite', () => {
       assert.deepEqual(leftovers, [], `seed ${seed}: stale lock files remained after quiescence`);
       setPeerZombie('maint', false);
       setPeerZombie('use', false);
-      setProcRoot();
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
