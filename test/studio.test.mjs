@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
-import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accountGroupEmail, poolUsage, accountUsage, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
+import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accountGroupEmail, poolUsage, accountUsage, dailyUsageWindows, accountQuestion, signInProgress, STUDIO_ID, STUDIO_BASE } from '../lib/studio.mjs';
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, ensureStudio } from '../lib/studio-native.mjs';
 import { STUDIO_VERSION, PINNED_ARCHIVES, CAMOUFOX_VERSION } from './helpers/studio-legacy.mjs';
@@ -38,8 +38,8 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         const url = req.url;
         serverRequests.push({ method: req.method, url, headers: req.headers, body: reqBody });
 
-        if (serverResponses[url]) {
-          const resp = serverResponses[url];
+        const resp = serverResponses[url] || serverResponses[url.split('?')[0]];
+        if (resp) {
           if (typeof resp === 'function') {
             resp(req, res, reqBody);
           } else {
@@ -1492,6 +1492,82 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     const loggedOutUsage = await plugin.auth.usage(async () => null);
     assert.deepEqual(loggedOutUsage.windows, []);
     assert.ok(loggedOutUsage.error.includes('还没有登录'));
+  });
+
+  it('shows local daily tokens and API-price estimates scoped to the account or imported group', async () => {
+    const setup = standInSetup('managed-key');
+    const auth = { type: 'api', key: 'managed-key', metadata: signInFor('a@example.com').metadata };
+    const seen = [];
+    try {
+      const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+      serverResponses['/api/accounts'] = accountsResponse([
+        { ...POOL[0], id: 'account-a', label: 'a@example.com' },
+        { ...POOL[0], id: 'account-b', label: 'b+tag@example.com' },
+        { ...POOL[0], id: 'unrelated', label: 'other@example.com' }
+      ]);
+      serverResponses['/api/usage'] = (req, res) => {
+        const query = new URL(req.url, serverURL).searchParams;
+        seen.push(query);
+        const grouped = query.get('account') === 'a@example.com,b+tag@example.com';
+        res.writeHead(200, jsonHeaders);
+        res.end(JSON.stringify({ totals: { total_tokens: grouped ? 11000000 : 10000000 }, cost: grouped ? 12.5 : 10.25, unpriced_models: [] }));
+      };
+      const single = await plugin.auth.usage(async () => ({ ...auth, metadata: { ...auth.metadata, account: 'account-a' } }));
+      const daily = single.windows.find(w => w.name === '今日用量（本地）');
+      assert.deepEqual(daily, { name: '今日用量（本地）', display: '10M tokens · API 标价估算 $10.25' });
+      assert.equal(single.signIn, 'kept');
+      assert.ok(single.windows.indexOf(daily) < single.windows.findIndex(w => w.name === '管理页'));
+      assert.equal(seen[0].get('account'), 'a@example.com', 'the ledger records labels, not internal IDs');
+      const from = new Date(seen[0].get('from')), to = new Date(seen[0].get('to'));
+      const midnight = new Date(to); midnight.setHours(0, 0, 0, 0);
+      assert.equal(from.getTime(), midnight.getTime());
+      assert.ok(to > from && to <= new Date());
+
+      const grouped = await plugin.auth.usage(async () => ({ ...auth, metadata: { ...auth.metadata, account: undefined, accounts: ['account-a', 'account-b'] } }));
+      assert.deepEqual(grouped.windows.find(w => w.name === daily.name), { name: daily.name, display: '11M tokens · API 标价估算 $12.50' });
+      assert.equal(seen[1].get('account'), 'a@example.com,b+tag@example.com');
+      const count = seen.length;
+      await plugin.auth.usage(async () => ({ ...auth, metadata: { ...auth.metadata, account: 'removed' } }));
+      await plugin.auth.usage(async () => ({ ...auth, metadata: { ...auth.metadata, account: undefined, accounts: ['removed'] } }));
+      assert.equal(seen.length, count, 'a missing account must never fall back to all-account totals');
+    } finally {
+      delete serverResponses['/api/accounts'];
+      delete serverResponses['/api/usage'];
+      setup.remove();
+    }
+  });
+
+  it('does not present missing prices or failed usage reads as zero spending', async () => {
+    const setup = standInSetup('managed-key');
+    const accounts = [{ id: 'a@example.com' }];
+    const now = new Date(2026, 10, 16, 12, 30);
+    try {
+      for (const [cost, unpriced, expected] of [
+        [0, [], '0 tokens · API 标价估算 $0.00'],
+        [0.001, [], '0 tokens · API 标价估算 <$0.01'],
+        [1.234, ['image-model'], '0 tokens · API 标价估算 $1.23（部分模型未计价）'],
+        [0, ['image-model'], '0 tokens · 费用未计价']
+      ]) {
+        serverResponses['/api/usage'] = { status: 200, headers: jsonHeaders, body: JSON.stringify({ totals: { total_tokens: 0 }, cost, unpriced_models: unpriced }) };
+        assert.deepEqual(await dailyUsageWindows(localStudio(), accounts, now), [{ name: '今日用量（本地）', display: expected }]);
+      }
+      for (const response of [
+        { status: 404, body: '{}' }, { status: 500, body: '{}' }, { status: 200, body: 'not json' },
+        { status: 200, body: '{}' },
+        { status: 200, body: JSON.stringify({ totals: { total_tokens: -1 }, cost: 1, unpriced_models: [] }) },
+        { status: 200, body: JSON.stringify({ totals: { total_tokens: 1 }, cost: null, unpriced_models: [] }) }
+      ]) {
+        serverResponses['/api/usage'] = { headers: jsonHeaders, ...response };
+        assert.deepEqual(await dailyUsageWindows(localStudio(), accounts, now), []);
+      }
+      const before = serverRequests.length;
+      assert.deepEqual(await dailyUsageWindows(localStudio(), [], now), []);
+      assert.deepEqual(await dailyUsageWindows(localStudio(), [{ id: 'a,b' }], now), []);
+      assert.equal(serverRequests.length, before, 'empty or ambiguous filters must not query another account');
+    } finally {
+      delete serverResponses['/api/usage'];
+      setup.remove();
+    }
   });
 
   it('10b. an account\'s usage card shows its own cooldowns, or why it can\'t serve', async () => {
