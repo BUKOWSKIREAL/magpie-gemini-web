@@ -1,6 +1,6 @@
 # AI Studio 本地后端与历史构建
 
-当前插件（0.14.x）已默认接入官方上游发行版，历史托管构建清单仅保留作兼容与复现参考。
+当前插件（0.14.0 起）已默认接入官方上游发行版，历史托管构建清单仅保留作兼容与复现参考。
 
 默认接入流程为：安装插件 → 登录 Google AI Studio → 自动下载并启动官方后端 → 添加 Google 账号 → 回到连接页确认。安装和后续自动更新均跟随 [Mag1cFall/AIStudio2API](https://github.com/Mag1cFall/AIStudio2API/releases) 最新稳定版。运行时不依赖 `lib/studio-release.json`，插件发布无需先发布定制 AI Studio 安装包。
 
