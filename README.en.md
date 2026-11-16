@@ -89,6 +89,7 @@ For an independently running service, choose **Connect an existing AIStudio2API 
 - **Usage reporting:**
   - `gemini-web`: Available only with the one-click local backend. Usage is read from Google again whenever Magpie asks for it (at most once every 30 seconds per account), so pressing refresh shows the current allowance, including usage from the Gemini app, the website or other devices. On its own, Magpie asks about once a minute while the Usage page or the menu bar's allowances panel is open, whenever it updates allowances shown in the menu bar (every 3 minutes by default), and at most once a minute while it routes requests among accounts; otherwise it doesn't ask. A failed read isn't retried on its own for 10 minutes; pressing refresh in that time retries it at once (press it again if the first press doesn't).
   - `ai-studio`: AI Studio does not report remaining total quota; cards display models currently on cooldown and their recovery times, or prompt when re-authentication is needed.
+    Cards also show today's tokens and estimated USD at API list prices from the local backend's request ledger, filtered to that account or imported group. Today starts at midnight in the Magpie host's timezone. These are estimates for traffic through this backend, not actual charges or remaining credits. The backend handles model pricing, cached input and long-context tiers; unpriced models are marked as missing or partial pricing. If the backend cannot provide this report, the daily row is omitted.
 
 ---
 
