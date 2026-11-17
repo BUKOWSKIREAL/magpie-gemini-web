@@ -22,6 +22,29 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
   let origWebDataDir;
   let origDockerContainer;
 
+  it('passes backend estimated prices and context tiers to Magpie without pricing unknown models', async () => {
+    const flat = { input: 1.5, output: 7.5, cache_read: 0.075 };
+    const tiered = { input: 2, output: 12, cache_read: 0.2, tiers: [{ above: 200000, input: 4, output: 18, cache_read: 0.4 }] };
+    const items = [
+      ['gemini-4-hydrogen', flat], ['gemini-4-hydrogen-search', flat], ['gemini-3.1-pro-preview-search', tiered],
+      ['gemini-unknown', undefined], ['gemini-bad-price', { ...flat, input: -1 }], ['gemini-missing-cache', { input: 2, output: 12 }],
+      ['gemini-bad-tier', { ...tiered, tiers: [{ above: 200000, input: 4, output: null, cache_read: 0.4 }] }]
+    ];
+    serverResponses['/v1/models'] = { body: JSON.stringify({ data: items.map(([id, estimated_cost]) => ({ id, estimated_cost, capabilities: { chat_model: true }, supported_generation_methods: ['generateContent'] })) }) };
+    try {
+      const models = await listStudioModels({ baseURL: serverURL, key: 'test-key' }, studioSettings(), true);
+      assert.deepEqual(models['gemini-4-hydrogen'].cost, { preferred: true, input: 1.5, output: 7.5, cache: { read: 0.075, write: 0 } });
+      assert.deepEqual(models['gemini-4-hydrogen-search'].cost, models['gemini-4-hydrogen'].cost);
+      assert.deepEqual(models['gemini-3.1-pro-preview-search'].cost, { preferred: true, input: 2, output: 12, cache: { read: 0.2, write: 0 }, tiers: [{ above: 200000, input: 4, output: 18, cache_read: 0.4, cache_write: 0 }] });
+      for (const [id] of items.slice(3)) assert.deepEqual(models[id].cost, { input: 0, output: 0, cache: { read: 0, write: 0 } }, id);
+      for (const input of [{}, { magpie: { capabilities: { modelCost: 1 } } }]) {
+        const plugin = await AIStudioPlugin(input, { studio: { baseURL: serverURL } });
+        const listed = await plugin.provider.models({ models: {} }, { auth: { type: 'api', key: 'test-key' } });
+        assert.deepEqual(listed['gemini-3.1-pro-preview-search'].cost, input.magpie ? models['gemini-3.1-pro-preview-search'].cost : { input: 0, output: 0, cache: { read: 0, write: 0 } });
+      }
+    } finally { delete serverResponses['/v1/models']; }
+  });
+
   before(async () => {
     origStudioDataDir = process.env.AI_STUDIO_DATA_DIR;
     origWebDataDir = process.env.GEMINI_WEB_DATA_DIR;

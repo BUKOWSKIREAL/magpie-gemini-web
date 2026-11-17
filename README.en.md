@@ -91,6 +91,8 @@ For an independently running service, choose **Connect an existing AIStudio2API 
   - `ai-studio`: AI Studio does not report remaining total quota; cards display models currently on cooldown and their recovery times, or prompt when re-authentication is needed.
     Cards also show today's tokens and estimated USD at API list prices from the local backend's request ledger, filtered to that account or imported group. Today starts at midnight in the Magpie host's timezone. These are estimates for traffic through this backend, not actual charges or remaining credits. The backend handles model pricing, cached input and long-context tiers; unpriced models are marked as missing or partial pricing. If the backend cannot provide this report, the daily row is omitted.
 
+    When the backend's `/v1/models` supplies `estimated_cost`, the plugin passes the same input, output, cached-input and context-tier rates to Magpie. Magpie hosts advertising `magpie.capabilities.modelCost: 1` use those backend rates on the Usage page, with user-set prices taking precedence. Older Magpie hosts, OpenCode, and backends without that field keep their existing catalog pricing. Account cards cover the backend's traffic; Usage covers requests recorded by Magpie, so token costs can be compared for the same requests.
+
 ---
 
 ## Image Generation (AI Studio)
