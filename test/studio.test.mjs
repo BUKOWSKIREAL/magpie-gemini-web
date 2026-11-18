@@ -1346,7 +1346,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const question = await google.ask({});
       assert.deepEqual(question.options, [
         { label: '添加新的 Google 账号', value: '+new', hint: '打开登录窗口' },
-        { label: 'a@example.com', value: 'a@example.com', hint: '可用' },
+        { label: 'a@example.com', value: 'a@example.com', hint: '账号就绪' },
         { label: 'b@example.com', value: 'b@example.com', hint: '需要重新登录：会打开登录窗口' }
       ]);
       assert.equal(await google.ask({ account: 'a@example.com' }), null, 'answered: nothing more to ask');
@@ -1598,9 +1598,9 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     const auth = { type: 'api', key: 'managed-key', metadata: signInFor('a@example.com').metadata };
     try {
       const plugin = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
-      for (const cooldownStatus of [200, 500]) {
-        serverResponses['/api/cooldowns'] = { status: cooldownStatus, headers: jsonHeaders, body: '{"cooldowns":[]}' };
-        for (const [state, display] of [['ready', '可用'], ['busy', '使用中'], ['cooldown', '冷却中']]) {
+      for (const [status, body, readable] of [[200, '{"cooldowns":[]}', true], [500, '{}', false], [200, '{}', false]]) {
+        serverResponses['/api/cooldowns'] = { status, headers: jsonHeaders, body };
+        for (const [state, display] of [['ready', '账号就绪'], ['busy', '使用中'], ['cooldown', '冷却中']]) {
           serverResponses['/api/accounts'] = accountsResponse([{ ...POOL[0], state }, POOL[1]]);
           const card = await plugin.auth.usage(async () => auth);
           assert.equal(card.user, 'a@example.com');
@@ -1608,7 +1608,9 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
           assert.equal(card.signIn, 'kept');
           assert.deepEqual(card.windows[0], { name: 'a@example.com', display });
           assert.equal(card.windows.some(w => Object.hasOwn(w, 'used')), false, 'state is not a quota percentage');
-          assert.equal(card.windows[1].name, '管理页');
+          const warning = card.windows.find(w => w.name === '模型冷却');
+          assert.deepEqual(warning, readable ? undefined : { name: '模型冷却', display: '未能读取冷却状态，请刷新重试' });
+          assert.ok(card.windows.some(w => w.name === '管理页'));
         }
       }
     } finally {
@@ -1629,7 +1631,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     assert.equal(card.error, undefined);
     assert.deepEqual(card.windows, [
       { name: 'b@example.com', display: '使用中' },
-      { name: 'a@example.com', display: '可用' },
+      { name: 'a@example.com', display: '账号就绪' },
       { name: 'c', display: '冷却中' },
       { name: 'd', display: '需要重新登录' }
     ]);
@@ -1654,7 +1656,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       };
       const a = await plugin.auth.usage(async () => authFor('a@example.com'));
       const [status, cooldown, admin, backend] = a.windows;
-      assert.deepEqual(status, { name: 'a@example.com', display: '可用' });
+      assert.deepEqual(status, { name: 'a@example.com', display: '账号就绪' });
       assert.deepEqual({ ...a, windows: [cooldown] }, { user: 'a@example.com', windows: [{ name: 'gemini-4-argon', used: 100, resetsAt: until, display: '冷却中：quota exhausted' }], signIn: 'kept' });
       // Below the account's own windows, where the service's admin page is (its proxy can't be read here)
       assert.equal(a.windows.length, 4);
@@ -1677,6 +1679,10 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
 
       const gone = await plugin.auth.usage(async () => authFor('c@example.com'));
       assert.match(gone.error, /已经没有这个账号（c@example\.com）/);
+
+      serverResponses['/api/accounts'] = { status: 200, headers: jsonHeaders, body: '{}' };
+      const unreadable = await plugin.auth.usage(async () => authFor('a@example.com'));
+      assert.deepEqual(unreadable, { error: '无法读取本地 AI Studio 账号列表，请刷新重试', windows: [], signIn: 'kept' });
     } finally {
       delete serverResponses['/api/accounts'];
       delete serverResponses['/api/cooldowns'];
@@ -1735,7 +1741,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       serverResponses['/api/cooldowns'] = { status: 500, headers: jsonHeaders, body: '{}' };
       const partial = await plugin.auth.usage(async () => managedAuth);
       assert.equal(partial.error, undefined);
-      assert.deepEqual(partial.windows.map(w => w.name), ['a@example.com', 'b@example.com', '管理页', '后端管理']);
+      assert.deepEqual(partial.windows.map(w => w.name), ['a@example.com', 'b@example.com', '模型冷却', '管理页', '后端管理']);
 
       // No account can serve until one signs in again: say how to fix it
       serverResponses['/api/accounts'] = accountsResponse([POOL[1]]);
@@ -1787,7 +1793,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       { name: '所有模型', used: 50, resetsAt: at(30), display: '1/2 个账号冷却中' }
     ]);
 
-    assert.deepEqual(poolUsage([{ id: 'solo', state: 'ready' }], [], now), { user: 'solo', windows: [{ name: 'solo', display: '可用' }] });
+    assert.deepEqual(poolUsage([{ id: 'solo', state: 'ready' }], [], now), { user: 'solo', windows: [{ name: 'solo', display: '账号就绪' }] });
     assert.match(poolUsage([], [], now).error, /还没有 Google 账号/);
     // One account: its cooldowns alone, soonest back first; one with no model is all of them
     const mine = accountUsage(accounts[0], [
@@ -1871,9 +1877,9 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const card = await plugin.auth.usage(async () => managedAuth);
       assert.equal(card.user, 'c@example.com +2');
       assert.deepEqual(card.windows.slice(0, 3), [
-        { name: 'c@example.com', display: '可用' },
-        { name: 'b@example.com', display: '可用' },
-        { name: 'a@example.com', display: '可用' }
+        { name: 'c@example.com', display: '账号就绪' },
+        { name: 'b@example.com', display: '账号就绪' },
+        { name: 'a@example.com', display: '账号就绪' }
       ]);
       assert.deepEqual(card.windows.slice(3, 5), [
         { name: '账号顺序', display: 'c@example.com → b@example.com' },
