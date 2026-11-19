@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index c6a75e272d59110a5f83e71bfa89b4588622905d..db2c8f5f60618bad14c38e013b469132d2c0c546 100644
+index c6a75e2..db2c8f5 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -9,6 +9,7 @@ require (
@@ -19,7 +19,7 @@ index c6a75e272d59110a5f83e71bfa89b4588622905d..db2c8f5f60618bad14c38e013b469132
  	golang.org/x/text v0.42.0 // indirect
  	modernc.org/libc v1.72.3 // indirect
 diff --git a/internal/app/admin_cookies.go b/internal/app/admin_cookies.go
-index 78236c6760f6509fcdce801ba853d9ecfafe16ca..a5109b0785d71c0ed1081b7316c2b3319223b160 100644
+index 78236c6..a5109b0 100644
 --- a/internal/app/admin_cookies.go
 +++ b/internal/app/admin_cookies.go
 @@ -87,9 +87,10 @@ func handleAdminCookies(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +65,7 @@ index 78236c6760f6509fcdce801ba853d9ecfafe16ca..a5109b0785d71c0ed1081b7316c2b331
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
 diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
-index b4acdde93f5f6bab89e7e0cc0e21dc81c9849ccb..77ae3c8e7fce039f22c0b9b633f57402518a4630 100644
+index 883532e..19a6ca8 100644
 --- a/internal/app/admin_ui/index.html
 +++ b/internal/app/admin_ui/index.html
 @@ -1020,7 +1020,8 @@ const RT_GROUPS = [
@@ -78,7 +78,7 @@ index b4acdde93f5f6bab89e7e0cc0e21dc81c9849ccb..77ae3c8e7fce039f22c0b9b633f57402
        { k: 'retry_on_timeout', label: '超时后重试', type: 'bool',
          hint: '开：上游等满「上游超时」还没回完时，按重试次数再发（默认）。关：超时直接报错——等满一次都没回完，重发多半还是超时，一个请求最坏要等「超时 × 重试次数」，超长输入或慢模型（如 Argon）下能拖十几分钟。其他失败（空响应、出错话术等）照常重试' },
        { k: 'stream_keepalive_sec', label: '流式保活（秒）', type: 'int', min: 0, max: 300,
-@@ -1042,8 +1043,6 @@ const RT_GROUPS = [
+@@ -1044,8 +1045,6 @@ const RT_GROUPS = [
          hint: '上游前端版本号。请求大面积失败时先看这里是不是过期了' },
        { k: 'gemini_bl_auto', label: '自动跟随 bl 版本', type: 'bool',
          hint: '每 6 小时从 /app 页面抓一次最新版本号，抓到就用抓到的。抓不到或格式不对就继续用上面钉的值' },
@@ -89,10 +89,10 @@ index b4acdde93f5f6bab89e7e0cc0e21dc81c9849ccb..77ae3c8e7fce039f22c0b9b633f57402
    {
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..a2a5e774e8547afb125de6161c624bbfe572fe7e
+index 0000000..1a73717
 --- /dev/null
 +++ b/internal/app/argon.go
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,188 @@
 +package app
 +
 +import (
@@ -113,17 +113,19 @@ index 0000000000000000000000000000000000000000..a2a5e774e8547afb125de6161c624bbf
 +	return fmt.Sprintf("Argon model mismatch: upstream reported %q (%s)", e.name, e.id)
 +}
 +
-+// argonDisplayNames 是上游对 Argon 各思考档位自报的显示名：普通档 "4 Argon"，
-+// 扩展思考（think=2，上游叫 High）"4 Argon High"，中档（think=4）自报 "4 Argon" 或 "4 Argon Medium"。
-+// 按请求的档位只认对应名字，档位被静默换掉也算身份不符。
++// argonDisplayNames 是上游对 Argon/Carbon 同一路由各思考档位自报的显示名。
++// v4.29 起 Argon 改名为 Carbon，两个名字都接受；但其它模型和 Argon 的错误档位仍然拒绝。
++// 当前 mode 8 为避免挂起会带 inner[49]=40，上游因此可能把 Carbon 思考档降为普通档，
++// 所以 Carbon 的普通名在各档都接受（与上游 v4.30 的模型表说明一致）。
 +func argonDisplayNames(think int) []string {
++	carbon := []string{"4 Carbon", "Gemini 4 Carbon"}
 +	if think == thinkingExtended {
-+		return []string{"4 Argon High", "Gemini 4 Argon High"}
++		return append(carbon, "4 Argon High", "Gemini 4 Argon High", "4 Carbon High", "Gemini 4 Carbon High")
 +	}
 +	if think == thinkingMedium {
-+		return []string{"4 Argon", "Gemini 4 Argon", "4 Argon Medium", "Gemini 4 Argon Medium"}
++		return append(carbon, "4 Argon", "Gemini 4 Argon", "4 Argon Medium", "Gemini 4 Argon Medium", "4 Carbon Medium", "Gemini 4 Carbon Medium")
 +	}
-+	return []string{"4 Argon", "Gemini 4 Argon"}
++	return append(carbon, "4 Argon", "Gemini 4 Argon")
 +}
 +
 +// argonThinkFromHeader 从模型 header 下标 15 取思考档位；最小形式没有这一槽，按普通档。
@@ -214,14 +216,28 @@ index 0000000000000000000000000000000000000000..a2a5e774e8547afb125de6161c624bbf
 +//
 +// onLine 为 nil（非流式）时没有转发，照旧读完整段再校验。
 +func readModelCheckedBody(r io.Reader, onLine func(string) error, start time.Time, status int, modelHeader string) ([]byte, int64, error) {
++	return readModelCheckedBodyUsing(r, onLine, start, status, modelHeader, readBody)
++}
++
++// readModelCheckedBodyWithIdle retains Argon/Carbon identity checks while enabling v4.30's
++// optional stream_idle_timeout_sec watchdog. Closing body interrupts a blocked Read.
++func readModelCheckedBodyWithIdle(body io.ReadCloser, onLine func(string) error, start time.Time, status int, modelHeader string, idle time.Duration) ([]byte, int64, error) {
++	return readModelCheckedBodyUsing(body, onLine, start, status, modelHeader,
++		func(_ io.Reader, onLine func(string) error, start time.Time) ([]byte, int64, error) {
++			return readBodyWithIdle(body, onLine, start, idle)
++		})
++}
++
++func readModelCheckedBodyUsing(r io.Reader, onLine func(string) error, start time.Time, status int, modelHeader string,
++	read func(io.Reader, func(string) error, time.Time) ([]byte, int64, error)) ([]byte, int64, error) {
 +	var h []any
 +	isArgon := json.Unmarshal([]byte(modelHeader), &h) == nil && len(h) > 4 && h[4] == hexArgon4
 +	if !isArgon {
-+		return readBody(r, onLine, start)
++		return read(r, onLine, start)
 +	}
 +	names := argonDisplayNames(argonThinkFromHeader(h))
 +	if status != 200 || onLine == nil {
-+		raw, ttfb, err := readBody(r, nil, start)
++		raw, ttfb, err := read(r, nil, start)
 +		if err != nil || status != 200 {
 +			return raw, ttfb, err
 +		}
@@ -230,7 +246,7 @@ index 0000000000000000000000000000000000000000..a2a5e774e8547afb125de6161c624bbf
 +
 +	var pending []string
 +	verified := false
-+	raw, ttfb, err := readBody(r, func(line string) error {
++	raw, ttfb, err := read(r, func(line string) error {
 +		ok, lerr := argonIdentityInLine(line, names)
 +		if lerr != nil {
 +			return lerr
@@ -267,7 +283,7 @@ index 0000000000000000000000000000000000000000..a2a5e774e8547afb125de6161c624bbf
 +}
 diff --git a/internal/app/argon_probe_test.go b/internal/app/argon_probe_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..bbc0041bb2d8769657d195f9b2b997f4c49da181
+index 0000000..bbc0041
 --- /dev/null
 +++ b/internal/app/argon_probe_test.go
 @@ -0,0 +1,53 @@
@@ -326,10 +342,10 @@ index 0000000000000000000000000000000000000000..bbc0041bb2d8769657d195f9b2b997f4
 +}
 diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..2f0b8cdc8f97bd303aa35bac1dda9d60611428a9
+index 0000000..920753a
 --- /dev/null
 +++ b/internal/app/argon_test.go
-@@ -0,0 +1,453 @@
+@@ -0,0 +1,502 @@
 +package app
 +
 +import (
@@ -459,6 +475,26 @@ index 0000000000000000000000000000000000000000..2f0b8cdc8f97bd303aa35bac1dda9d60
 +	return 0, io.ErrUnexpectedEOF
 +}
 +
++func TestCarbonIdentityAliases(t *testing.T) {
++	cases := []struct {
++		think int
++		name  string
++	}{
++		{thinkingNormal, "4 Carbon"},
++		{thinkingMedium, "4 Carbon Medium"},
++		{thinkingExtended, "4 Carbon High"},
++		// v4.30's mode-8 request slots can intentionally disable the requested thinking tier.
++		{thinkingExtended, "4 Carbon"},
++		{thinkingMedium, "4 Carbon"},
++	}
++	for _, tc := range cases {
++		frame := makeSyntheticArgonFrame(hexFlashLite, tc.name, "CARBON_OK")
++		if err := validateArgonIdentity(frame, argonDisplayNames(tc.think)); err != nil {
++			t.Errorf("think=%d name=%q: expected Carbon alias to pass, got %v", tc.think, tc.name, err)
++		}
++	}
++}
++
 +func TestReadModelCheckedBody(t *testing.T) {
 +	argonHeader := fmt.Sprintf(`[1,null,null,null,"%s"]`, hexArgon4)
 +	flashHeader := fmt.Sprintf(`[1,null,null,null,"%s"]`, hexFlash36)
@@ -553,6 +589,35 @@ index 0000000000000000000000000000000000000000..2f0b8cdc8f97bd303aa35bac1dda9d60
 +	}
 +	if len(callbacks) != 0 {
 +		t.Fatalf("expected zero callbacks on truncated read, got %d", len(callbacks))
++	}
++}
++
++func TestReadModelCheckedBodyWithIdle(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		_, _ = w.Write([]byte(")]}'\n"))
++		w.(http.Flusher).Flush()
++		<-r.Context().Done()
++	}))
++	defer srv.Close()
++	client := srv.Client()
++	client.Timeout = 3 * time.Second // Fail this test promptly if the idle watchdog regresses.
++	resp, err := client.Get(srv.URL)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer resp.Body.Close()
++
++	callbacks := 0
++	header := fmt.Sprintf(`[1,null,null,null,"%s"]`, hexArgon4)
++	_, _, err = readModelCheckedBodyWithIdle(resp.Body, func(string) error {
++		callbacks++
++		return nil
++	}, time.Now(), 200, header, 100*time.Millisecond)
++	if !errors.Is(err, errIdleTimeout) {
++		t.Fatalf("expected combined Argon/idle reader to report errIdleTimeout, got %v", err)
++	}
++	if callbacks != 0 {
++		t.Fatalf("unverified Argon output must remain buffered, got %d callbacks", callbacks)
 +	}
 +}
 +
@@ -785,7 +850,7 @@ index 0000000000000000000000000000000000000000..2f0b8cdc8f97bd303aa35bac1dda9d60
 +}
 diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb1ccec78a19896b0bf4ec1ffc3f97e957beb4f4
+index 0000000..fb1ccec
 --- /dev/null
 +++ b/internal/app/argon_timing_probe_test.go
 @@ -0,0 +1,74 @@
@@ -865,7 +930,7 @@ index 0000000000000000000000000000000000000000..fb1ccec78a19896b0bf4ec1ffc3f97e9
 +}
 diff --git a/internal/app/cancel_test.go b/internal/app/cancel_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..f36c70005e6da66df26dd934271c0d9646faa9f2
+index 0000000..f36c700
 --- /dev/null
 +++ b/internal/app/cancel_test.go
 @@ -0,0 +1,106 @@
@@ -976,7 +1041,7 @@ index 0000000000000000000000000000000000000000..f36c70005e6da66df26dd934271c0d96
 +	t.Fatal("没有记录这次请求")
 +}
 diff --git a/internal/app/client.go b/internal/app/client.go
-index c63b3a9fabbf1fe2f141a05def3f9947dff32ca3..da8ccb8ff683903907e7159bea42268c299e2793 100644
+index c63b3a9..da8ccb8 100644
 --- a/internal/app/client.go
 +++ b/internal/app/client.go
 @@ -1,9 +1,11 @@
@@ -1196,7 +1261,7 @@ index c63b3a9fabbf1fe2f141a05def3f9947dff32ca3..da8ccb8ff683903907e7159bea42268c
 +	setChromeHeaders(req.Header)
  }
 diff --git a/internal/app/client_timeout_test.go b/internal/app/client_timeout_test.go
-index 94c0b7097137d057c85cc98df7fbebbf16207b46..2a4b697e943f58c55c33e2af48033853cbcc516a 100644
+index 94c0b70..2a4b697 100644
 --- a/internal/app/client_timeout_test.go
 +++ b/internal/app/client_timeout_test.go
 @@ -1,6 +1,12 @@
@@ -1309,7 +1374,7 @@ index 94c0b7097137d057c85cc98df7fbebbf16207b46..2a4b697e943f58c55c33e2af48033853
 +	}
 +}
 diff --git a/internal/app/context_file.go b/internal/app/context_file.go
-index 97995a2f0ebb7626512590a23da1bc3f6fc97e3b..ba031401e77e479ebb33cc3a7868c904c7cb42ea 100644
+index 97995a2..ba03140 100644
 --- a/internal/app/context_file.go
 +++ b/internal/app/context_file.go
 @@ -1,6 +1,7 @@
@@ -1388,7 +1453,7 @@ index 97995a2f0ebb7626512590a23da1bc3f6fc97e3b..ba031401e77e479ebb33cc3a7868c904
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index 13859ec746b8e49204f63efda517f05453bdec8b..7dcb59c6418a946fbc24d9f926f80d3dc5113cac 100644
+index 13859ec..7dcb59c 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -1500,7 +1565,7 @@ index 13859ec746b8e49204f63efda517f05453bdec8b..7dcb59c6418a946fbc24d9f926f80d3d
  			break
  		}
 diff --git a/internal/app/cookie_pool.go b/internal/app/cookie_pool.go
-index 60fe35fe0664c2feeb9d9d811be01c6d3323799c..14e5a44734cdd50be933af1cf8387a65500ab3aa 100644
+index e60c6b1..866d211 100644
 --- a/internal/app/cookie_pool.go
 +++ b/internal/app/cookie_pool.go
 @@ -565,6 +565,9 @@ func checkAccountCookie(a CookieAccount) CookieCheck {
@@ -1514,18 +1579,18 @@ index 60fe35fe0664c2feeb9d9d811be01c6d3323799c..14e5a44734cdd50be933af1cf8387a65
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79626f6c30 100644
+index cae00e7..d7a550c 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
-@@ -14,6 +14,7 @@ import (
- 	"regexp"
+@@ -15,6 +15,7 @@ import (
  	"strconv"
  	"strings"
+ 	"sync"
 +	"sync/atomic"
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -378,7 +379,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
+@@ -406,7 +407,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -1534,7 +1599,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -393,15 +394,23 @@ type fileRef struct {
+@@ -421,15 +422,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -1561,7 +1626,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		var exhausted *ModelDowngradedError
  		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
  			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
-@@ -419,8 +428,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -447,8 +456,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return res, err
  }
  
@@ -1572,7 +1637,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -430,6 +439,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -458,6 +467,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -1582,7 +1647,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  	var acct *CookieAccount
  	skip := exclude
  	if mc.PinAccountID > 0 {
-@@ -487,6 +499,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -515,6 +527,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -1592,7 +1657,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -583,7 +598,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -611,7 +626,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -1604,7 +1669,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -600,7 +618,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -628,7 +646,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -1616,7 +1681,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -728,49 +749,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -773,49 +794,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1678,7 +1743,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -778,9 +777,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -823,9 +822,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1690,7 +1755,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -788,6 +787,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -833,6 +832,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
@@ -1701,7 +1766,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -799,6 +802,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -844,6 +847,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1710,8 +1775,8 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
 +			}
  			lastErr = err
  			// 出错话术不记进代理健康度：匿名直连也一样出，跟出口无关，算进去会误熔断。
- 			if pickedOK && !errors.Is(err, errUpstreamFailureReply) {
-@@ -814,7 +820,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+ 			// 空闲超时同理不记：首字节已经到了（出口通的），是上游开流后自己卡住，不是出口的锅。
+@@ -860,7 +866,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1722,7 +1787,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  			}
  			continue
  		}
-@@ -843,7 +851,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -889,7 +897,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1733,7 +1798,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  			}
  			continue
  		}
-@@ -871,7 +881,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -917,7 +927,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1744,7 +1809,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  			}
  			continue
  		}
-@@ -883,7 +895,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -929,7 +941,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1755,7 +1820,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  			}
  			continue
  		}
-@@ -949,6 +963,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -995,6 +1009,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1838,7 +1903,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1029,10 +1119,125 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1075,11 +1165,135 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -1950,11 +2015,21 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
 +	return n, err
 +}
 +
++// monitoredStreamBody combines cancellation, tool-call early termination and the byte-level
++// stall watcher while retaining Close so the optional upstream idle watcher can interrupt Read.
++func monitoredStreamBody(body io.ReadCloser, watch *stallWatch, stop *atomic.Bool) io.ReadCloser {
++	return struct {
++		io.Reader
++		io.Closer
++	}{Reader: stopReader{heardReader{body, watch}, stop}, Closer: body}
++}
++
 +// doGeminiRequestStop 同 doGeminiRequest，stop 置位后提前结束读取（见 stopReader），
 +// ctx 结束时中止连接和读取。整次请求不限时，上游沉默超过 stallLimit 才放弃（见 stallWatch）。
 +func doGeminiRequestStop(ctx context.Context, endpoint, body string, headers map[string]string, proxyURL string,
 +	onLine func(string) error, stop *atomic.Bool) (int, []byte, int64, []string, error) {
  	sendAt := time.Now()
+ 	idle := time.Duration(rtCfg().StreamIdleTimeoutSec) * time.Second
 +	watch := newStallWatch(ctx, stallLimit())
 +	defer watch.done()
 +	ctx = watch.ctx
@@ -1965,7 +2040,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1040,36 +1245,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1087,36 +1301,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -1977,8 +2052,8 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
 +			return 0, nil, 0, nil, watch.explain(err)
  		}
  		defer resp.Body.Close()
--		raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
-+		raw, ttfb, err := readModelCheckedBody(stopReader{heardReader{resp.Body, watch}, stop}, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
+-		raw, ttfb, err := readBodyWithIdle(resp.Body, onLine, sendAt, idle)
++		raw, ttfb, err := readModelCheckedBodyWithIdle(monitoredStreamBody(resp.Body, watch, stop), onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"], idle)
  		if err != nil {
 -			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
 +			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), watch.explain(err)
@@ -2004,15 +2079,15 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
 +		return 0, nil, 0, nil, watch.explain(err)
  	}
  	defer resp.Body.Close()
--	raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
-+	raw, ttfb, err := readModelCheckedBody(stopReader{heardReader{resp.Body, watch}, stop}, onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"])
+-	raw, ttfb, err := readBodyWithIdle(resp.Body, onLine, sendAt, idle)
++	raw, ttfb, err := readModelCheckedBodyWithIdle(monitoredStreamBody(resp.Body, watch, stop), onLine, sendAt, resp.StatusCode, headers["x-goog-ext-525001261-jspb"], idle)
  	if err != nil {
 -		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
 +		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), watch.explain(err)
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1451,6 +1657,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1580,6 +1795,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2021,7 +2096,7 @@ index 242e6bb22ac5170c5a734f1c6ad57934a5a9469b..1e09c80803254bfa8d4af25e4ccd2b79
  			req.Header.Set(k, v)
  		}
 diff --git a/internal/app/gemini_api.go b/internal/app/gemini_api.go
-index 613cf7f45b20193abfcaadc186414f50b904c82e..b24d891546b42b5bcdeddf332b3a3b7ca4ea850e 100644
+index 613cf7f..b24d891 100644
 --- a/internal/app/gemini_api.go
 +++ b/internal/app/gemini_api.go
 @@ -1,6 +1,7 @@
@@ -2097,20 +2172,21 @@ index 613cf7f45b20193abfcaadc186414f50b904c82e..b24d891546b42b5bcdeddf332b3a3b7c
  		if _, ok := err.(*ModelDowngradedError); ok {
  			status = 429
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
-index b6830a418c78b045c21d39cb690e2b32542c7262..eb4e02114acdecb78531ad91e72b66d274a6467e 100644
+index 61273f1..57b6a2a 100644
 --- a/internal/app/gemini_test.go
 +++ b/internal/app/gemini_test.go
-@@ -16,6 +16,7 @@ func TestModelHeader(t *testing.T) {
+@@ -16,6 +16,8 @@ func TestModelHeader(t *testing.T) {
  		{"gemini-3.6-flash", hexFlash36},
  		{"gemini-3.5-flash-lite", hexFlashLite},
- 		{"gemini-3.1-pro", hexPro31},
+ 		{"gemini-3.8-flash", hexFlash38},
++		{"gemini-4-hydrogen", hexHydrogen4},
 +		{"gemini-4-argon", hexArgon4},
  	}
  	for _, c := range cases {
  		name, mc, err := resolveModel(c.name)
 diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef9b476da72bae3cc53c9cd85510a2f1db224a7d
+index 0000000..ef9b476
 --- /dev/null
 +++ b/internal/app/headers_test.go
 @@ -0,0 +1,74 @@
@@ -2190,7 +2266,7 @@ index 0000000000000000000000000000000000000000..ef9b476da72bae3cc53c9cd85510a2f1
 +}
 diff --git a/internal/app/latency_test.go b/internal/app/latency_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb778f55c20fe14ce2bac64c1e97ff4182328023
+index 0000000..fb778f5
 --- /dev/null
 +++ b/internal/app/latency_test.go
 @@ -0,0 +1,333 @@
@@ -2528,7 +2604,7 @@ index 0000000000000000000000000000000000000000..fb778f55c20fe14ce2bac64c1e97ff41
 +	}
 +}
 diff --git a/internal/app/main_test.go b/internal/app/main_test.go
-index 38e1a44d97d73524eafc2e67470d17b98a957c3b..e3f7636fd47514cf505abcb765125e48d4e7237d 100644
+index 38e1a44..e3f7636 100644
 --- a/internal/app/main_test.go
 +++ b/internal/app/main_test.go
 @@ -1,9 +1,12 @@
@@ -2587,7 +2663,7 @@ index 38e1a44d97d73524eafc2e67470d17b98a957c3b..e3f7636fd47514cf505abcb765125e48
 +	t.Cleanup(func() { rtMu.Lock(); rtVal.RequestTimeout = saved; rtMu.Unlock() })
 +}
 diff --git a/internal/app/mcp_media.go b/internal/app/mcp_media.go
-index acb113196d65f76745f816e2c1a9579884384774..a8bab02191b7fc8ae47afa59fce3744fe11f875b 100644
+index acb1131..a8bab02 100644
 --- a/internal/app/mcp_media.go
 +++ b/internal/app/mcp_media.go
 @@ -1,6 +1,7 @@
@@ -2608,7 +2684,7 @@ index acb113196d65f76745f816e2c1a9579884384774..a8bab02191b7fc8ae47afa59fce3744f
  		return nil, err
  	}
 diff --git a/internal/app/media.go b/internal/app/media.go
-index ec3b6e499aab0bbe4adc1e3ad517e2c9296e9c46..07f316410de88d6c3bae7435344e31fdcfc35157 100644
+index ec3b6e4..07f3164 100644
 --- a/internal/app/media.go
 +++ b/internal/app/media.go
 @@ -762,6 +762,7 @@ func mediaGetOnce(rawURL string, headers map[string]string, proxyURL string) (in
@@ -2620,7 +2696,7 @@ index ec3b6e499aab0bbe4adc1e3ad517e2c9296e9c46..07f316410de88d6c3bae7435344e31fd
  		req.Header.Set(k, v)
  	}
 diff --git a/internal/app/messages.go b/internal/app/messages.go
-index 1bd5bb4ac780da437deb257d8e9f9f1f33852ede..3d473c4f1a88cd1b40b2c9e75889b66a01740dde 100644
+index 1bd5bb4..3d473c4 100644
 --- a/internal/app/messages.go
 +++ b/internal/app/messages.go
 @@ -49,8 +49,50 @@ type ToolCallFunction struct {
@@ -2815,7 +2891,7 @@ index 1bd5bb4ac780da437deb257d8e9f9f1f33852ede..3d473c4f1a88cd1b40b2c9e75889b66a
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c145017f99977 100644
+index 3b2b0ec..c2501f5 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2830,8 +2906,8 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  	"time"
  )
  
--const Version = "4.28.0"
-+const Version = "4.28.0-magpie.1"
+-const Version = "4.30.0"
++const Version = "4.30.0-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
@@ -2861,7 +2937,7 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  	if err != nil {
  		// res 非 nil：失败时它只带归属（哪个号 / 哪个出口），给 recordRequest 用
  		return "", nil, res, err
-@@ -268,7 +270,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -274,7 +276,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -2870,7 +2946,7 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
  		return
-@@ -308,12 +310,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -314,12 +316,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
  		// 多轮：按历史前缀识别续接，命中就只发新消息、历史留服务端。带 tools 也走这条。
@@ -2888,7 +2964,7 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  		mde, downgraded := err.(*ModelDowngradedError)
  		status := 502
  		if downgraded {
-@@ -404,6 +409,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+@@ -410,6 +415,21 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
  	})
  }
  
@@ -2910,7 +2986,7 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  // usageOf 是 buildUsageWithReasoning 的便捷包装，res 可能为 nil。
  func usageOf(prompt, text string, res *StreamResult) map[string]int {
  	r := ""
-@@ -579,7 +599,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -585,7 +605,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -2919,7 +2995,7 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
  		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
  		return
-@@ -682,12 +702,15 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
+@@ -688,12 +708,15 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
  	var toolCalls []ToolCall
  	var res *StreamResult
  	if rtCfg().MultiTurn && len(images) == 0 && modelCfg.Tool == 0 {
@@ -2939,7 +3015,7 @@ index 2dafb80e385f6c6c5a3eb9ef987d2f656e7b407b..ba7b589ab3654714a8b2d1b4e89c1450
  		if downgraded {
 diff --git a/internal/app/stall_test.go b/internal/app/stall_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..cfdd6cf4e739c9fe50992fae42f7892e538916d9
+index 0000000..cfdd6cf
 --- /dev/null
 +++ b/internal/app/stall_test.go
 @@ -0,0 +1,199 @@
@@ -3143,7 +3219,7 @@ index 0000000000000000000000000000000000000000..cfdd6cf4e739c9fe50992fae42f7892e
 +	}
 +}
 diff --git a/internal/app/strict_model.go b/internal/app/strict_model.go
-index ecc17aceec6f365649ccb84bc9ca04189b524f03..88267c5b550800765d2b50f474e4ba7670bb6efd 100644
+index 2f32a0b..a641a4c 100644
 --- a/internal/app/strict_model.go
 +++ b/internal/app/strict_model.go
 @@ -150,7 +150,8 @@ func strictLineCheck(mc ModelConfig, accountID func() int64) func(line string) e
@@ -3157,7 +3233,7 @@ index ecc17aceec6f365649ccb84bc9ca04189b524f03..88267c5b550800765d2b50f474e4ba76
  
  // modelDowngraded 判断服务端自报的显示名是不是请求的那个模型。
 diff --git a/internal/app/timeout_retry_test.go b/internal/app/timeout_retry_test.go
-index 77a51151b8c5c17e4fbd23461370ee4bc2507328..b31966a954f0c6c0ca959e0574486e47d8acf9dc 100644
+index 77a5115..b31966a 100644
 --- a/internal/app/timeout_retry_test.go
 +++ b/internal/app/timeout_retry_test.go
 @@ -63,6 +63,9 @@ func TestIsUpstreamTimeout(t *testing.T) {
@@ -3171,7 +3247,7 @@ index 77a51151b8c5c17e4fbd23461370ee4bc2507328..b31966a954f0c6c0ca959e0574486e47
  		fmt.Errorf("upstream returned no content frame (raw 216 bytes)")} {
  		if isUpstreamTimeout(e) {
 diff --git a/internal/app/tokenizer.go b/internal/app/tokenizer.go
-index 634f3b76c1ceea03f540e4c2fc5e3a9ca53ccd2b..399057e5ab5e62120094454e2e81da6b12c0d8d8 100644
+index 634f3b7..399057e 100644
 --- a/internal/app/tokenizer.go
 +++ b/internal/app/tokenizer.go
 @@ -1,9 +1,17 @@
@@ -3306,7 +3382,7 @@ index 634f3b76c1ceea03f540e4c2fc5e3a9ca53ccd2b..399057e5ab5e62120094454e2e81da6b
  		if err != nil {
  			fmt.Fprintf(os.Stderr, "[tokenizer] init failed (will fall back to chars/4): %v\n", err)
 diff --git a/internal/app/upload.go b/internal/app/upload.go
-index 4feb5d93c088ed058f1f3b57c2e9ca1dc9c6cab1..a21e8d1e671d12d7523648bc3c0948958fe594a3 100644
+index 4feb5d9..a21e8d1 100644
 --- a/internal/app/upload.go
 +++ b/internal/app/upload.go
 @@ -2,6 +2,7 @@ package app
@@ -3377,7 +3453,7 @@ index 4feb5d93c088ed058f1f3b57c2e9ca1dc9c6cab1..a21e8d1e671d12d7523648bc3c094895
  		req.Header.Set(k, v)
  	}
 diff --git a/internal/app/video_cooldown_test.go b/internal/app/video_cooldown_test.go
-index 8eda49e5f5318f962445c4b08bb33b342f8e2b8f..cf64828c36dcb190fae2e6315573460a9ba4a711 100644
+index 8eda49e..cf64828 100644
 --- a/internal/app/video_cooldown_test.go
 +++ b/internal/app/video_cooldown_test.go
 @@ -2,6 +2,7 @@ package app
@@ -3398,7 +3474,7 @@ index 8eda49e5f5318f962445c4b08bb33b342f8e2b8f..cf64828c36dcb190fae2e6315573460a
  		return "", nil, res, err
  	}
 diff --git a/internal/app/videos.go b/internal/app/videos.go
-index 4ea7ac64d3854396b8339b0d2240a96d7a8e9331..861f72e355a62e191c875e7ea72dbe28d51b556f 100644
+index 4ea7ac6..861f72e 100644
 --- a/internal/app/videos.go
 +++ b/internal/app/videos.go
 @@ -10,6 +10,7 @@ package app
@@ -3428,7 +3504,7 @@ index 4ea7ac64d3854396b8339b0d2240a96d7a8e9331..861f72e355a62e191c875e7ea72dbe28
  			return res, nil
  		}
 diff --git a/internal/app/vision.go b/internal/app/vision.go
-index b0c97245b5e822155b97d5c3b82363dd1cbf27a2..b1ca7cb8d9620d1d295543bd7118f507d32b7980 100644
+index b0c9724..b1ca7cb 100644
 --- a/internal/app/vision.go
 +++ b/internal/app/vision.go
 @@ -160,6 +160,7 @@ func fetchImage(src, proxyURL string, idx int) (pendingUpload, error) {
@@ -3440,7 +3516,7 @@ index b0c97245b5e822155b97d5c3b82363dd1cbf27a2..b1ca7cb8d9620d1d295543bd7118f507
  		if err != nil {
  			return pendingUpload{}, fmt.Errorf("image %d: fetch failed: %w", idx, err)
 diff --git a/internal/app/xsrf.go b/internal/app/xsrf.go
-index 254d686a8f91301427d341f31a08363f4ba6c304..e008abbd2e3e901a8ee7e3b4bde6f1c65833f730 100644
+index 254d686..e008abb 100644
 --- a/internal/app/xsrf.go
 +++ b/internal/app/xsrf.go
 @@ -29,15 +29,23 @@ var (
