@@ -6,7 +6,7 @@
 
 让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 **Google AI Studio** 与 **Gemini 网页版**。插件在本机自动运行 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 与 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go)，提供对话、原生工具调用、Nano Banana 图片生成与 Deep Research 等能力。
 
-> **新模型支持说明**：**Google AI Studio (`ai-studio`)** 默认自动跟随官方最新稳定版后端，现已直接支持 **`gemini-4-hydrogen`**（含 `xhigh` 思考档位）、**`gemini-4-carbon`**（需账号具备对应权益，如 Google AI Ultra）与 **`gemini-4-argon`**。**Gemini Web (`gemini-web`)** 上游暂未正式收录 Carbon 与 Hydrogen（付费账号请求 `gemini-3.8-flash` 在网页端实际路由至 `4 Hydrogen`，需保持 `strict_model` 关闭；登录态 `gemini-4-argon` 仍存在生成挂起已知问题 [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53)，建议优先使用 `ai-studio`）。
+> **新模型支持说明**：两个 Provider 均已收录 **`gemini-4-hydrogen`** 与 **`gemini-4-carbon`**。AI Studio 默认自动跟随官方稳定版，Hydrogen 含 `xhigh` 思考档位；Gemini Web 从一键本地后端 **`4.30.0-magpie.1`** 起提供独立模型 ID，其中 Hydrogen 支持登录账号（含免费账号），Carbon 需付费 / Ultra 等具备权益的账号，旧 `gemini-4-argon` 名称保留为 Carbon 别名。
 
 ## 怎么选？
 
@@ -15,14 +15,14 @@
 | 对比项 | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
 | :--- | :--- | :--- |
 | **适用场景** | **推荐主力与 Coding Agent 使用** | 日常对话、使用网页版额度 |
-| **主要模型** | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-3.8-flash`（付费号上游实为 `4 Hydrogen`）、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-pro`、`gemini-4-argon`（见 [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53)） |
+| **主要模型** | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-4-hydrogen`（登录账号，含免费）、`gemini-4-carbon`（付费 / Ultra）、`gemini-3.6-flash`、`gemini-3.5-flash-lite` |
 | **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
 | **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` / `xhigh`（Hydrogen）中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
 | **图片输入** | 默认开启，对话模型可以读图 | 默认开启，对话模型可以读图（需登录态挂 Cookie） |
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 自动安装官方后端，导入账号后确认连接 | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.28.0-magpie.1` 优化版) |
+| **本地后端** | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.30.0-magpie.1` 优化版) |
 
 ---
 
@@ -231,12 +231,12 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 - 模型列表过滤 `-build` / `assistant_route` 模型：这类模型附带 Build 写代码助手的系统提示词，不作为普通 Agent 模型提供。升级后可执行 `magpie provider models ai-studio` 刷新列表。
 
 **Gemini Web 优化后端升级与回退：**
-- [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) 的多账号索引漏传已修复，需重新导入受影响的 Cookie 或在后端账号管理中修正索引。账号检测通过不保证生成成功；登录态 `gemini-4-argon` 生成挂起仍待上游完善协议修复（当前优化版仍固定走 StreamGenerate，启用 `web_channel` 会在日志提示被忽略），建议暂用 `ai-studio` 调用 Argon。此外，上游 `v4.28.0` 尚未正式收录 `gemini-4-carbon` 与 `gemini-4-hydrogen` 模型 ID；付费账号请求 `gemini-3.8-flash` 时 Google 网页端实际已路由至 `4 Hydrogen`，需保持后端 `strict_model` 关闭（默认关闭），否则会因显示名变化返回 `429 model_downgraded`。
-- 插件默认使用本仓库发布的 [4.28.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.28.0-magpie.1)（基于上游 v4.28.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；连续 `request_timeout_sec`（默认 180 秒）没有任何数据才放弃这一次并重试，还在出字的长回复也不会被截断。
+- [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) 的多账号索引漏传已修复，需重新导入受影响的 Cookie 或在后端账号管理中修正索引。上游 v4.30.0 已收录独立的 `gemini-4-hydrogen` / `gemini-4-hydrogen-thinking` 与 `gemini-4-carbon`，并兼容旧 Flash、Argon 名称的显示名变化；显式请求 Hydrogen 时仍会拒绝旧 Flash 或其它模型的静默降级。Carbon 的思考档目前可能按上游普通档回答。
+- 插件默认使用本仓库发布的 [4.30.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.30.0-magpie.1)（基于上游 v4.30.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon/Carbon 校验补丁）。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；默认情况下，连续 `request_timeout_sec`（180 秒）没有任何数据才放弃这一次；是否重试仍受 `retry_on_timeout` 和是否已向客户端输出内容等规则约束，还在出字的长回复不会被这个看门狗截断。另支持上游 `stream_idle_timeout_sec`（默认 0）作为额外的流式空闲超时。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：
   ```bash
-  npm run backend:install:upstream  # 回退并固定使用官方 v4.28.0
+  npm run backend:install:upstream  # 回退并固定使用官方 v4.30.0
   npm run backend:install           # 恢复默认优化版
   ```
 - 源码复现构建与发布流程见 [docs/backend-release.md](docs/backend-release.md)。
