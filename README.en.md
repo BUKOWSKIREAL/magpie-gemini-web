@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/magpie-gemini-web?style=flat-square&logo=npm&color=4f46e5)](https://www.npmjs.com/package/magpie-gemini-web) [![npm downloads](https://img.shields.io/npm/dw/magpie-gemini-web?style=flat-square&color=06b6d4)](https://www.npmjs.com/package/magpie-gemini-web) [![Magpie Plugin](https://img.shields.io/badge/Magpie-Plugin-3b82f6?style=flat-square)](https://usemagpie.ai/) [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-8b5cf6?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6366f1?style=flat-square)](https://github.com/BUKOWSKIREAL/magpie-gemini-web) [![License: MIT](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](LICENSE)
 
-[中文](README.md) | English
+[中文](README.md) | English | [Contributing & issue guide](CONTRIBUTING.md)
 
 Use **Google AI Studio** and **Gemini on the web** through your Google account in [Magpie](https://usemagpie.ai/). The plugin runs [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) and [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) locally, providing chat, native function calling, Nano Banana image generation, and Deep Research through OpenAI-compatible and Gemini APIs.
 
