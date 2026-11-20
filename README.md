@@ -6,7 +6,7 @@
 
 让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 **Google AI Studio** 与 **Gemini 网页版**。插件在本机自动运行 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 与 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go)，提供对话、原生工具调用、Nano Banana 图片生成与 Deep Research 等能力。
 
-> **新模型支持说明**：两个 Provider 均已收录 **`gemini-4-hydrogen`** 与 **`gemini-4-carbon`**。AI Studio 默认自动跟随官方稳定版，Hydrogen 含 `xhigh` 思考档位；Gemini Web 从一键本地后端 **`4.30.0-magpie.1`** 起提供独立的 Hydrogen / Carbon ID，**`4.30.0-magpie.2`** 起另按上游公开清单提供 **`gemini-4-neon`**。Hydrogen 支持登录账号（含免费账号），Carbon 与 Neon 需付费 / Ultra 等具备权益的账号，旧 `gemini-4-argon` 名称保留为 Carbon 别名，旧 `gemini-3.1-pro` 名称保留为 Neon 别名。
+> **新模型支持说明**：两个 Provider 均已收录 **`gemini-4-hydrogen`** 与 **`gemini-4-carbon`**。AI Studio 默认自动跟随官方稳定版，Hydrogen 含 `xhigh` 思考档位；Gemini Web 从一键本地后端 **`4.30.0-magpie.1`** 起提供独立模型 ID，其中 Hydrogen 支持登录账号（含免费账号），Carbon 需付费 / Ultra 等具备权益的账号，旧 `gemini-4-argon` 名称保留为 Carbon 别名。上游 v4.31.0 已包含付费模型 `gemini-4-neon` 与其思考档，`gemini-3.1-pro` 保留为 Neon 兼容别名。优化后端 **`4.31.0-magpie.2`** 在这份目录上把 Argon/Carbon 身份错误排除出代理熔断。
 
 ## 怎么选？
 
@@ -15,14 +15,14 @@
 | 对比项 | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
 | :--- | :--- | :--- |
 | **适用场景** | **推荐主力与 Coding Agent 使用** | 日常对话、使用网页版额度 |
-| **主要模型** | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-4-hydrogen`（登录账号，含免费）、`gemini-4-neon`（付费 / Ultra）、`gemini-4-carbon`（付费 / Ultra）、`gemini-3.6-flash`、`gemini-3.5-flash-lite` |
+| **主要模型** | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-4-hydrogen`（登录账号，含免费）、`gemini-4-carbon`（付费 / Ultra）、`gemini-4-neon`（付费 / Ultra）、`gemini-3.6-flash`、`gemini-3.5-flash-lite` |
 | **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
 | **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` / `xhigh`（Hydrogen）中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
 | **图片输入** | 默认开启，对话模型可以读图 | 默认开启，对话模型可以读图（需登录态挂 Cookie） |
 | **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
 | **登录方式** | 自动安装官方后端，导入账号后确认连接 | 用无痕窗口登录并复制 `cookie` |
 | **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.30.0-magpie.2` 优化版) |
+| **本地后端** | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.31.0-magpie.2` 优化版) |
 
 ---
 
@@ -232,13 +232,11 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 
 **Gemini Web 优化后端升级与回退：**
 - [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) 的多账号索引漏传已修复，需重新导入受影响的 Cookie 或在后端账号管理中修正索引。上游 v4.30.0 已收录独立的 `gemini-4-hydrogen` / `gemini-4-hydrogen-thinking` 与 `gemini-4-carbon`，并兼容旧 Flash、Argon 名称的显示名变化；显式请求 Hydrogen 时仍会拒绝旧 Flash 或其它模型的静默降级。Carbon 的思考档目前可能按上游普通档回答。
-- [#67](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/67) 的 `gemini-4-hydrogen` 从 `4.30.0-magpie.1` 起就在登录账号的模型列表里：请求走上游核实过的 3.8 Flash 路由（hex `56fdd199312815e2`，mode 1），不是只改显示名。`4.30.0-magpie.2` 按上游 [b37fa19](https://github.com/zexadev/gemini-web2api-go/commit/b37fa191649893b4271f5e35772c80b473057bc9) 增加 `gemini-4-neon` / `gemini-4-neon-thinking`（hex `e6fa609c3fa255c0`，mode 3）；`gemini-3.1-pro` 恢复为这条路由的旧名称。有 Cookie 时才会列出。上游记录付费 / Ultra 号回报 “4 Neon”，免费号请求 mode 3 可能挂到超时；本仓库没有用真实账号重放这次生成。
-- [#72](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/72)：`strict_model` 关闭时，Argon/Carbon 的模型身份不符或身份缺失不再计入代理 `fail_count`，也不在同一账号上重试。连接失败、HTTP 错误和空内容帧仍记入熔断。`strict_model` 开启时，跨模型族的降级仍换号并返回 429。
-- 插件默认使用本仓库的 [4.30.0-magpie.2](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.30.0-magpie.2) 元数据（基于上游 v4.30.0 集成 XSRF 缓存、请求取消传播、工具调用提前收尾、Argon/Carbon 校验与 Neon 路由）。对应 release 资产需在合并后另行发布，发布前下载地址还不存在。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；默认情况下，连续 `request_timeout_sec`（180 秒）没有任何数据才放弃这一次；是否重试仍受 `retry_on_timeout` 和是否已向客户端输出内容等规则约束，还在出字的长回复不会被这个看门狗截断。另支持上游 `stream_idle_timeout_sec`（默认 0）作为额外的流式空闲超时。
+- 插件钉住 [4.31.0-magpie.2](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.31.0-magpie.2)（基于上游 v4.31.0，含 Neon / Hydrogen 目录、`request_timeout_sec` 上限 1200 秒、XSRF 缓存、请求取消传播、工具调用提前收尾与 Argon/Carbon 校验）。`strict_model` 关闭时，Argon/Carbon 身份不符或身份缺失不计入代理 `fail_count`，也不在同一账号上重试；连接失败仍会熔断。这个标签的二进制尚未上传，停止旧后端后的自动安装会 404，不能把它当成已经可下载的 release。对话请求按上游沉默计时：Google 让请求排队时每 60 秒发一次心跳，后端会一直等到出字；默认情况下，连续 `request_timeout_sec`（180 秒）没有任何数据才放弃这一次；是否重试仍受 `retry_on_timeout` 和是否已向客户端输出内容等规则约束，还在出字的长回复不会被这个看门狗截断。另支持上游 `stream_idle_timeout_sec`（默认 0）作为额外的流式空闲超时。
 - **旧版升级**：插件不会打断运行中的后端。先停止旧进程（PID 见数据目录 `backend.pid`），下次启动 Magpie 或发请求时会自动更新二进制并保留原有配置与账号。
 - **回退官方版 / 恢复优化版**（停止后端后在插件目录执行）：
   ```bash
-  npm run backend:install:upstream  # 回退并固定使用官方 v4.30.0
+  npm run backend:install:upstream  # 回退并固定使用官方 v4.31.0
   npm run backend:install           # 恢复默认优化版
   ```
 - 源码复现构建与发布流程见 [docs/backend-release.md](docs/backend-release.md)。
