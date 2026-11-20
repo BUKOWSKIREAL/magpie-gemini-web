@@ -89,14 +89,15 @@ index 883532e..19a6ca8 100644
    {
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
-index 0000000..1a73717
+index 0000000..1d7865c
 --- /dev/null
 +++ b/internal/app/argon.go
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,225 @@
 +package app
 +
 +import (
 +	"encoding/json"
++	"errors"
 +	"fmt"
 +	"io"
 +	"slices"
@@ -186,6 +187,42 @@ index 0000000..1a73717
 +}
 +
 +var errArgonIdentityMissing = fmt.Errorf("Argon identity missing in upstream response; refusing unverified model")
++
++// absorbArgonIdentity 处理 Argon/Carbon 身份错误。这类错误只在代理已经把上游 HTTP 200
++// 正文送回来之后才会出现，描述的是自报模型，不是出口通不通。
++//
++// stop 为真时调用方必须停掉这个账号上的重试：再发一次，身份还是这份。因此也不能把
++// 它记进代理 fail_count，否则 strict_model 关着时几次重试就会把出口熔断，连坐其他账号和模型。
++//
++// strict 为真且自报名是另一个模型族时，改写成 *ModelDowngradedError，沿用原来的换号与 429。
++// strict 为假时保留原来的身份错误：换号冷却仍只由 strict_model 决定。身份缺失没有自报名，
++// 不记成降级冷却。
++func absorbArgonIdentity(err error, mc ModelConfig, accountID int64, strict bool) (error, bool) {
++	var aie *argonIdentityError
++	if errors.As(err, &aie) {
++		if strict && modelDowngraded(mc, aie.name) {
++			return &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: accountID}, true
++		}
++		return err, true
++	}
++	if errors.Is(err, errArgonIdentityMissing) {
++		return err, true
++	}
++	return err, false
++}
++
++// noteProxyAttempt 把一次生成失败记进代理健康度。身份错误、出错话术，以及单轮路径上的
++// 空闲超时都不记。ignoreIdle 对应 streamGenerateOnce：首字节已经到达，空闲是上游卡住，
++// 不是出口故障。streamGenerateConv 保持原判据（ignoreIdle 为假），真实的连接错误仍记。
++func noteProxyAttempt(id int64, pickedOK, identityStop bool, err error, ignoreIdle bool) {
++	if identityStop || !pickedOK || err == nil || errors.Is(err, errUpstreamFailureReply) {
++		return
++	}
++	if ignoreIdle && errors.Is(err, errIdleTimeout) {
++		return
++	}
++	recordProxyResult(id, false, err.Error())
++}
 +
 +func validateArgonIdentity(raw []byte, names []string) error {
 +	found := false
@@ -342,10 +379,10 @@ index 0000000..bbc0041
 +}
 diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
 new file mode 100644
-index 0000000..920753a
+index 0000000..49c5452
 --- /dev/null
 +++ b/internal/app/argon_test.go
-@@ -0,0 +1,502 @@
+@@ -0,0 +1,617 @@
 +package app
 +
 +import (
@@ -718,6 +755,7 @@ index 0000000..920753a
 +		// Silent downgrade to another model family: rejected and converted to ModelDowngradedError under strict_model.
 +		{low, "3.5 Flash-Lite", false, true},
 +		{low, "Gemini 3.5 Flash-Lite", false, true},
++		{low, "4 Hydrogen", false, true},
 +		{med, "3.5 Flash-Lite", false, true},
 +		{high, "3.6 Flash", false, true},
 +	}
@@ -745,19 +783,16 @@ index 0000000..920753a
 +			}
 +
 +			_, _, err := readModelCheckedBody(bytes.NewReader(frame), cb, time.Now(), 200, header)
-+			var aie *argonIdentityError
-+			if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(c.mc, aie.name) {
-+				err = &ModelDowngradedError{Requested: c.mc.Upstream, Reported: aie.name, AccountID: 42}
-+			}
++			err, stop := absorbArgonIdentity(err, c.mc, 42, strictCheck != nil)
 +
 +			if c.wantPass {
-+				if err != nil {
-+					t.Errorf("[%s] %q (think=%d): expected pass under strict_model, got %v", mode, c.name, c.mc.thinkWire(), err)
++				if err != nil || stop {
++					t.Errorf("[%s] %q (think=%d): expected pass under strict_model, got %v stop=%v", mode, c.name, c.mc.thinkWire(), err, stop)
 +				}
 +				continue
 +			}
-+			if err == nil {
-+				t.Errorf("[%s] %q (think=%d): expected error under strict_model, got nil", mode, c.name, c.mc.thinkWire())
++			if err == nil || !stop {
++				t.Errorf("[%s] %q (think=%d): identity fault must stop same-account retry, got %v stop=%v", mode, c.name, c.mc.thinkWire(), err, stop)
 +				continue
 +			}
 +			var mde *ModelDowngradedError
@@ -846,6 +881,123 @@ index 0000000..920753a
 +	slotRelease(picked.ID)
 +	if picked.ID != idB {
 +		t.Fatalf("first check slot picked proxy %d (%s), want proxy B %d", picked.ID, picked.Name, idB)
++	}
++}
++
++func proxyFailState(t *testing.T, id int64) (int, string) {
++	t.Helper()
++	var n int
++	var last string
++	if err := getDB().QueryRow(`SELECT fail_count, COALESCE(last_error, '') FROM proxies WHERE id=?`, id).Scan(&n, &last); err != nil {
++		t.Fatal(err)
++	}
++	return n, last
++}
++
++func resetProxyFail(t *testing.T, id int64) {
++	t.Helper()
++	if _, err := getDB().Exec(`UPDATE proxies SET fail_count=0, last_error='' WHERE id=?`, id); err != nil {
++		t.Fatal(err)
++	}
++	loadProxies()
++}
++
++// strict_model 关着时，Argon 身份不符或身份缺失不得记入代理 fail_count，也不得在同一账号上重试。
++// 两条生成路径共用 noteProxyAttempt：once 忽略空闲超时，conv 仍把空闲超时当传输失败。
++// 真实网络错误继续累加，熔断阈值不变。
++func TestArgonIdentityDoesNotChargeProxy(t *testing.T) {
++	getDB()
++	if _, err := getDB().Exec(`DELETE FROM proxies`); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() {
++		_, _ = getDB().Exec(`DELETE FROM proxies`)
++		loadProxies()
++	})
++	id, err := proxyCreate("identity-proxy", "http://127.0.0.1:7890", 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	mc := Models["gemini-4-argon-thinking-medium"]
++	header := buildModelHeader(mc.HexID, mc.Mode, mc.thinkWire(), "uuid-x")
++	_, _, mismatch := readModelCheckedBody(bytes.NewReader(makeSyntheticArgonFrame(hexFlashLite, "4 Hydrogen", "ok")), nil, time.Now(), 200, header)
++	var mismatchErr *argonIdentityError
++	if !errors.As(mismatch, &mismatchErr) || mismatchErr.name != "4 Hydrogen" {
++		t.Fatalf("synthetic Hydrogen frame should be an identity mismatch, got %v", mismatch)
++	}
++	_, _, missing := readModelCheckedBody(bytes.NewReader([]byte(")]}'\n")), nil, time.Now(), 200, header)
++	if !errors.Is(missing, errArgonIdentityMissing) {
++		t.Fatalf("empty 200 should be identity missing, got %v", missing)
++	}
++	network := errors.New("dial tcp 127.0.0.1:7890: connect: connection refused")
++
++	for _, path := range []struct {
++		name       string
++		ignoreIdle bool
++	}{
++		{"streamGenerateOnce", true},
++		{"streamGenerateConv", false},
++	} {
++		t.Run(path.name, func(t *testing.T) {
++			setStrictModel(t, false)
++			resetProxyFail(t, id)
++			for i := 0; i < 3; i++ {
++				out, stop := absorbArgonIdentity(mismatch, mc, 7, false)
++				var mde *ModelDowngradedError
++				if !stop || errors.As(out, &mde) {
++					t.Fatalf("strict off mismatch: stop=%v err=%v", stop, out)
++				}
++				noteProxyAttempt(id, true, stop, out, path.ignoreIdle)
++			}
++			if n, last := proxyFailState(t, id); n != 0 || last != "" {
++				t.Fatalf("mismatch charged proxy: fail_count=%d last_error=%q", n, last)
++			}
++
++			for i := 0; i < 3; i++ {
++				out, stop := absorbArgonIdentity(missing, mc, 7, false)
++				if !stop || !errors.Is(out, errArgonIdentityMissing) {
++					t.Fatalf("missing identity: stop=%v err=%v", stop, out)
++				}
++				noteProxyAttempt(id, true, stop, out, path.ignoreIdle)
++			}
++			if n, _ := proxyFailState(t, id); n != 0 {
++				t.Fatalf("missing identity charged proxy: fail_count=%d", n)
++			}
++
++			out, stop := absorbArgonIdentity(network, mc, 7, false)
++			if stop || out != network {
++				t.Fatalf("network error must stay retryable, stop=%v err=%v", stop, out)
++			}
++			noteProxyAttempt(id, true, stop, out, path.ignoreIdle)
++			if n, last := proxyFailState(t, id); n != 1 || !strings.Contains(last, "connection refused") {
++				t.Fatalf("network error fail_count=%d last_error=%q", n, last)
++			}
++			noteProxyAttempt(id, true, false, errUpstreamFailureReply, path.ignoreIdle)
++			if n, _ := proxyFailState(t, id); n != 1 {
++				t.Fatalf("failure reply changed fail_count to %d", n)
++			}
++			noteProxyAttempt(id, true, false, errIdleTimeout, path.ignoreIdle)
++			wantIdle := 1
++			if !path.ignoreIdle {
++				wantIdle = 2
++			}
++			if n, _ := proxyFailState(t, id); n != wantIdle {
++				t.Fatalf("idle timeout fail_count=%d, want %d", n, wantIdle)
++			}
++		})
++	}
++
++	setStrictModel(t, true)
++	resetProxyFail(t, id)
++	out, stop := absorbArgonIdentity(mismatch, mc, 7, true)
++	var mde *ModelDowngradedError
++	if !stop || !errors.As(out, &mde) || mde.Reported != "4 Hydrogen" || mde.AccountID != 7 {
++		t.Fatalf("strict on family mismatch should rotate as downgrade, stop=%v err=%v", stop, out)
++	}
++	noteProxyAttempt(id, true, stop, out, true)
++	noteProxyAttempt(id, true, stop, out, false)
++	if n, _ := proxyFailState(t, id); n != 0 {
++		t.Fatalf("strict downgrade charged proxy: fail_count=%d", n)
 +	}
 +}
 diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
@@ -1453,7 +1605,7 @@ index 97995a2..ba03140 100644
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index 13859ec..7dcb59c 100644
+index 13859ec..e5a0f5b 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -1493,7 +1645,7 @@ index 13859ec..7dcb59c 100644
  	p, slotOK, slotErr := acquireSlot(conv.proxyID)
  	if !slotOK {
  		return &StreamResult{}, slotErr
-@@ -375,12 +375,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -375,12 +375,16 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  	t0 := time.Now()
  	var lastErr error
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
@@ -1507,16 +1659,25 @@ index 13859ec..7dcb59c 100644
  				conv.cookie = merged
  			}
  		}
-+		var aie *argonIdentityError
-+		if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(mc, aie.name) {
-+			err = &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: conv.accountID}
-+		}
++		err, identityStop := absorbArgonIdentity(err, mc, conv.accountID, strictCheck != nil)
  		// 降级：同一个号重试还是降级，直接交给上层（见 gemini.go 同一处）。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -389,6 +396,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -388,7 +392,21 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 				UpstreamModel: mde.Reported, TotalMs: time.Since(t0).Milliseconds(),
  				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
  		}
++		// 身份对不上或身份缺失：代理已经送达响应，不记 fail_count，也不在这个号上重试。
++		if identityStop {
++			reported := ""
++			var aie *argonIdentityError
++			if errors.As(err, &aie) {
++				reported = aie.name
++			}
++			return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID,
++				UpstreamModel: reported, TotalMs: time.Since(t0).Milliseconds(),
++				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
++		}
  		if err != nil || statusCode != 200 || !hasContentFrame(string(raw)) {
 +			if cerr := ctx.Err(); cerr != nil {
 +				return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID}, cerr
@@ -1524,7 +1685,20 @@ index 13859ec..7dcb59c 100644
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -411,7 +421,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -396,8 +414,10 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 			} else {
+ 				lastErr = fmt.Errorf("upstream HTTP %d: %s", statusCode, truncate(string(raw), 160))
+ 			}
+-			// 出错话术跟出口无关，不记进代理健康度
+-			if pickedOK && !errors.Is(err, errUpstreamFailureReply) {
++			// 出错话术跟出口无关，不记进代理健康度。身份错误已在上面返回。
++			if err != nil {
++				noteProxyAttempt(p.ID, pickedOK, false, err, false)
++			} else if pickedOK {
+ 				recordProxyResult(p.ID, false, lastErr.Error())
+ 			}
+ 			if tracker.emitted != "" || rtracker.emitted != "" {
+@@ -411,7 +431,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				if errors.Is(err, errUpstreamFailureReply) {
  					logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
  				}
@@ -1535,7 +1709,7 @@ index 13859ec..7dcb59c 100644
  			}
  			continue
  		}
-@@ -423,7 +435,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -423,7 +445,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1546,7 +1720,7 @@ index 13859ec..7dcb59c 100644
  			}
  			continue
  		}
-@@ -464,7 +478,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -464,7 +488,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -1555,7 +1729,7 @@ index 13859ec..7dcb59c 100644
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -515,7 +529,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+@@ -515,7 +539,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
  				}
  			}
  		}
@@ -1579,7 +1753,7 @@ index e60c6b1..866d211 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index cae00e7..d7a550c 100644
+index cae00e7..47b3b00 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -15,6 +15,7 @@ import (
@@ -1590,7 +1764,76 @@ index cae00e7..d7a550c 100644
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -406,7 +407,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
+@@ -44,6 +45,12 @@ const (
+ 	// 那个模型），hex=3.8Flash 配 mode=8 反而回报 "4 Argon"——mode 决定、hex 被忽略。所以 Argon
+ 	// 条目的 Mode 必须填 8。仍按浏览器把 hex 配成 Argon 主 hex（最忠实、将来若改回认 hex 也不塌）。
+ 	hexArgon4 = "95a4c0abcba24364"
++	// 4 Neon（上游 b37fa191649893b4271f5e35772c80b473057bc9，#84）：otAQ7b 里主 hex
++	// e6fa609c3fa255c0、短名 Neon、代号 Neon4p0、「Deeper analysis」，Mode=3。
++	// 它接替的是 3.1 Pro 的位置：同一个 mode，compat hex 列表里就有 hexPro31。2026-11-19
++	// Ultra 号实测 mode 3 回报 "4 Neon"、思考档回报 "4 Neon High" 并带思考链；免费号
++	// 11-17 请求 mode 3 挂到超时。本仓库没有账号，不另造 ID，只同步这次公开实测。
++	hexNeon4 = "e6fa609c3fa255c0"
+ )
+ 
+ // innerSlots 是 payload 里 inner 数组的长度。浏览器发 97-98 槽，我们原来只开 80，
+@@ -135,9 +142,10 @@ func (mc ModelConfig) thinkWire() int {
+ var Models = map[string]ModelConfig{
+ 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Upstream: "3.6 Flash", UpstreamAliases: []string{"4 Hydrogen"}, Desc: "Flash route: 3.5 Flash-Lite when anonymous, 4 Hydrogen when signed in"},
+ 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Upstream: "3.5 Flash-Lite", Desc: "Fastest, lightweight"},
+-	// 3.1 Pro 已下线（2026-11-16/17 实测）：Ultra 号的 otAQ7b 清单里没有它了，请求回报
+-	// 3.5 Flash-Lite；免费号请求挂到超时（2/2）。
+-	"gemini-3.1-pro": {HexID: hexPro31, Mode: 3, Upstream: "3.1 Pro", Retired: retiredPro31, Desc: "Retired upstream"},
++	// 3.1 Pro 的位置（mode 3）现在是 4 Neon（上游 21d59a2f2ede64596c3f5de5e5aa835f2a75f0fd：
++	// 2026-11-19 Ultra 号实测回报 "4 Neon"）。名字留着兼容老配置，跟 gemini-4-neon 是同一条路由。
++	// 11-16 那次 mode 3 在 Ultra 号上回报 3.5 Flash-Lite，当时清单里还没有 Neon。
++	"gemini-3.1-pro": {HexID: hexPro31, Mode: 3, Upstream: "3.1 Pro", UpstreamAliases: []string{"4 Neon"}, Desc: "alias of gemini-4-neon (upstream replaced 3.1 Pro with 4 Neon); needs a signed-in PAID/Ultra Google account"},
+ 	// 3.8 Flash：Google 把原 3.7 那个 hex 原地升级了（同 hex，服务端显示名从 3.7 变 3.8）。
+ 	// 现在服务端回报 "4 Hydrogen"，登录号（含免费号）都拿得到，匿名拿不到。
+ 	// gemini-3.7-flash 保留为别名（同 hex）。
+@@ -150,17 +158,21 @@ var Models = map[string]ModelConfig{
+ 	// 代号 Carbon4p0）。Argon 这个名字留着兼容老配置，gemini-4-carbon 是同一条路由的新名字。
+ 	"gemini-4-argon":  {HexID: hexArgon4, Mode: 8, Upstream: "4 Argon", UpstreamAliases: []string{"4 Carbon"}, Desc: "alias of gemini-4-carbon (upstream renamed 4 Argon to 4 Carbon); needs a signed-in PAID/Ultra Google account"},
+ 	"gemini-4-carbon": {HexID: hexArgon4, Mode: 8, Upstream: "4 Carbon", UpstreamAliases: []string{"4 Argon"}, Desc: "4 Carbon (most complex work); needs a signed-in PAID/Ultra Google account (free accounts get downgraded to 3.5 Flash-Lite)"},
++	// 4 Neon（#84）：Mode=3 选中它，付费号专属。显示名 "4 Neon" 来自上游实测，不是展示别名。
++	"gemini-4-neon": {HexID: hexNeon4, Mode: 3, Upstream: "4 Neon", UpstreamAliases: []string{"3.1 Pro"}, Desc: "4 Neon (deeper analysis); needs a signed-in PAID/Ultra Google account"},
+ 
+ 	// 扩展思考版。inner[80]=2 跟模型 hex 正交，都能开；但只在登录态生效，
+ 	// 所以跟 3.1 Pro 一样在没 cookie 时不暴露。
+ 	"gemini-3.6-flash-thinking":      {HexID: hexFlash36, Mode: 1, Thinking: true, Upstream: "3.6 Flash", UpstreamAliases: []string{"4 Hydrogen"}, Desc: "3.6 Flash with extended thinking; needs a signed-in cookie"},
+ 	"gemini-3.5-flash-lite-thinking": {HexID: hexFlashLite, Mode: 6, Thinking: true, Upstream: "3.5 Flash-Lite", Desc: "3.5 Flash-Lite with extended thinking; needs a signed-in cookie"},
+-	"gemini-3.1-pro-thinking":        {HexID: hexPro31, Mode: 3, Thinking: true, Upstream: "3.1 Pro", Retired: retiredPro31, Desc: "Retired upstream"},
++	"gemini-3.1-pro-thinking":        {HexID: hexPro31, Mode: 3, Thinking: true, Upstream: "3.1 Pro", UpstreamAliases: []string{"4 Neon"}, Desc: "alias of gemini-4-neon-thinking; needs a signed-in PAID/Ultra account"},
+ 	"gemini-3.8-flash-thinking":      {HexID: hexFlash38, Mode: 1, Thinking: true, Upstream: "3.8 Flash", UpstreamAliases: []string{"4 Hydrogen"}, Desc: "Legacy Flash route with extended thinking, now 4 Hydrogen; needs a signed-in Google account"},
+ 	"gemini-3.7-flash-thinking":      {HexID: hexFlash38, Mode: 1, Thinking: true, Upstream: "3.8 Flash", UpstreamAliases: []string{"4 Hydrogen"}, Desc: "alias of gemini-3.8-flash-thinking"},
+ 	// 同一路由的扩展思考（think=2），不是其他账号清单里独立的 Mode=5 Thinking 模型。
+ 	// 实测 Ultra 号回报 "4 Hydrogen High"；免费号回报普通 "4 Hydrogen"（没有 High 档）。
+ 	"gemini-4-hydrogen-thinking": {HexID: hexHydrogen4, Mode: 1, Thinking: true, Upstream: "4 Hydrogen", Desc: "4 Hydrogen with extended thinking (High tier on paid accounts; free accounts get the normal tier); needs a signed-in cookie"},
++	// 4 Neon + 扩展思考：上游实测回报 "4 Neon High"，思考链走既有 [4][0][37][0][0]。
++	"gemini-4-neon-thinking": {HexID: hexNeon4, Mode: 3, Thinking: true, Upstream: "4 Neon", UpstreamAliases: []string{"3.1 Pro"}, Desc: "4 Neon with extended thinking (High tier); needs a signed-in PAID/Ultra account"},
+ 	// 4 Argon + 扩展思考：Mode=8（选 Argon）+ inner[80]=2（上游现在把这档叫 "High"）。
+ 	// 实测回报 "4 Argon High" 且带思考链（硬题 985 字符，走既有 [4][0][37][0][0] 路径，
+ 	// 无需改抽取代码）→ 映射成 reasoning_content。付费/Ultra 专属。
+@@ -180,9 +192,6 @@ var Models = map[string]ModelConfig{
+ 	"gemini-canvas": {HexID: hexFlash36, Mode: 1, Tool: toolCanvas, Desc: "Canvas: generates an interactive HTML document (returned inline as a ```html block); needs a signed-in cookie"},
+ }
+ 
+-const retiredPro31 = "Gemini web no longer offers 3.1 Pro: signed-in free accounts hang until timeout and paid accounts " +
+-	"are downgraded to 3.5 Flash-Lite. Use gemini-4-hydrogen (any signed-in account) or gemini-4-carbon (paid/Ultra) instead"
+-
+ // fallbackDefaultModel 是默认模型被下线时换上的那个。
+ const fallbackDefaultModel = "gemini-3.6-flash"
+ 
+@@ -201,7 +210,7 @@ func hasCookie() bool {
+ // 逐模型核对等价：那三个正名的 HexID 就是 hexPro31 / hexFlash38，其余登录模型都被
+ // Thinking 或 Tool 覆盖。
+ func modelNeedsLogin(mc ModelConfig) bool {
+-	return mc.HexID == hexPro31 || mc.HexID == hexFlash38 || mc.HexID == hexArgon4 || mc.Thinking || mc.ThinkWire > 0 || mc.Tool > 0
++	return mc.HexID == hexPro31 || mc.HexID == hexFlash38 || mc.HexID == hexArgon4 || mc.HexID == hexNeon4 || mc.Thinking || mc.ThinkWire > 0 || mc.Tool > 0
+ }
+ 
+ // anonFirstEligible 判断「匿名优先」开关下这次请求能不能走匿名（不占 cookie 账号）：
+@@ -406,7 +415,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -1599,7 +1842,7 @@ index cae00e7..d7a550c 100644
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -421,15 +422,23 @@ type fileRef struct {
+@@ -421,15 +430,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -1626,7 +1869,7 @@ index cae00e7..d7a550c 100644
  		var exhausted *ModelDowngradedError
  		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
  			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
-@@ -447,8 +456,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -447,8 +464,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return res, err
  }
  
@@ -1637,7 +1880,7 @@ index cae00e7..d7a550c 100644
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -458,6 +467,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -458,6 +475,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -1647,7 +1890,7 @@ index cae00e7..d7a550c 100644
  	var acct *CookieAccount
  	skip := exclude
  	if mc.PinAccountID > 0 {
-@@ -515,6 +527,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -515,6 +535,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -1657,7 +1900,7 @@ index cae00e7..d7a550c 100644
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -611,7 +626,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -611,7 +634,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -1669,7 +1912,7 @@ index cae00e7..d7a550c 100644
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -628,7 +646,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -628,7 +654,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -1681,7 +1924,7 @@ index cae00e7..d7a550c 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -773,49 +794,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -773,49 +802,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1743,7 +1986,7 @@ index cae00e7..d7a550c 100644
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -823,9 +822,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -823,9 +830,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1755,18 +1998,15 @@ index cae00e7..d7a550c 100644
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -833,6 +832,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -833,6 +840,7 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
-+		var aie *argonIdentityError
-+		if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(mc, aie.name) {
-+			err = &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: cookieID}
-+		}
++		err, identityStop := absorbArgonIdentity(err, mc, cookieID, strictCheck != nil)
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -844,6 +847,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -844,14 +852,15 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1776,7 +2016,18 @@ index cae00e7..d7a550c 100644
  			lastErr = err
  			// 出错话术不记进代理健康度：匿名直连也一样出，跟出口无关，算进去会误熔断。
  			// 空闲超时同理不记：首字节已经到了（出口通的），是上游开流后自己卡住，不是出口的锅。
-@@ -860,7 +866,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+-			if pickedOK && !errors.Is(err, errUpstreamFailureReply) && !errors.Is(err, errIdleTimeout) {
+-				recordProxyResult(picked.ID, false, err.Error())
+-			}
+-			// 已经往客户端吐过内容就不能重试，否则会重复（思考链也算吐过）。
+-			if tracker.emitted != "" || rtracker.emitted != "" {
++			// 模型身份错误也不记、也不在这个号上重试：代理已经把 HTTP 200 送回来了。
++			noteProxyAttempt(picked.ID, pickedOK, identityStop, err, true)
++			if identityStop || tracker.emitted != "" || rtracker.emitted != "" {
+ 				break
+ 			}
+ 			if !retryAfterTimeout(err) {
+@@ -860,7 +869,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1787,7 +2038,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -889,7 +897,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -889,7 +900,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1798,7 +2049,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -917,7 +927,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -917,7 +930,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1809,7 +2060,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -929,7 +941,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -929,7 +944,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1820,7 +2071,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -995,6 +1009,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -995,6 +1012,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1903,7 +2154,7 @@ index cae00e7..d7a550c 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1075,11 +1165,135 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1075,11 +1168,135 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -2040,7 +2291,7 @@ index cae00e7..d7a550c 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1087,36 +1301,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1087,36 +1304,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -2087,7 +2338,7 @@ index cae00e7..d7a550c 100644
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1580,6 +1795,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1580,6 +1798,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2172,18 +2423,128 @@ index 613cf7f..b24d891 100644
  		if _, ok := err.(*ModelDowngradedError); ok {
  			status = 429
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
-index 61273f1..57b6a2a 100644
+index 61273f1..3686139 100644
 --- a/internal/app/gemini_test.go
 +++ b/internal/app/gemini_test.go
-@@ -16,6 +16,8 @@ func TestModelHeader(t *testing.T) {
+@@ -16,6 +16,9 @@ func TestModelHeader(t *testing.T) {
  		{"gemini-3.6-flash", hexFlash36},
  		{"gemini-3.5-flash-lite", hexFlashLite},
  		{"gemini-3.8-flash", hexFlash38},
 +		{"gemini-4-hydrogen", hexHydrogen4},
 +		{"gemini-4-argon", hexArgon4},
++		{"gemini-4-neon", hexNeon4},
  	}
  	for _, c := range cases {
  		name, mc, err := resolveModel(c.name)
+@@ -51,17 +54,17 @@ func TestModelHeader(t *testing.T) {
+ 		}
+ 	}
+ 	// 守的是「不许冒出假模型」：thinking 版复用同样的 hex，所以看**去重后的 hex 数**，
+-	// 不是条目数。3.6/3.5-lite/3.1-pro/3.8-flash + 4 Argon（#35）= 5 个；
++	// 不是条目数。3.6/3.5-lite/3.1-pro/3.8-flash + 4 Argon（#35）+ 4 Neon（#84）= 6 个；
+ 	// 4 Hydrogen（#74）复用原 3.8 Flash 的 hex，不增加独立 hex。
+ 	hexes := map[string]bool{}
+ 	for _, m := range Models {
+ 		hexes[m.HexID] = true
+ 	}
+-	if len(hexes) != 5 {
+-		t.Errorf("只应存在 5 个真模型 hex, got %d", len(hexes))
++	if len(hexes) != 6 {
++		t.Errorf("只应存在 6 个真模型 hex, got %d", len(hexes))
+ 	}
+ 	// 反过来：每个真 hex 都应该有一个 thinking 版
+-	for _, base := range []string{hexFlash36, hexFlashLite, hexPro31, hexFlash38, hexArgon4} {
++	for _, base := range []string{hexFlash36, hexFlashLite, hexPro31, hexFlash38, hexArgon4, hexNeon4} {
+ 		found := false
+ 		for _, m := range Models {
+ 			if m.HexID == base && m.Thinking {
+@@ -297,19 +300,27 @@ func TestProHiddenWithoutCookie(t *testing.T) {
+ 	}
+ }
+ 
+-// 上游下线的模型（3.1 Pro）：有没有 cookie 都不进列表，请求直接报下线原因，
++// withRetiredModel 往模型表里临时塞一个已下线的模型，用完删掉。
++// 3.1 Pro 的位置已被 4 Neon 接替，Retired 机制留给下一次下线。
++func withRetiredModel(t *testing.T, name string) {
++	t.Helper()
++	Models[name] = ModelConfig{HexID: hexPro31, Mode: 3, Retired: "gone upstream; use gemini-4-hydrogen instead"}
++	t.Cleanup(func() { delete(Models, name) })
++}
++
++// 上游下线的模型：有没有 cookie 都不进列表，请求直接报下线原因，
+ // 不能被「要 cookie」或「unknown model」的提示盖掉。
+ func TestRetiredModels(t *testing.T) {
++	const n = "gemini-test-retired"
++	withRetiredModel(t, n)
+ 	check := func(when string) {
+-		for _, n := range []string{"gemini-3.1-pro", "gemini-3.1-pro-thinking"} {
+-			if _, ok := availableModels()[n]; ok {
+-				t.Errorf("%s: 下线模型 %s 不该出现在列表里", when, n)
+-			}
+-			_, _, err := resolveModel(n)
+-			if err == nil || !strings.Contains(err.Error(), "retired") ||
+-				!strings.Contains(err.Error(), "gemini-4-hydrogen") {
+-				t.Errorf("%s: %s 应报下线并给出替代, got %v", when, n, err)
+-			}
++		if _, ok := availableModels()[n]; ok {
++			t.Errorf("%s: 下线模型 %s 不该出现在列表里", when, n)
++		}
++		_, _, err := resolveModel(n)
++		if err == nil || !strings.Contains(err.Error(), "retired") ||
++			!strings.Contains(err.Error(), "gemini-4-hydrogen") {
++			t.Errorf("%s: %s 应报下线并给出替代, got %v", when, n, err)
+ 		}
+ 	}
+ 	check("无 cookie")
+@@ -317,9 +328,47 @@ func TestRetiredModels(t *testing.T) {
+ 	check("有 cookie")
+ }
+ 
++// 3.1 Pro 的位置现在是 4 Neon：老名字有 cookie 时照常可用，请求走 mode 3。
++// Hydrogen 继续用 3.8 Flash 的 hex 和 mode 1，不能被 Neon 的条目盖掉。
++func TestPro31IsNeonAliasAndHydrogenStaysOnFlashRoute(t *testing.T) {
++	for _, n := range []string{"gemini-4-neon", "gemini-4-hydrogen"} {
++		if _, ok := availableModels()[n]; ok {
++			t.Errorf("无 cookie 时不该暴露 %s", n)
++		}
++	}
++	withPoolCookie(t)
++	for _, n := range []string{"gemini-3.1-pro", "gemini-3.1-pro-thinking", "gemini-4-neon", "gemini-4-neon-thinking", "gemini-4-hydrogen", "gemini-4-hydrogen-thinking"} {
++		if _, ok := availableModels()[n]; !ok {
++			t.Errorf("%s 应出现在列表里", n)
++		}
++		_, mc, err := resolveModel(n)
++		if err != nil {
++			t.Fatalf("%s: %v", n, err)
++		}
++		switch n {
++		case "gemini-4-neon", "gemini-4-neon-thinking", "gemini-3.1-pro", "gemini-3.1-pro-thinking":
++			if mc.Mode != 3 {
++				t.Errorf("%s: mode=%d, want 3", n, mc.Mode)
++			}
++		default:
++			if hexHydrogen4 != hexFlash38 || mc.HexID != hexFlash38 || mc.Mode != 1 || mc.Upstream != "4 Hydrogen" {
++				t.Errorf("%s: hydrogen route changed: %+v", n, mc)
++			}
++		}
++	}
++	neon := Models["gemini-4-neon"]
++	if neon.HexID != hexNeon4 || hexNeon4 != "e6fa609c3fa255c0" || neon.Upstream != "4 Neon" {
++		t.Fatalf("neon route is not the upstream catalog id: %+v", neon)
++	}
++	if modelDowngraded(neon, "4 Neon") || modelDowngraded(neon, "4 Neon High") || !modelDowngraded(neon, "4 Hydrogen") {
++		t.Fatal("neon strict name check does not match the upstream display names")
++	}
++}
++
+ // 默认模型存的是下线模型时换成 fallbackDefaultModel，其余字段不动。
+ func TestReplaceRetiredDefault(t *testing.T) {
+-	c := RuntimeConfig{DefaultModel: "gemini-3.1-pro", RetryAttempts: 7}
++	withRetiredModel(t, "gemini-test-retired")
++	c := RuntimeConfig{DefaultModel: "gemini-test-retired", RetryAttempts: 7}
+ 	replaceRetiredDefault(&c)
+ 	if c.DefaultModel != fallbackDefaultModel || c.RetryAttempts != 7 {
+ 		t.Errorf("got %+v", c)
 diff --git a/internal/app/headers_test.go b/internal/app/headers_test.go
 new file mode 100644
 index 0000000..ef9b476
@@ -3232,6 +3593,25 @@ index 2f32a0b..a641a4c 100644
  }
  
  // modelDowngraded 判断服务端自报的显示名是不是请求的那个模型。
+diff --git a/internal/app/strict_model_test.go b/internal/app/strict_model_test.go
+index 3ab7d18..ec9557b 100644
+--- a/internal/app/strict_model_test.go
++++ b/internal/app/strict_model_test.go
+@@ -158,6 +158,14 @@ func TestModelDowngraded(t *testing.T) {
+ 		{"gemini-4-argon-thinking", "4 Carbon High", false},
+ 		{"gemini-4-carbon", "3.5 Flash-Lite", true},
+ 		{"gemini-4-carbon", "4 Hydrogen", true},
++		// 2026-11-19 实测：mode 3 回报 4 Neon（接替 3.1 Pro），新旧两个名字互认
++		{"gemini-3.1-pro", "4 Neon", false},
++		{"gemini-3.1-pro-thinking", "4 Neon High", false},
++		{"gemini-4-neon", "4 Neon", false},
++		{"gemini-4-neon-thinking", "4 Neon High", false},
++		{"gemini-4-neon", "3.1 Pro", false},
++		{"gemini-4-neon", "3.5 Flash-Lite", true},
++		{"gemini-4-neon", "4 Hydrogen", true},
+ 		{"gemini-3.7-flash", "3.8 Flash", false},
+ 		{"gemini-4-hydrogen", "4 Hydrogen", false},
+ 		{"gemini-4-hydrogen-thinking", "4 Hydrogen High", false},
 diff --git a/internal/app/timeout_retry_test.go b/internal/app/timeout_retry_test.go
 index 77a5115..b31966a 100644
 --- a/internal/app/timeout_retry_test.go

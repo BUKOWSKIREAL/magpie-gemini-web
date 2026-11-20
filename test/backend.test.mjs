@@ -1002,6 +1002,19 @@ describe('22. Reasoning effort maps onto the backend -thinking twin', () => {
     assert.equal(models['gemini-canvas'], undefined);
   });
 
+  it('keeps gemini-4-hydrogen and gemini-4-neon in the provider list and folds only their thinking twins', async () => {
+    reset();
+    modelIds = ['gemini-4-hydrogen', 'gemini-4-hydrogen-thinking', 'gemini-4-neon', 'gemini-4-neon-thinking', 'gemini-3.6-flash'];
+    const c = { key: 'neon_hydrogen_key', baseURL: `http://127.0.0.1:${serverPort}/v1` };
+    const models = await listModels(c, settings({ baseURL: c.baseURL }));
+    assert.deepEqual(models['gemini-4-hydrogen'].variants, { low: {}, high: {} });
+    assert.deepEqual(models['gemini-4-neon'].variants, { low: {}, high: {} });
+    assert.equal(models['gemini-4-hydrogen-thinking'], undefined);
+    assert.equal(models['gemini-4-neon-thinking'], undefined);
+    assert.equal(models['gemini-4-neon'].name, 'gemini-4-neon');
+    assert.equal(models['gemini-4-hydrogen'].name, 'gemini-4-hydrogen');
+  });
+
   it('routes medium to -thinking-medium when available, high and other non-low efforts to -thinking, low/none/absent to the base', async () => {
     reset();
     const cases = [
