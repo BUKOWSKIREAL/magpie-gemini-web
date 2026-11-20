@@ -65,15 +65,15 @@ index 78236c6..a5109b0 100644
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
 diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
-index 883532e..19a6ca8 100644
+index b17887d..a16255b 100644
 --- a/internal/app/admin_ui/index.html
 +++ b/internal/app/admin_ui/index.html
 @@ -1020,7 +1020,8 @@ const RT_GROUPS = [
        { k: 'retry_attempts', label: '重试次数', type: 'int', min: 1, max: 10,
          hint: '含首次；流式已吐字后不再重试' },
        { k: 'retry_delay_sec', label: '重试间隔（秒）', type: 'int', min: 0, max: 60 },
--      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
-+      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600,
+-      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 1200 },
++      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 1200,
 +        hint: '对话请求按上游沉默计时：这么久一个字节都没来才放弃这一次（没出字前会重试）。排队时上游每 60 秒发一次心跳，回复一直在出也不会截断。其它请求（取页面、上传等）仍是整次请求的上限' },
        { k: 'retry_on_timeout', label: '超时后重试', type: 'bool',
          hint: '开：上游等满「上游超时」还没回完时，按重试次数再发（默认）。关：超时直接报错——等满一次都没回完，重发多半还是超时，一个请求最坏要等「超时 × 重试次数」，超长输入或慢模型（如 Argon）下能拖十几分钟。其他失败（空响应、出错话术等）照常重试' },
@@ -89,14 +89,15 @@ index 883532e..19a6ca8 100644
    {
 diff --git a/internal/app/argon.go b/internal/app/argon.go
 new file mode 100644
-index 0000000..1a73717
+index 0000000..1d7865c
 --- /dev/null
 +++ b/internal/app/argon.go
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,225 @@
 +package app
 +
 +import (
 +	"encoding/json"
++	"errors"
 +	"fmt"
 +	"io"
 +	"slices"
@@ -186,6 +187,42 @@ index 0000000..1a73717
 +}
 +
 +var errArgonIdentityMissing = fmt.Errorf("Argon identity missing in upstream response; refusing unverified model")
++
++// absorbArgonIdentity 处理 Argon/Carbon 身份错误。这类错误只在代理已经把上游 HTTP 200
++// 正文送回来之后才会出现，描述的是自报模型，不是出口通不通。
++//
++// stop 为真时调用方必须停掉这个账号上的重试：再发一次，身份还是这份。因此也不能把
++// 它记进代理 fail_count，否则 strict_model 关着时几次重试就会把出口熔断，连坐其他账号和模型。
++//
++// strict 为真且自报名是另一个模型族时，改写成 *ModelDowngradedError，沿用原来的换号与 429。
++// strict 为假时保留原来的身份错误：换号冷却仍只由 strict_model 决定。身份缺失没有自报名，
++// 不记成降级冷却。
++func absorbArgonIdentity(err error, mc ModelConfig, accountID int64, strict bool) (error, bool) {
++	var aie *argonIdentityError
++	if errors.As(err, &aie) {
++		if strict && modelDowngraded(mc, aie.name) {
++			return &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: accountID}, true
++		}
++		return err, true
++	}
++	if errors.Is(err, errArgonIdentityMissing) {
++		return err, true
++	}
++	return err, false
++}
++
++// noteProxyAttempt 把一次生成失败记进代理健康度。身份错误、出错话术，以及单轮路径上的
++// 空闲超时都不记。ignoreIdle 对应 streamGenerateOnce：首字节已经到达，空闲是上游卡住，
++// 不是出口故障。streamGenerateConv 保持原判据（ignoreIdle 为假），真实的连接错误仍记。
++func noteProxyAttempt(id int64, pickedOK, identityStop bool, err error, ignoreIdle bool) {
++	if identityStop || !pickedOK || err == nil || errors.Is(err, errUpstreamFailureReply) {
++		return
++	}
++	if ignoreIdle && errors.Is(err, errIdleTimeout) {
++		return
++	}
++	recordProxyResult(id, false, err.Error())
++}
 +
 +func validateArgonIdentity(raw []byte, names []string) error {
 +	found := false
@@ -342,14 +379,15 @@ index 0000000..bbc0041
 +}
 diff --git a/internal/app/argon_test.go b/internal/app/argon_test.go
 new file mode 100644
-index 0000000..920753a
+index 0000000..cb5fec6
 --- /dev/null
 +++ b/internal/app/argon_test.go
-@@ -0,0 +1,502 @@
+@@ -0,0 +1,635 @@
 +package app
 +
 +import (
 +	"bytes"
++	"context"
 +	"encoding/json"
 +	"errors"
 +	"fmt"
@@ -357,6 +395,7 @@ index 0000000..920753a
 +	"net/http"
 +	"net/http/httptest"
 +	"strings"
++	"sync/atomic"
 +	"testing"
 +	"time"
 +)
@@ -718,6 +757,7 @@ index 0000000..920753a
 +		// Silent downgrade to another model family: rejected and converted to ModelDowngradedError under strict_model.
 +		{low, "3.5 Flash-Lite", false, true},
 +		{low, "Gemini 3.5 Flash-Lite", false, true},
++		{low, "4 Hydrogen", false, true},
 +		{med, "3.5 Flash-Lite", false, true},
 +		{high, "3.6 Flash", false, true},
 +	}
@@ -745,19 +785,16 @@ index 0000000..920753a
 +			}
 +
 +			_, _, err := readModelCheckedBody(bytes.NewReader(frame), cb, time.Now(), 200, header)
-+			var aie *argonIdentityError
-+			if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(c.mc, aie.name) {
-+				err = &ModelDowngradedError{Requested: c.mc.Upstream, Reported: aie.name, AccountID: 42}
-+			}
++			err, stop := absorbArgonIdentity(err, c.mc, 42, strictCheck != nil)
 +
 +			if c.wantPass {
-+				if err != nil {
-+					t.Errorf("[%s] %q (think=%d): expected pass under strict_model, got %v", mode, c.name, c.mc.thinkWire(), err)
++				if err != nil || stop {
++					t.Errorf("[%s] %q (think=%d): expected pass under strict_model, got %v stop=%v", mode, c.name, c.mc.thinkWire(), err, stop)
 +				}
 +				continue
 +			}
-+			if err == nil {
-+				t.Errorf("[%s] %q (think=%d): expected error under strict_model, got nil", mode, c.name, c.mc.thinkWire())
++			if err == nil || !stop {
++				t.Errorf("[%s] %q (think=%d): identity fault must stop same-account retry, got %v stop=%v", mode, c.name, c.mc.thinkWire(), err, stop)
 +				continue
 +			}
 +			var mde *ModelDowngradedError
@@ -846,6 +883,139 @@ index 0000000..920753a
 +	slotRelease(picked.ID)
 +	if picked.ID != idB {
 +		t.Fatalf("first check slot picked proxy %d (%s), want proxy B %d", picked.ID, picked.Name, idB)
++	}
++}
++
++// 直接跑 streamGenerateOnce 和 streamGenerateConv。只测 helper 发现不了某条路径忘了接线：
++// 漏接时同一账号会按 retry_attempts 重试，并把身份错误记进这个代理的 fail_count。
++func TestGeneratePathsDoNotChargeProxyForArgonIdentity(t *testing.T) {
++	savedCfg := cfg
++	savedRT := rtCfg()
++	cfg.RetryAttempts = 3
++	cfg.RetryDelaySec = 0
++	cfg.GeminiBLAuto = false
++	cfg.WebChannel = false
++	cfg.AnonFirst = false
++	cfg.StrictModel = false
++	cfg.FallbackDirect = false
++	initRuntimeConfig()
++	t.Cleanup(func() {
++		cfg = savedCfg
++		rtMu.Lock()
++		rtVal = savedRT
++		rtMu.Unlock()
++		geminiRoundTrip = doGeminiRequestStop
++	})
++
++	getDB()
++	if _, err := getDB().Exec(`DELETE FROM proxies`); err != nil {
++		t.Fatal(err)
++	}
++	cookie := "SID=s; HSID=h; SSID=ss; APISID=a; SAPISID=sap; __Secure-1PSID=p"
++	acctID, err := accountAdd("identity", cookie, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	proxyID, err := proxyCreate("identity-proxy", "http://127.0.0.1:7890", 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	bindAccountProxy(acctID, proxyID)
++	xsrfMu.Lock()
++	xsrfCache[xsrfKey(cookie, 0)] = xsrfEntry{token: "tok", fetched: time.Now()}
++	xsrfMu.Unlock()
++	t.Cleanup(func() {
++		invalidateXSRF(cookie)
++		_ = accountDelete(acctID)
++		_, _ = getDB().Exec(`DELETE FROM proxies`)
++		loadProxies()
++		geminiRoundTrip = doGeminiRequestStop
++	})
++
++	mc := Models["gemini-4-argon-thinking-medium"]
++	mismatch := &argonIdentityError{name: "4 Hydrogen", id: hexFlashLite}
++	var calls atomic.Int32
++	var tripErr error
++	geminiRoundTrip = func(ctx context.Context, endpoint, body string, headers map[string]string, proxyURL string, onLine func(string) error, stop *atomic.Bool) (int, []byte, int64, []string, error) {
++		calls.Add(1)
++		return 200, nil, 1, nil, tripErr
++	}
++	failCount := func() int {
++		t.Helper()
++		var n int
++		if err := getDB().QueryRow(`SELECT fail_count FROM proxies WHERE id=?`, proxyID).Scan(&n); err != nil {
++			t.Fatal(err)
++		}
++		return n
++	}
++	resetProxy := func() {
++		t.Helper()
++		if _, err := getDB().Exec(`UPDATE proxies SET fail_count=0, last_error='' WHERE id=?`, proxyID); err != nil {
++			t.Fatal(err)
++		}
++		loadProxies()
++	}
++	both := func(t *testing.T) (onceCalls int32, onceErr error, convCalls int32, convErr error) {
++		t.Helper()
++		calls.Store(0)
++		_, onceErr = streamGenerateOnce(context.Background(), "hi", promptCtx{}, mc, nil, nil, nil, nil, map[int64]bool{})
++		onceCalls = calls.Load()
++		calls.Store(0)
++		_, convErr = streamGenerateConv(context.Background(), "hi", mc, &convState{
++			cookie: cookie, isLogin: true, accountID: acctID, authuser: 0, proxyID: proxyID,
++		}, nil, nil)
++		convCalls = calls.Load()
++		if onceCalls == 0 || convCalls == 0 {
++			t.Fatalf("generation path did not reach the transport (once=%d conv=%d onceErr=%v convErr=%v)", onceCalls, convCalls, onceErr, convErr)
++		}
++		return onceCalls, onceErr, convCalls, convErr
++	}
++
++	resetProxy()
++	tripErr = mismatch
++	onceCalls, onceErr, convCalls, convErr := both(t)
++	if onceCalls != 1 || convCalls != 1 {
++		t.Fatalf("identity mismatch retried the same account: once=%d conv=%d", onceCalls, convCalls)
++	}
++	var mde *ModelDowngradedError
++	if errors.As(onceErr, &mde) || errors.As(convErr, &mde) || !errors.As(onceErr, &mismatch) || !errors.As(convErr, &mismatch) {
++		t.Fatalf("strict off should keep the identity error, once=%v conv=%v", onceErr, convErr)
++	}
++	if n := failCount(); n != 0 {
++		t.Fatalf("identity mismatch fail_count=%d", n)
++	}
++
++	resetProxy()
++	tripErr = errArgonIdentityMissing
++	onceCalls, onceErr, convCalls, convErr = both(t)
++	if onceCalls != 1 || convCalls != 1 || !errors.Is(onceErr, errArgonIdentityMissing) || !errors.Is(convErr, errArgonIdentityMissing) {
++		t.Fatalf("missing identity once=%d/%v conv=%d/%v", onceCalls, onceErr, convCalls, convErr)
++	}
++	if n := failCount(); n != 0 {
++		t.Fatalf("missing identity fail_count=%d", n)
++	}
++
++	resetProxy()
++	tripErr = errors.New("dial tcp 127.0.0.1:7890: connect: connection refused")
++	onceCalls, _, convCalls, _ = both(t)
++	if onceCalls != 3 || convCalls != 3 {
++		t.Fatalf("network error should use every retry, once=%d conv=%d", onceCalls, convCalls)
++	}
++	if n := failCount(); n != 6 {
++		t.Fatalf("network error fail_count=%d, want 6 (3 per path)", n)
++	}
++
++	resetProxy()
++	rtMu.Lock()
++	rtVal.StrictModel = true
++	rtMu.Unlock()
++	tripErr = mismatch
++	onceCalls, onceErr, convCalls, convErr = both(t)
++	if onceCalls != 1 || convCalls != 1 || !errors.As(onceErr, &mde) || !errors.As(convErr, &mde) {
++		t.Fatalf("strict downgrade once=%d/%v conv=%d/%v", onceCalls, onceErr, convCalls, convErr)
++	}
++	if n := failCount(); n != 0 {
++		t.Fatalf("strict downgrade fail_count=%d", n)
 +	}
 +}
 diff --git a/internal/app/argon_timing_probe_test.go b/internal/app/argon_timing_probe_test.go
@@ -1453,7 +1623,7 @@ index 97995a2..ba03140 100644
 +	return promptParts{body: parts}.join()
  }
 diff --git a/internal/app/conversation.go b/internal/app/conversation.go
-index 13859ec..7dcb59c 100644
+index 13859ec..6f55a55 100644
 --- a/internal/app/conversation.go
 +++ b/internal/app/conversation.go
 @@ -1,6 +1,7 @@
@@ -1493,7 +1663,7 @@ index 13859ec..7dcb59c 100644
  	p, slotOK, slotErr := acquireSlot(conv.proxyID)
  	if !slotOK {
  		return &StreamResult{}, slotErr
-@@ -375,12 +375,19 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -375,12 +375,16 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  	t0 := time.Now()
  	var lastErr error
  	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
@@ -1501,22 +1671,31 @@ index 13859ec..7dcb59c 100644
 +		if cerr := ctx.Err(); cerr != nil {
 +			return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID}, cerr
 +		}
-+		statusCode, raw, ttfb, setCookie, err := doGeminiRequestStop(ctx, endpoint, body, geminiHeaders, proxyURL, lineCB, nil)
++		statusCode, raw, ttfb, setCookie, err := geminiRoundTrip(ctx, endpoint, body, geminiHeaders, proxyURL, lineCB, nil)
  		if len(setCookie) > 0 && conv.cookie != "" {
  			if merged := mergeSetCookie(conv.cookie, setCookie); merged != conv.cookie {
  				conv.cookie = merged
  			}
  		}
-+		var aie *argonIdentityError
-+		if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(mc, aie.name) {
-+			err = &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: conv.accountID}
-+		}
++		err, identityStop := absorbArgonIdentity(err, mc, conv.accountID, strictCheck != nil)
  		// 降级：同一个号重试还是降级，直接交给上层（见 gemini.go 同一处）。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -389,6 +396,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -388,7 +392,21 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 				UpstreamModel: mde.Reported, TotalMs: time.Since(t0).Milliseconds(),
  				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
  		}
++		// 身份对不上或身份缺失：代理已经送达响应，不记 fail_count，也不在这个号上重试。
++		if identityStop {
++			reported := ""
++			var aie *argonIdentityError
++			if errors.As(err, &aie) {
++				reported = aie.name
++			}
++			return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID,
++				UpstreamModel: reported, TotalMs: time.Since(t0).Milliseconds(),
++				Emitted: tracker.emitted, EmittedReasoning: rtracker.emitted}, err
++		}
  		if err != nil || statusCode != 200 || !hasContentFrame(string(raw)) {
 +			if cerr := ctx.Err(); cerr != nil {
 +				return &StreamResult{ProxyID: p.ID, ProxyName: p.Name, AccountID: conv.accountID}, cerr
@@ -1524,7 +1703,20 @@ index 13859ec..7dcb59c 100644
  			if err == nil && statusCode == 200 {
  				lastErr = fmt.Errorf("续接无内容帧（会话可能已失效，raw %d 字节）", len(raw))
  			} else if err != nil {
-@@ -411,7 +421,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -396,8 +414,10 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+ 			} else {
+ 				lastErr = fmt.Errorf("upstream HTTP %d: %s", statusCode, truncate(string(raw), 160))
+ 			}
+-			// 出错话术跟出口无关，不记进代理健康度
+-			if pickedOK && !errors.Is(err, errUpstreamFailureReply) {
++			// 出错话术跟出口无关，不记进代理健康度。身份错误已在上面返回。
++			if err != nil {
++				noteProxyAttempt(p.ID, pickedOK, false, err, false)
++			} else if pickedOK {
+ 				recordProxyResult(p.ID, false, lastErr.Error())
+ 			}
+ 			if tracker.emitted != "" || rtracker.emitted != "" {
+@@ -411,7 +431,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  				if errors.Is(err, errUpstreamFailureReply) {
  					logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
  				}
@@ -1535,7 +1727,7 @@ index 13859ec..7dcb59c 100644
  			}
  			continue
  		}
-@@ -423,7 +435,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -423,7 +445,9 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1546,7 +1738,7 @@ index 13859ec..7dcb59c 100644
  			}
  			continue
  		}
-@@ -464,7 +478,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
+@@ -464,7 +488,7 @@ func streamGenerateConv(prompt string, mc ModelConfig, conv *convState,
  //   - 没命中 → 新建会话，首轮发全量拼接的历史（含 tools 指令，把当前上下文交给服务端）。
  //
  // 支持 tools（续接里也解析 ```tool_call``` 围栏）；图片走原单轮路径（callGemini）。
@@ -1555,7 +1747,7 @@ index 13859ec..7dcb59c 100644
  	tools []map[string]interface{}, toolChoice interface{},
  	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
  	parentKey := convParentKey(messages)
-@@ -515,7 +529,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
+@@ -515,7 +539,7 @@ func callGeminiConv(messages []map[string]interface{}, mc ModelConfig,
  				}
  			}
  		}
@@ -1579,7 +1771,7 @@ index e60c6b1..866d211 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index cae00e7..d7a550c 100644
+index e6b6738..a632052 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -15,6 +15,7 @@ import (
@@ -1590,7 +1782,7 @@ index cae00e7..d7a550c 100644
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -406,7 +407,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
+@@ -411,7 +412,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -1599,7 +1791,7 @@ index cae00e7..d7a550c 100644
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -421,15 +422,23 @@ type fileRef struct {
+@@ -426,15 +427,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -1626,7 +1818,7 @@ index cae00e7..d7a550c 100644
  		var exhausted *ModelDowngradedError
  		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
  			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
-@@ -447,8 +456,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -452,8 +461,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return res, err
  }
  
@@ -1637,7 +1829,7 @@ index cae00e7..d7a550c 100644
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -458,6 +467,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -463,6 +472,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -1647,7 +1839,7 @@ index cae00e7..d7a550c 100644
  	var acct *CookieAccount
  	skip := exclude
  	if mc.PinAccountID > 0 {
-@@ -515,6 +527,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -520,6 +532,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -1657,7 +1849,7 @@ index cae00e7..d7a550c 100644
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -611,7 +626,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -616,7 +631,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -1669,7 +1861,7 @@ index cae00e7..d7a550c 100644
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -628,7 +646,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -633,7 +651,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -1681,7 +1873,7 @@ index cae00e7..d7a550c 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -773,49 +794,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -778,49 +799,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1743,7 +1935,7 @@ index cae00e7..d7a550c 100644
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -823,9 +822,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -828,9 +827,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1751,22 +1943,19 @@ index cae00e7..d7a550c 100644
 +			statusCode, raw, ttfb, setCookie, err = doWebChannelRequest(wcReq, proxyURL, lh.cb)
  		} else {
 -			statusCode, raw, ttfb, setCookie, err = doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
-+			statusCode, raw, ttfb, setCookie, err = doGeminiRequestStop(ctx, endpoint, body, geminiHeaders, proxyURL, lh.cb, &lh.stop)
++			statusCode, raw, ttfb, setCookie, err = geminiRoundTrip(ctx, endpoint, body, geminiHeaders, proxyURL, lh.cb, &lh.stop)
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -833,6 +832,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -838,6 +837,7 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
-+		var aie *argonIdentityError
-+		if strictCheck != nil && errors.As(err, &aie) && modelDowngraded(mc, aie.name) {
-+			err = &ModelDowngradedError{Requested: mc.Upstream, Reported: aie.name, AccountID: cookieID}
-+		}
++		err, identityStop := absorbArgonIdentity(err, mc, cookieID, strictCheck != nil)
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -844,6 +847,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -849,14 +849,15 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1776,7 +1965,18 @@ index cae00e7..d7a550c 100644
  			lastErr = err
  			// 出错话术不记进代理健康度：匿名直连也一样出，跟出口无关，算进去会误熔断。
  			// 空闲超时同理不记：首字节已经到了（出口通的），是上游开流后自己卡住，不是出口的锅。
-@@ -860,7 +866,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+-			if pickedOK && !errors.Is(err, errUpstreamFailureReply) && !errors.Is(err, errIdleTimeout) {
+-				recordProxyResult(picked.ID, false, err.Error())
+-			}
+-			// 已经往客户端吐过内容就不能重试，否则会重复（思考链也算吐过）。
+-			if tracker.emitted != "" || rtracker.emitted != "" {
++			// 模型身份错误也不记、也不在这个号上重试：代理已经把 HTTP 200 送回来了。
++			noteProxyAttempt(picked.ID, pickedOK, identityStop, err, true)
++			if identityStop || tracker.emitted != "" || rtracker.emitted != "" {
+ 				break
+ 			}
+ 			if !retryAfterTimeout(err) {
+@@ -865,7 +866,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1787,7 +1987,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -889,7 +897,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -894,7 +897,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1798,7 +1998,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -917,7 +927,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -922,7 +927,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1809,7 +2009,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -929,7 +941,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -934,7 +941,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1820,7 +2020,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -995,6 +1009,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -1000,6 +1009,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1903,7 +2103,7 @@ index cae00e7..d7a550c 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1075,11 +1165,135 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1080,11 +1165,140 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -2024,6 +2224,11 @@ index cae00e7..d7a550c 100644
 +	}{Reader: stopReader{heardReader{body, watch}, stop}, Closer: body}
 +}
 +
++// geminiRoundTrip 是两条生成路径实际调用的 StreamGenerate 传输。
++// 生产环境等于 doGeminiRequestStop。测试替换它，才能发现某条路径忘了接身份错误处理：
++// 直接调用 helper 看不出漏接线。
++var geminiRoundTrip = doGeminiRequestStop
++
 +// doGeminiRequestStop 同 doGeminiRequest，stop 置位后提前结束读取（见 stopReader），
 +// ctx 结束时中止连接和读取。整次请求不限时，上游沉默超过 stallLimit 才放弃（见 stallWatch）。
 +func doGeminiRequestStop(ctx context.Context, endpoint, body string, headers map[string]string, proxyURL string,
@@ -2040,7 +2245,7 @@ index cae00e7..d7a550c 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1087,36 +1301,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1092,36 +1306,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -2087,7 +2292,7 @@ index cae00e7..d7a550c 100644
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1580,6 +1795,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1585,6 +1800,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2172,7 +2377,7 @@ index 613cf7f..b24d891 100644
  		if _, ok := err.(*ModelDowngradedError); ok {
  			status = 429
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
-index 61273f1..57b6a2a 100644
+index 56af688..cc0bc5c 100644
 --- a/internal/app/gemini_test.go
 +++ b/internal/app/gemini_test.go
 @@ -16,6 +16,8 @@ func TestModelHeader(t *testing.T) {
@@ -2891,7 +3096,7 @@ index 1bd5bb4..3d473c4 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index 3b2b0ec..c2501f5 100644
+index 596bb20..3157979 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2906,8 +3111,8 @@ index 3b2b0ec..c2501f5 100644
  	"time"
  )
  
--const Version = "4.30.0"
-+const Version = "4.30.0-magpie.1"
+-const Version = "4.31.0"
++const Version = "4.31.0-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)
