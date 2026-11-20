@@ -65,15 +65,15 @@ index 78236c6..a5109b0 100644
  			// 只改传了的字段：没传的沿用当前值。
  			var curLabel, curNote string
 diff --git a/internal/app/admin_ui/index.html b/internal/app/admin_ui/index.html
-index 883532e..19a6ca8 100644
+index b17887d..a16255b 100644
 --- a/internal/app/admin_ui/index.html
 +++ b/internal/app/admin_ui/index.html
 @@ -1020,7 +1020,8 @@ const RT_GROUPS = [
        { k: 'retry_attempts', label: '重试次数', type: 'int', min: 1, max: 10,
          hint: '含首次；流式已吐字后不再重试' },
        { k: 'retry_delay_sec', label: '重试间隔（秒）', type: 'int', min: 0, max: 60 },
--      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
-+      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600,
+-      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 1200 },
++      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 1200,
 +        hint: '对话请求按上游沉默计时：这么久一个字节都没来才放弃这一次（没出字前会重试）。排队时上游每 60 秒发一次心跳，回复一直在出也不会截断。其它请求（取页面、上传等）仍是整次请求的上限' },
        { k: 'retry_on_timeout', label: '超时后重试', type: 'bool',
          hint: '开：上游等满「上游超时」还没回完时，按重试次数再发（默认）。关：超时直接报错——等满一次都没回完，重发多半还是超时，一个请求最坏要等「超时 × 重试次数」，超长输入或慢模型（如 Argon）下能拖十几分钟。其他失败（空响应、出错话术等）照常重试' },
@@ -1579,7 +1579,7 @@ index e60c6b1..866d211 100644
  	if extractSAPISID(a.Cookie) == "" {
  		detail += "，但缺 SAPISID（算不出授权头，部分接口会被当匿名）"
 diff --git a/internal/app/gemini.go b/internal/app/gemini.go
-index cae00e7..d7a550c 100644
+index e6b6738..db315a1 100644
 --- a/internal/app/gemini.go
 +++ b/internal/app/gemini.go
 @@ -15,6 +15,7 @@ import (
@@ -1590,7 +1590,7 @@ index cae00e7..d7a550c 100644
  	"time"
  
  	fhttp "github.com/bogdanfinn/fhttp"
-@@ -406,7 +407,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
+@@ -411,7 +412,7 @@ func (e *pinnedAccountError) Unwrap() error { return e.Err }
  // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
  func streamGenerate(prompt, latest string, mc ModelConfig,
  	onDelta, onReasoning func(string)) (*StreamResult, error) {
@@ -1599,7 +1599,7 @@ index cae00e7..d7a550c 100644
  }
  
  // fileRef 是一个已上传附件的引用。
-@@ -421,15 +422,23 @@ type fileRef struct {
+@@ -426,15 +427,23 @@ type fileRef struct {
  //
  // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
  // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
@@ -1626,7 +1626,7 @@ index cae00e7..d7a550c 100644
  		var exhausted *ModelDowngradedError
  		if try > 0 && errors.As(nextErr, &exhausted) && exhausted.Reported == "" {
  			// 换号时已经没号可挑：报上一个号真实的降级（带自报模型名），补上解冻时间
-@@ -447,8 +456,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
+@@ -452,8 +461,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
  	return res, err
  }
  
@@ -1637,7 +1637,7 @@ index cae00e7..d7a550c 100644
  	var files []fileRef
  
  	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
-@@ -458,6 +467,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -463,6 +472,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
  	// #20 匿名优先：不需要登录态能力时不占用 cookie 账号，走匿名省额度（见 anonFirstEligible）。
  	// 带附件（图/视频）时不能走匿名——下面 uploadBytes 那段会因 cookieStr=="" 直接报错。
@@ -1647,7 +1647,7 @@ index cae00e7..d7a550c 100644
  	var acct *CookieAccount
  	skip := exclude
  	if mc.PinAccountID > 0 {
-@@ -515,6 +527,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -520,6 +532,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
  	rotatedOnce := map[int64]bool{}
  	for acct != nil && len(tried) < maxCookieTries {
@@ -1657,7 +1657,7 @@ index cae00e7..d7a550c 100644
  		tried[acct.ID] = true
  		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
  		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
-@@ -611,7 +626,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -616,7 +631,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		}
  		nImg, nVid := 0, 0
  		for _, u := range pending {
@@ -1669,7 +1669,7 @@ index cae00e7..d7a550c 100644
  			if uerr != nil {
  				return attrib(fmt.Errorf("上传附件 %s 失败: %w", u.Name, uerr))
  			}
-@@ -628,7 +646,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -633,7 +651,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
  	// 而且必须走跟正式请求同一个出口。
  	budget := rtCfg().MaxPromptBytes
@@ -1681,7 +1681,7 @@ index cae00e7..d7a550c 100644
  		return attrib(ferr)
  	} else if used {
  		prompt = p
-@@ -773,49 +794,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -778,49 +799,27 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
  	t0 := time.Now()
  
@@ -1743,7 +1743,7 @@ index cae00e7..d7a550c 100644
  		var statusCode int
  		var raw []byte
  		var ttfb int64
-@@ -823,9 +822,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -828,9 +827,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  		var err error
  		if useWC {
  			wcReq.Cookie = cookieStr
@@ -1755,7 +1755,7 @@ index cae00e7..d7a550c 100644
  		}
  		if len(setCookie) > 0 && cookieID > 0 {
  			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
-@@ -833,6 +832,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -838,6 +837,10 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				updateAccountCookie(cookieID, merged)
  			}
  		}
@@ -1766,7 +1766,7 @@ index cae00e7..d7a550c 100644
  		// 降级不是出口或 cookie 的错，也不该重试：同一个号再发一次还是降级。
  		var mde *ModelDowngradedError
  		if errors.As(err, &mde) {
-@@ -844,6 +847,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -849,6 +852,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			return res, err
  		}
  		if err != nil {
@@ -1776,7 +1776,7 @@ index cae00e7..d7a550c 100644
  			lastErr = err
  			// 出错话术不记进代理健康度：匿名直连也一样出，跟出口无关，算进去会误熔断。
  			// 空闲超时同理不记：首字节已经到了（出口通的），是上游开流后自己卡住，不是出口的锅。
-@@ -860,7 +866,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -865,7 +871,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
@@ -1787,7 +1787,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -889,7 +897,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -894,7 +902,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  				break
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
@@ -1798,7 +1798,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -917,7 +927,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -922,7 +932,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
@@ -1809,7 +1809,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -929,7 +941,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -934,7 +946,9 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  			}
  			if attempt < rtCfg().RetryAttempts-1 {
  				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, lastErr)
@@ -1820,7 +1820,7 @@ index cae00e7..d7a550c 100644
  			}
  			continue
  		}
-@@ -995,6 +1009,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
+@@ -1000,6 +1014,82 @@ func streamGenerateOnce(prompt, latest string, mc ModelConfig, pending []pending
  	return attrib(lastErr)
  }
  
@@ -1903,7 +1903,7 @@ index cae00e7..d7a550c 100644
  // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
  // 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
  var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
-@@ -1075,11 +1165,135 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
+@@ -1080,11 +1170,135 @@ func setAuthUserHeaders(h map[string]string, authuser int) {
  // 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
  func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
  	onLine func(string) error) (int, []byte, int64, []string, error) {
@@ -2040,7 +2040,7 @@ index cae00e7..d7a550c 100644
  		if err != nil {
  			return 0, nil, 0, nil, err
  		}
-@@ -1087,36 +1301,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
+@@ -1092,36 +1306,37 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL
  		for k, v := range headers {
  			req.Header.Set(k, v)
  		}
@@ -2087,7 +2087,7 @@ index cae00e7..d7a550c 100644
  	}
  	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
  }
-@@ -1580,6 +1795,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
+@@ -1585,6 +1800,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
  			res.Diagnostic = "构建请求失败: " + e.Error()
  			return res
  		}
@@ -2172,7 +2172,7 @@ index 613cf7f..b24d891 100644
  		if _, ok := err.(*ModelDowngradedError); ok {
  			status = 429
 diff --git a/internal/app/gemini_test.go b/internal/app/gemini_test.go
-index 61273f1..57b6a2a 100644
+index 56af688..cc0bc5c 100644
 --- a/internal/app/gemini_test.go
 +++ b/internal/app/gemini_test.go
 @@ -16,6 +16,8 @@ func TestModelHeader(t *testing.T) {
@@ -2891,7 +2891,7 @@ index 1bd5bb4..3d473c4 100644
  // 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
  // forcedName 非空表示客户端点名了某个函数。
 diff --git a/internal/app/server.go b/internal/app/server.go
-index 3b2b0ec..c2501f5 100644
+index 596bb20..3157979 100644
 --- a/internal/app/server.go
 +++ b/internal/app/server.go
 @@ -1,6 +1,7 @@
@@ -2906,8 +2906,8 @@ index 3b2b0ec..c2501f5 100644
  	"time"
  )
  
--const Version = "4.30.0"
-+const Version = "4.30.0-magpie.1"
+-const Version = "4.31.0"
++const Version = "4.31.0-magpie.1"
  
  func writeJSON(w http.ResponseWriter, status int, data interface{}) {
  	body, _ := json.Marshal(data)

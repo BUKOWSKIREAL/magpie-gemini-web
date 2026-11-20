@@ -6,7 +6,7 @@
 
 Use **Google AI Studio** and **Gemini on the web** through your Google account in [Magpie](https://usemagpie.ai/). The plugin runs [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) and [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) locally, providing chat, native function calling, Nano Banana image generation, and Deep Research through OpenAI-compatible and Gemini APIs.
 
-> **New model support:** Both providers now list **`gemini-4-hydrogen`** and **`gemini-4-carbon`**. AI Studio follows official stable backend releases and maps Hydrogen's `xhigh` thinking tier. Gemini Web's one-click local backend exposes dedicated model IDs starting with **`4.30.0-magpie.1`**: Hydrogen works with signed-in accounts (including free accounts), Carbon requires an eligible paid/Ultra account, and the legacy `gemini-4-argon` name remains a Carbon alias.
+> **New model support:** Both providers now list **`gemini-4-hydrogen`** and **`gemini-4-carbon`**. AI Studio follows official stable backend releases and maps Hydrogen's `xhigh` thinking tier. Gemini Web's one-click local backend exposes dedicated model IDs starting with **`4.30.0-magpie.1`**: Hydrogen works with signed-in accounts (including free accounts), Carbon requires an eligible paid/Ultra account, and the legacy `gemini-4-argon` name remains a Carbon alias. Gemini Web backend **`4.31.0-magpie.1`** adds `gemini-4-neon` and its thinking tier for paid accounts, with `gemini-3.1-pro` retained as a Neon alias.
 
 ## Which Provider Should I Choose?
 
@@ -15,14 +15,14 @@ The plugin provides two independent providers that can be used individually or t
 | Feature | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
 | :--- | :--- | :--- |
 | **Best for** | **Primary use & coding agents (recommended)** | General chat & web quota |
-| **Key models** | `gemini-4-carbon` (Ultra / eligible accounts), `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.1-pro`, Flash series, Deep Research | `gemini-4-hydrogen` (signed-in, including free accounts), `gemini-4-carbon` (paid/Ultra), `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
+| **Key models** | `gemini-4-carbon` (Ultra / eligible accounts), `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.1-pro`, Flash series, Deep Research | `gemini-4-hydrogen` (signed-in, including free accounts), `gemini-4-carbon` (paid/Ultra), `gemini-4-neon` (paid/Ultra), `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
 | **Tool calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
 | **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` / `xhigh` (Hydrogen) | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
 | **Image input** | On by default; chat models read images | On by default; chat models read images (needs a signed-in cookie) |
 | **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
 | **Sign-in method** | Automatic official installation; confirm an imported account | Copy `cookie` from a private/incognito window |
 | **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (automatic installation and stable updates) | gemini-web2api-go (`4.30.0-magpie.1` optimized build) |
+| **Local backend** | AIStudio2API (automatic installation and stable updates) | gemini-web2api-go (`4.31.0-magpie.1` optimized build) |
 
 ---
 
@@ -232,11 +232,11 @@ When a plugin error asks you to run a command, it includes the full ready-to-cop
 
 **Gemini Web optimized backend upgrades & rollback:**
 - The missing multi-account index in [#53](https://github.com/BUKOWSKIREAL/magpie-gemini-web/issues/53) is fixed. Reimport affected cookies or correct the index in backend account management. Upstream v4.30.0 lists dedicated `gemini-4-hydrogen` / `gemini-4-hydrogen-thinking` and `gemini-4-carbon` IDs, with compatibility for the old Flash and Argon display names. An explicit Hydrogen request still rejects silent downgrades to older Flash or other models. Carbon thinking requests may currently answer at Carbon's normal tier upstream.
-- One-click setup uses [4.30.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.30.0-magpie.1) by default (built from pinned upstream v4.30.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon/Carbon model verification). Chat requests are timed by silence: while Google queues a request it sends a heartbeat every 60 s, and the backend waits through it for the first words. By default, a try is given up after Google has sent nothing for `request_timeout_sec` (180 s); retries still follow `retry_on_timeout` and the existing rule against replaying already-emitted content. A long reply that keeps coming is not cut off by this watcher. Upstream's optional `stream_idle_timeout_sec` (default 0) adds a separate streaming idle timeout.
+- One-click setup uses [4.31.0-magpie.1](https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/backend-v4.31.0-magpie.1) by default (built from pinned upstream v4.31.0 with XSRF caching, request cancellation propagation, early tool-call completion, and Argon/Carbon model verification). Chat requests are timed by silence: while Google queues a request it sends a heartbeat every 60 s, and the backend waits through it for the first words. By default, a try is given up after Google has sent nothing for `request_timeout_sec` (180 s); retries still follow `retry_on_timeout` and the existing rule against replaying already-emitted content. A long reply that keeps coming is not cut off by this watcher. Upstream's optional `stream_idle_timeout_sec` (default 0) adds a separate streaming idle timeout.
 - **Upgrading:** Running backends are not interrupted automatically. Stop the existing process (PID in `backend.pid` inside the data directory); the next Magpie launch or request will upgrade the binary while preserving config and cookies.
 - **Rollback to upstream / restore optimized build** (run in the plugin directory after stopping the backend):
   ```bash
-  npm run backend:install:upstream  # Roll back and pin to official v4.30.0
+  npm run backend:install:upstream  # Roll back and pin to official v4.31.0
   npm run backend:install           # Restore default optimized build
   ```
 - For reproducible builds and release procedures, see [docs/backend-release.md](docs/backend-release.md).
