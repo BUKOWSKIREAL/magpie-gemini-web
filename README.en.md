@@ -143,6 +143,8 @@ magpie plugin options magpie-gemini-web '{"studio":{"proxy":"http://127.0.0.1:78
 | `requestTimeoutMs` / `modelTimeoutMs` | Web: `570000` / `10000`; Studio: `1800000` / `10000` | Shared (override via `studio.*`) | Timeout (ms) per backend wait or model list fetch; resets on stream data, explicit settings take precedence |
 | `stripCitations` | `true` | `gemini-web` only | Strip `[cite: 1]` and `[cite_start]` markers from replies and tool arguments (not supported on AI Studio) |
 | `proxy` | none | `gemini-web` only | Proxy for the managed Gemini Web backend to reach Google (`http` / `https` / `socks5` / `socks5h`), or set `GEMINI_WEB_PROXY` env var / enter during sign-in |
+| `quickSignIn` | `false` | `gemini-web` only | One-click setup asks for neither the proxy nor the account index: the proxy comes from the `proxy` option, `GEMINI_WEB_PROXY` or the proxy pool, and the index from the paste (paste `{"cookie":"…","authuser":4}` to name one), else 0 |
+| `openBrowser` | `true` | `gemini-web` only | Whether one-click setup opens Gemini in the default browser; `false` only shows the address in the instructions, for copying from a private window |
 | `baseURL` | `http://127.0.0.1:8083/v1` | `gemini-web` only | Default Gemini Web backend URL |
 | `contextLimit` / `outputLimit` | `1000000` / `8192` | `gemini-web` only | Context and output limits reported to clients |
 | `studio.proxy` | none | `ai-studio` only | Proxy for reaching Google (`http` / `https` / `socks5`), or set `AI_STUDIO_PROXY` env var; when set, it takes precedence over the proxy saved in the admin page. An empty value counts as unset |

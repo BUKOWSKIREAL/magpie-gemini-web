@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
 import { binaryPath, ensureBackend, installBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
-import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
+import { parseCookieInput, parseSignInPaste, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
 
 const LOGIN_CAPABILITIES = { capabilities: { account_proxy_binding: true } };
 
@@ -669,6 +669,85 @@ describe('27. One-click sign-in through the plugin', () => {
       assert.equal(result.metadata.email, 'session-four@gmail.com');
       assert.equal(result.metadata.authuser, 4);
       assert.deepEqual(google, [pending.url]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('reads the account index from a JSON paste and keeps a plain cookie paste at the asked index', () => {
+    assert.deepEqual(parseSignInPaste(SIGNED_IN), { cookie: SIGNED_IN, authuser: undefined });
+    assert.deepEqual(parseSignInPaste(JSON.stringify({ cookie: SIGNED_IN, authuser: 4 })), { cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(JSON.stringify({ cookie: SIGNED_IN, authuser: '2' })), { cookie: SIGNED_IN, authuser: 2 });
+    const json = JSON.stringify({ cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(`"${json}"`), { cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(`'${json}'`), { cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(`cookie: ${json}`), { cookie: SIGNED_IN, authuser: 4 });
+    assert.throws(() => parseSignInPaste(JSON.stringify({ cookie: SIGNED_IN, authuser: 12 })), /账号索引/);
+    const flat = Object.fromEntries(SIGNED_IN.split('; ').map(p => p.split('=')));
+    assert.equal(parseCookieInput(JSON.stringify({ ...flat, authuser: '3' })), SIGNED_IN, 'authuser is not a cookie');
+  });
+
+  it('quickSignIn asks nothing before the cookie and openBrowser: false opens no page', async () => {
+    const plugin = await GeminiWebPlugin({}, { quickSignIn: true, openBrowser: false });
+    const method = plugin.auth.methods[0];
+    assert.deepEqual(method.prompts, []);
+    assert.equal(method.ask({}), null);
+    const pending = await method.authorize({});
+    assert.equal(pending.url, '');
+    assert.equal(pending.method, 'code');
+    assert.ok(pending.instructions.includes('https://gemini.google.com/app'));
+    assert.match(pending.instructions, /authuser/);
+    assert.doesNotMatch(pending.instructions, /刚才填写/);
+    const defaults = await (await oauthMethod()).authorize({});
+    assert.equal(defaults.url, 'https://gemini.google.com/app');
+    assert.match(defaults.instructions, /刚才填写/);
+    await assert.rejects(GeminiWebPlugin({}, { quickSignIn: 'yes' }), /quickSignIn/);
+    await assert.rejects(GeminiWebPlugin({}, { openBrowser: 0 }), /openBrowser/);
+  });
+
+  it('quickSignIn stores 0 for a raw cookie and the pasted index for JSON', async () => {
+    const method = (await GeminiWebPlugin({}, { quickSignIn: true })).auth.methods[0];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => String(url).startsWith('https://gemini.google.com/')
+      ? Promise.resolve(new Response('{"oPEP7c":"quick@gmail.com"}'))
+      : realFetch(url, init);
+    try {
+      const raw = await method.authorize({});
+      const rawResult = await raw.callback(SIGNED_IN.replace('SID=v-SID', 'SID=good-quick-raw'));
+      assert.equal(rawResult.type, 'success');
+      assert.equal(accounts.get(rawResult.metadata.account).checkedAuthuser, 0);
+      assert.equal(rawResult.metadata.authuser, undefined);
+
+      const pasted = await method.authorize({});
+      const pastedResult = await pasted.callback(JSON.stringify({
+        cookie: SIGNED_IN.replace('SID=v-SID', 'SID=good-quick-four'),
+        authuser: 4
+      }));
+      assert.equal(pastedResult.type, 'success');
+      assert.equal(accounts.get(pastedResult.metadata.account).checkedAuthuser, 4);
+      assert.equal(pastedResult.metadata.authuser, 4);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('takes the account index from a JSON paste, and refuses one that contradicts the answered index', async () => {
+    const method = await oauthMethod();
+    const conflict = await method.authorize({ proxy: '', authuser: '1' });
+    const refused = await conflict.callback(JSON.stringify({ cookie: SIGNED_IN, authuser: 4 }));
+    assert.equal(refused.type, 'failed');
+    assert.match(refused.error, /不一致/);
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => String(url).startsWith('https://gemini.google.com/')
+      ? Promise.resolve(new Response('{"oPEP7c":"pasted-four@gmail.com"}'))
+      : realFetch(url, init);
+    try {
+      const pending = await method.authorize({ proxy: '', authuser: '' });
+      const result = await pending.callback(JSON.stringify({ cookie: SIGNED_IN.replace('SID=v-SID', 'SID=good-pasted'), authuser: 4 }));
+      assert.equal(result.type, 'success');
+      assert.equal(accounts.get(result.metadata.account).checkedAuthuser, 4);
+      assert.equal(result.metadata.authuser, 4);
     } finally {
       globalThis.fetch = realFetch;
     }
