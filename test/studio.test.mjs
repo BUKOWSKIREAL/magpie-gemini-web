@@ -1430,7 +1430,6 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const { port } = closed.address();
       await new Promise(r => closed.close(r));
       fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), port }) + '\n', { mode: 0o600 });
-      fs.writeFileSync(lockPath, `${process.pid}\n${Date.now()}\nanother\n`);
       stopped = true;
 
       for (const method of hosted) {
@@ -1438,8 +1437,11 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         assert.equal(await method.ask({}), null);
         assert.ok(Date.now() - asked < 2000, `stopped service ask took ${Date.now() - asked}ms`);
       }
-      assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'backend.pid')), false, 'a held setup lock must block the background start');
+      await new Promise(r => setTimeout(r, 400));
+      assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'backend.log')), false, 'ask must not start the service after the fields request');
+      assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'backend.pid')), false);
 
+      fs.writeFileSync(lockPath, `${process.pid}\n${Date.now()}\nanother\n`);
       const asked = Date.now();
       magpieAsk = localAsks[0].ask({});
       const winner = await Promise.race([
@@ -1457,7 +1459,7 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
         );
         // The stand-in is a shell script. Unix runs it and it exits; Windows cannot execute
         // that text as aistudio2api.exe, so CreateProcess fails with "spawn UNKNOWN". Either
-        // message means the background start reached the binary.
+        // message means this later start, not ask(), reached the binary.
         const startedBinary = /exited during startup|^spawn /;
         assert.match(outcome.message, startedBinary);
         if (magpieAsk) await magpieAsk.catch(err => assert.match(err.message, startedBinary));
