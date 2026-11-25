@@ -4,7 +4,7 @@
 
 中文 | [English](README.en.md) | [贡献与反馈指南](CONTRIBUTING.md)
 
-让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 **Google AI Studio** 与 **Gemini 网页版**。插件在本机自动运行 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 与 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go)，提供对话、原生工具调用、Nano Banana 图片生成与 Deep Research 等能力。
+让 [Magpie](https://usemagpie.ai/) 通过你的 Google 账号使用 **Google AI Studio** 与 **Gemini 网页版**，也可在 [Agent2API](https://github.com/aimod-cc/Agent2API) 中加载。插件在本机自动运行 [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 与 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go)，提供对话、原生工具调用、Nano Banana 图片生成与 Deep Research 等能力。
 
 > **新模型支持说明**：两个 Provider 均已收录 **`gemini-4-hydrogen`** 与 **`gemini-4-carbon`**。AI Studio 默认自动跟随官方稳定版，Hydrogen 含 `xhigh` 思考档位；Gemini Web 从一键本地后端 **`4.30.0-magpie.1`** 起提供独立模型 ID，其中 Hydrogen 支持登录账号（含免费账号），Carbon 需付费 / Ultra 等具备权益的账号，旧 `gemini-4-argon` 名称保留为 Carbon 别名。上游 v4.31.0 已包含付费模型 `gemini-4-neon` 与其思考档，`gemini-3.1-pro` 保留为 Neon 兼容别名。优化后端 **`4.31.0-magpie.2`** 在这份目录上把 Argon/Carbon 身份错误排除出代理熔断。
 
@@ -78,6 +78,14 @@
 > **升级后提示后端不支持登录时绑定代理？** 旧后台进程可能仍在运行。请按提示先退出 Magpie，停止对应的 `gemini-web2api-go` 进程（Windows：任务管理器 → 详细信息 → `gemini-web2api-go.exe`），再运行提示中的完整安装命令。它会保留账号和配置，并切换到插件的托管后端；如下载需要代理，先设置 `GEMINI_WEB_PROXY`。完成后重新打开 Magpie 登录。
 
 > **为什么必须用无痕窗口？** 后端会定时刷新会话来保活。若与日常浏览器共用同一登录会话，Google 会将整个会话作废，导致你的浏览器退出所有 Google 服务。使用无痕窗口（或单独准备 Google 小号）可提供独立会话。
+
+### 在 Agent2API 中使用
+
+[Agent2API](https://github.com/aimod-cc/Agent2API) 可以把本插件当作 Magpie / OpenCode 插件加载。在它的插件目录里安装 `magpie-gemini-web`，登录步骤与上面相同。模型来自本机的 Google AI Studio 与 Gemini 网页版。
+
+- 两个 Provider 的登录方式都会列出。本地服务没在运行时，开始登录才会启动它。
+- 连接已有后端时，在密码框里填写 API key。
+- AI Studio 的账号管理页留在当前已经授权的本机登录页上。
 
 ---
 

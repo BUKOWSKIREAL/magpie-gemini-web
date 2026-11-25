@@ -4,7 +4,7 @@
 
 [中文](README.md) | English | [Contributing & issue guide](CONTRIBUTING.md)
 
-Use **Google AI Studio** and **Gemini on the web** through your Google account in [Magpie](https://usemagpie.ai/). The plugin runs [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) and [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) locally, providing chat, native function calling, Nano Banana image generation, and Deep Research through OpenAI-compatible and Gemini APIs.
+Use **Google AI Studio** and **Gemini on the web** through your Google account in [Magpie](https://usemagpie.ai/). [Agent2API](https://github.com/aimod-cc/Agent2API) can load the same plugin. The plugin runs [AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) and [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) locally, providing chat, native function calling, Nano Banana image generation, and Deep Research through OpenAI-compatible and Gemini APIs.
 
 > **New model support:** Both providers now list **`gemini-4-hydrogen`** and **`gemini-4-carbon`**. AI Studio follows official stable backend releases and maps Hydrogen's `xhigh` thinking tier. Gemini Web's one-click local backend exposes dedicated model IDs starting with **`4.30.0-magpie.1`**: Hydrogen works with signed-in accounts (including free accounts), Carbon requires an eligible paid/Ultra account, and the legacy `gemini-4-argon` name remains a Carbon alias. Upstream v4.31.0 already includes paid `gemini-4-neon` and its thinking tier, with `gemini-3.1-pro` retained as a Neon alias. Optimized backend **`4.31.0-magpie.2`** keeps that catalog and stops Argon/Carbon identity errors from tripping the proxy circuit breaker.
 
@@ -78,6 +78,14 @@ For an independently running service, choose **Connect an existing AIStudio2API 
 > **Backend upgrade required during sign-in?** An older background process may still be running. Exit Magpie, stop the matching `gemini-web2api-go` process (Windows: Task Manager → Details → `gemini-web2api-go.exe`), then run the full installation command shown in the error. It preserves accounts and configuration and selects the plugin's managed backend. Set `GEMINI_WEB_PROXY` first if the download needs a proxy. Reopen Magpie and sign in after installation.
 
 > **Why is a private window required?** The backend periodically refreshes this session to keep it alive. If it shares a session with your daily browser, Google will revoke the session and sign your browser out of all Google services. A private window (or a dedicated secondary Google account) gives the backend an isolated session.
+
+### Using it in Agent2API
+
+[Agent2API](https://github.com/aimod-cc/Agent2API) can load this plugin alongside other Magpie / OpenCode plugins. Install `magpie-gemini-web` from its plugin catalog and follow the sign-in steps above. Models come from the local Google AI Studio and Gemini Web backends.
+
+- Both providers list their login methods. When the local service is stopped, it starts once you begin sign-in.
+- To connect a backend you already run, enter its API key in the password field.
+- The AI Studio account page stays on the loopback login page you already authorized.
 
 ---
 
