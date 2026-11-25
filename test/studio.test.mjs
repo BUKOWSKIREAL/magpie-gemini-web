@@ -1455,8 +1455,12 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
           () => ({ message: '' }),
           err => ({ message: err.message })
         );
-        assert.match(outcome.message, /exited during startup/);
-        if (magpieAsk) await magpieAsk.catch(err => assert.match(err.message, /exited during startup/));
+        // The stand-in is a shell script. Unix runs it and it exits; Windows cannot execute
+        // that text as aistudio2api.exe, so CreateProcess fails with "spawn UNKNOWN". Either
+        // message means the background start reached the binary.
+        const startedBinary = /exited during startup|^spawn /;
+        assert.match(outcome.message, startedBinary);
+        if (magpieAsk) await magpieAsk.catch(err => assert.match(err.message, startedBinary));
       }
       for (const name of ['backend.log', 'backend.pid', 'backend.launch.json']) fs.rmSync(path.join(tempStudioDataDir, name), { force: true });
       delete serverResponses['/api/accounts'];
