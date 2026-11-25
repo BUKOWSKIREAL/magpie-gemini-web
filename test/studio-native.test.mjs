@@ -1035,6 +1035,44 @@ describe('AI Studio Native Lifecycle & Safety Unit Tests', () => {
     assert.deepEqual(cachedClosedHealth, { state: 'down', reason: 'ECONNREFUSED' });
   });
 
+  it('13c. a host RPC connection refusal is down, and an installed service is started', async () => {
+    const rustRefused = errno => Object.assign(
+      new Error(`error sending request for url (http://127.0.0.1:2048/api/auth/login) → tcp connect error → Connection refused (os error ${errno})`),
+      { code: 'internal' }
+    );
+    assert.equal(isConnectRefused(rustRefused(111)), true);
+    assert.equal(isConnectRefused(rustRefused(61)), true);
+    assert.equal(isConnectRefused(rustRefused(10061)), true);
+    const wrapped = new Error('Admin request GET /api/status failed');
+    wrapped.cause = rustRefused(111);
+    assert.equal(isConnectRefused(wrapped), true);
+    assert.equal(isConnectRefused(Object.assign(new Error('脚本上游连接等待超时'), { code: 'timeout' })), false);
+    assert.equal(isConnectRefused(Object.assign(new Error('受控账号服务器连接失败'), { code: 'internal' })), false);
+    assert.equal(isConnectRefused(Object.assign(new Error('Connection reset by peer (os error 104)'), { code: 'internal' })), false);
+    assert.equal(isConnectRefused(Object.assign(new Error('Connection timed out (os error 110)'), { code: 'internal' })), false);
+
+    const { dataDir } = installedStandIn('host-refused-start');
+    const local = localStudio({ dataDir });
+    const refusedFetch = async () => { throw rustRefused(111); };
+    assert.deepEqual(await checkStudioHealth(local, refusedFetch), { state: 'down', reason: 'ECONNREFUSED' });
+
+    let spawned = 0;
+    const started = Date.now();
+    const fetchFn = async url => {
+      if (!spawned) throw rustRefused(111);
+      if (url.includes('/api/auth/login')) return new Response('{}', { headers: { 'Set-Cookie': 'aistudio_admin=t; Path=/' } });
+      if (url.includes('/api/status')) return Response.json(runningStatus({ total: 0, ready: 0, busy: 0, cooldown: 0, auth_required: 0 }));
+      return Response.json({ object: 'list', data: [] });
+    };
+    const spawnFn = () => { spawned++; return { pid: 9999999, on: () => {}, unref: () => {} }; };
+    const running = await ensureStudio({
+      dataDir, fetchFn, spawnFn, managementOnly: true, unresponsiveTimeoutMs: 5000, startTimeoutMs: 3000
+    });
+    assert.equal(spawned, 1);
+    assert.equal(running.origin, local.origin);
+    assert.ok(Date.now() - started < 2000, 'a refused port is started without the unresponsive wait');
+  });
+
   it('14. readiness helper polls and handles state transitions properly', async () => {
     const dataDir = path.join(tmpRoot, 'readiness-test');
     ensureStudioConfig(dataDir);

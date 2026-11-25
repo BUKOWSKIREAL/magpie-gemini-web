@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { openStudioConnect } from '../lib/studio-connect-legacy.mjs';
 
 const ready = { id: 'one@example.invalid', label: 'One', enabled: true, state: 'ready' };
@@ -52,12 +53,55 @@ async function pageScript(f) {
   await vm.runInNewContext(html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)[1], {
     document: { getElementById: id => elements.get(id) ?? null, createElement: tag => element(tag) },
     location: { pathname: new URL(f.page.url).pathname },
-    fetch: f.request, window, setTimeout: fn => { timers.push(fn); }
+    URL, fetch: f.request, window, setTimeout: fn => { timers.push(fn); }
   });
   return { get: id => elements.get(id), window, poll: async () => { assert.ok(timers.length); await timers.shift()(); } };
 }
 
 describe('Official connection page user journeys', () => {
+  it('keeps the host async context for status and management fetches', async () => {
+    const als = new AsyncLocalStorage();
+    const seen = [];
+    const local = { origin: 'http://127.0.0.1:2048', apiKey: 'private-key', adminUsername: 'private-admin', adminPassword: 'private-password' };
+    const page = await als.run({ flow: 'agent2api' }, async () => {
+      const opened = await openStudioConnect({
+        prepare: async () => local,
+        deadline: Date.now() + 10000,
+        fetchFn: async (url) => {
+          const path = new URL(url).pathname;
+          seen.push({ path, store: als.getStore() });
+          if (path === '/api/auth/login') {
+            return new Response('{}', { headers: { 'Content-Type': 'application/json', 'Set-Cookie': 'aistudio_admin=test-session; Path=/api; HttpOnly' } });
+          }
+          return Response.json({ accounts: [{ id: 'one@example.invalid', label: 'One', enabled: true, state: 'ready' }] });
+        }
+      });
+      opened.start().catch(() => {});
+      return opened;
+    });
+    try {
+      let status;
+      for (let i = 0; i < 20; i++) {
+        status = await (await fetch(page.url + '/status')).json();
+        if (status.ready) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(status.ready, true);
+      const listed = seen.filter(entry => entry.path === '/api/accounts');
+      assert.ok(listed.length >= 1);
+      for (const entry of listed) assert.deepEqual(entry.store, { flow: 'agent2api' });
+      const origin = new URL(page.url).origin;
+      const manage = await fetch(page.url + '/manage', {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}'
+      });
+      assert.equal(manage.status, 200);
+      const accounts = seen.filter(entry => entry.path === '/api/accounts');
+      assert.ok(accounts.length > listed.length);
+      for (const entry of accounts) assert.deepEqual(entry.store, { flow: 'agent2api' });
+      assert.equal(status.accounts[0].id, 'one@example.invalid');
+    } finally { page.close(); }
+  });
+
   it('recovers from a transient outage without leaving an error or accepting stale account data', async () => {
     const f = await fixture();
     try {

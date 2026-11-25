@@ -94,7 +94,9 @@ try {
       const managed = await fetch(bridge.url + '/manage', { method: 'POST', headers: { Origin: new URL(bridge.url).origin } });
       assert.equal(managed.status, 200);
       const destination = new URL((await managed.json()).url);
-      assert.equal(destination.origin, local.origin);
+      assert.equal(destination.origin, new URL(bridge.url).origin);
+      assert.equal(destination.pathname, '/');
+      assert.equal(destination.searchParams.get('tab'), 'accounts');
       const state = new URLSearchParams(destination.hash.slice(1));
       assert.equal(state.get('callback'), bridge.url + '/finish');
       const cookie = await studioBrowserSession(local);

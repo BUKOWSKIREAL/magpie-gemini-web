@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { GeminiWebPlugin } from '../index.mjs';
 import { binaryPath, ensureBackend, installBackend, localBackend, pinnedBinary } from '../lib/native.mjs';
 import { parseCookieInput, parseSignInPaste, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, REQUIRED_COOKIES } from '../lib/setup.mjs';
+import { emptyStaticSelects, resolvePrompts, retainAnswered, magpiePassesInputs } from './helpers/host-login-contract.mjs';
 
 const LOGIN_CAPABILITIES = { capabilities: { account_proxy_binding: true } };
 
@@ -595,7 +596,10 @@ describe('27. One-click sign-in through the plugin', () => {
     };
     try {
       const method = (await GeminiWebPlugin({})).auth.methods[2];
-      assert.equal(method.prompts[0].key, 'account');
+      assert.equal(method.prompts[0].key, 'dynamic_prompt');
+      assert.equal(method.prompts[0].condition(), false);
+      assert.equal(magpiePassesInputs(method), true);
+      assert.deepEqual(emptyStaticSelects([method]), []);
       const question = await method.ask({});
       assert.equal(question.type, 'select');
       assert.deepEqual(question.options.map(o => [o.label, o.value]), [['pool-a@gmail.com', '41'], ['#42', '42']]);
@@ -609,6 +613,17 @@ describe('27. One-click sign-in through the plugin', () => {
         metadata: { baseURL: `http://127.0.0.1:${server.address().port}/v1`, account: 41, email: 'pool-a@gmail.com' }
       });
       await assert.rejects(method.authorize({ account: '43' }), /没有启用的账号 #43/);
+
+      const listed = await resolvePrompts(method, {});
+      assert.deepEqual(listed.map(prompt => prompt.key), ['account']);
+      const chosen = retainAnswered(method, listed, await resolvePrompts(method, { account: '41' }), { account: '41' });
+      assert.equal(chosen.some(prompt => prompt.key === 'account' && prompt.options.some(option => option.value === '41')), true);
+
+      const agent = (await GeminiWebPlugin({ project: { id: 'agent2api' } })).auth.methods[2];
+      assert.deepEqual(agent.prompts, []);
+      assert.deepEqual(emptyStaticSelects([agent]), []);
+      const agentListed = await resolvePrompts(agent, {});
+      assert.deepEqual(agentListed.map(prompt => prompt.key), ['account']);
     } finally {
       globalThis.fetch = realFetch;
       db.exec(`DELETE FROM accounts WHERE id IN (41, 42, 43); UPDATE accounts SET status = 'enabled';`);

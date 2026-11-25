@@ -9,6 +9,7 @@ import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accou
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, ensureStudio } from '../lib/studio-native.mjs';
 import { STUDIO_VERSION, PINNED_ARCHIVES, CAMOUFOX_VERSION } from './helpers/studio-legacy.mjs';
+import { emptyStaticSelects, resolvePrompts, retainAnswered, magpiePassesInputs, apiKeyField, multilineKeyLabel } from './helpers/host-login-contract.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
   let mockServer;
@@ -1223,8 +1224,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const manage = await post('/manage');
       assert.equal(manage.status, 200);
       const destination = new URL((await manage.json()).url);
-      assert.equal(destination.origin, new URL(serverURL).origin);
-      const client = new URLSearchParams(destination.hash.slice(1)).get('magpie');
+      assert.equal(destination.origin, new URL(pending.url).origin);
+      assert.equal(destination.pathname, '/');
+      assert.equal(destination.searchParams.get('tab'), 'accounts');
+      assert.notEqual(destination.origin, new URL(serverURL).origin);
+      const fragment = new URLSearchParams(destination.hash.slice(1));
+      assert.equal(fragment.get('callback'), pending.url + '/finish');
+      const client = fragment.get('magpie');
       assert.match(manage.headers.get('set-cookie'), /HttpOnly/);
       // A fully completed task connects all accounts selected in the upstream import page.
       serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'ready' }]);
@@ -1393,6 +1399,78 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       // The start that waited goes on (and fails: the stand-in exits at once) before the next test
       await ensureStudio({ managementOnly: true }).catch(() => {});
       for (const name of ['backend.log', 'backend.pid', 'backend.launch.json']) fs.rmSync(path.join(tempStudioDataDir, name), { force: true });
+      setup.remove();
+    }
+  });
+
+  it('9h. Agent2API lists a running service and returns at once when that service is stopped', async () => {
+    const setup = standInSetup('managed-key');
+    const configPath = path.join(tempStudioDataDir, 'config.json');
+    const lockPath = path.join(tempStudioDataDir, '.setup.lock');
+    const accountAsks = plugin => plugin.auth.methods.filter(item =>
+      typeof item.ask === 'function' && !item.prompts.some(prompt => prompt.key === 'proxy'));
+    const agent = await AIStudioPlugin({ project: { id: 'agent2api' } }, { studio: { baseURL: serverURL } });
+    const magpie = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+    const hosted = accountAsks(agent);
+    const localAsks = accountAsks(magpie);
+    assert.equal(hosted.length, 2);
+    assert.equal(localAsks.length, 2);
+    let magpieAsk;
+    let stopped = false;
+    try {
+      serverResponses['/api/accounts'] = accountsResponse(POOL);
+      const connect = await hosted[0].ask({});
+      assert.deepEqual(connect.options, [
+        { label: '添加新的 Google 账号', value: '+new', hint: '导入 Chrome / Cookie，或浏览器登录' },
+        { label: 'a@example.com', value: 'a@example.com', hint: '账号就绪' },
+        { label: 'b@example.com', value: 'b@example.com', hint: '需要在账号管理页重新登录' }
+      ]);
+      const browser = await hosted[1].ask({});
+      assert.equal(browser.options[1].value, 'a@example.com');
+      assert.equal(browser.options[0].hint, '打开登录窗口');
+      assert.equal(await hosted[0].ask({ account: 'a@example.com' }), null);
+
+      const closed = http.createServer();
+      await new Promise(r => closed.listen(0, '127.0.0.1', r));
+      const { port } = closed.address();
+      await new Promise(r => closed.close(r));
+      fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), port }) + '\n', { mode: 0o600 });
+      stopped = true;
+
+      for (const method of hosted) {
+        const asked = Date.now();
+        assert.equal(await method.ask({}), null);
+        assert.ok(Date.now() - asked < 2000, `stopped service ask took ${Date.now() - asked}ms`);
+      }
+      await new Promise(r => setTimeout(r, 400));
+      assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'backend.log')), false, 'ask must not start the service after the fields request');
+      assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'backend.pid')), false);
+
+      fs.writeFileSync(lockPath, `${process.pid}\n${Date.now()}\nanother\n`);
+      const asked = Date.now();
+      magpieAsk = localAsks[0].ask({});
+      const winner = await Promise.race([
+        magpieAsk.then(value => ({ value }), err => ({ err })),
+        new Promise(resolve => setTimeout(() => resolve('waiting'), 400))
+      ]);
+      assert.equal(winner, 'waiting', 'Magpie still waits for a start that has not finished');
+      assert.ok(Date.now() - asked < 2000);
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+      if (stopped) {
+        const outcome = await ensureStudio({ managementOnly: true }).then(
+          () => ({ message: '' }),
+          err => ({ message: err.message })
+        );
+        // The stand-in is a shell script. Unix runs it and it exits; Windows cannot execute
+        // that text as aistudio2api.exe, so CreateProcess fails with "spawn UNKNOWN". Either
+        // message means this later start, not ask(), reached the binary.
+        const startedBinary = /exited during startup|^spawn /;
+        assert.match(outcome.message, startedBinary);
+        if (magpieAsk) await magpieAsk.catch(err => assert.match(err.message, startedBinary));
+      }
+      for (const name of ['backend.log', 'backend.pid', 'backend.launch.json']) fs.rmSync(path.join(tempStudioDataDir, name), { force: true });
+      delete serverResponses['/api/accounts'];
       setup.remove();
     }
   });
@@ -1890,6 +1968,64 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       delete serverResponses['/api/accounts'];
       delete serverResponses['/api/cooldowns'];
       setup.remove();
+    }
+  });
+});
+
+describe('AI Studio sign-in contract for Agent2API and Magpie', () => {
+  it('keeps dynamic account lists off the static prompts and returns a submitted API key', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-login-contract-'));
+    const previous = process.env.AI_STUDIO_DATA_DIR;
+    process.env.AI_STUDIO_DATA_DIR = dataDir;
+    try {
+      const plugin = await AIStudioPlugin({});
+      const agent = await AIStudioPlugin({ project: { id: 'agent2api' } });
+      assert.deepEqual(emptyStaticSelects(plugin.auth.methods), []);
+      assert.deepEqual(emptyStaticSelects(agent.auth.methods), []);
+
+      // Labels change in a container and on an unsupported architecture. Connect and the
+      // direct browser flow are the ask() methods that do not collect a proxy.
+      const dynamicAccountMethods = methods => methods.filter(item =>
+        typeof item.ask === 'function' && !item.prompts.some(prompt => prompt.key === 'proxy'));
+      const methods = dynamicAccountMethods(plugin.auth.methods);
+      const hostedMethods = dynamicAccountMethods(agent.auth.methods);
+      assert.equal(methods.length, 2);
+      assert.equal(hostedMethods.length, 2);
+      for (const method of methods) {
+        const hosted = hostedMethods.find(item => item.label === method.label);
+        assert.ok(hosted);
+        assert.equal(method.prompts[0].key, 'dynamic_prompt');
+        assert.equal(method.prompts[0].condition(), false);
+        assert.equal(method.prompts.some(prompt => prompt.key === 'account'), false);
+        assert.equal(magpiePassesInputs(method), true);
+        assert.deepEqual(hosted.prompts, []);
+        const shown = [{ key: 'account', type: 'select', label: '选择 Google 账号', options: [{ value: 'a@example.com', label: 'a@example.com' }] }];
+        const kept = retainAnswered(method, shown, await resolvePrompts(method, { account: 'a@example.com' }), { account: 'a@example.com' });
+        assert.equal(kept.some(prompt => prompt.key === 'account'), true);
+      }
+
+      const api = plugin.auth.methods.find(item => item.type === 'api');
+      const key = apiKeyField(api);
+      assert.equal(api.prompts[0].key, 'baseURL');
+      assert.equal(key.type, 'password');
+      assert.equal(key.message, 'AIStudio2API API key');
+      assert.equal(multilineKeyLabel(api), false);
+      assert.equal(key.validate('  studio-key  '), undefined);
+      assert.equal(key.validate(''), 'API key must not be empty');
+      assert.deepEqual(await api.authorize({ baseURL: 'http://127.0.0.1:2048' }), {
+        type: 'success',
+        metadata: { mode: 'studio', managed: false, baseURL: 'http://127.0.0.1:2048/v1' }
+      });
+      assert.deepEqual(await api.authorize({ baseURL: 'http://127.0.0.1:2048', key: '  studio-key  ' }), {
+        type: 'success',
+        key: 'studio-key',
+        metadata: { mode: 'studio', managed: false, baseURL: 'http://127.0.0.1:2048/v1' }
+      });
+      assert.equal((await api.authorize({ key: 'bad\nkey' })).type, 'failed');
+    } finally {
+      if (previous === undefined) delete process.env.AI_STUDIO_DATA_DIR;
+      else process.env.AI_STUDIO_DATA_DIR = previous;
+      fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
 });
