@@ -15,6 +15,7 @@ import {
   listModels,
   forward
 } from '../lib/backend.mjs';
+import { emptyStaticSelects } from './helpers/host-login-contract.mjs';
 
 // The plugin starts the backend it manages in the data dir; keep tests away from the real one.
 process.env.GEMINI_WEB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-gemini-web-test-'));
@@ -193,6 +194,32 @@ describe('7. API prompt default validation', () => {
       type: 'success',
       metadata: { baseURL: 'https://proxy.example.com/v1' }
     });
+  });
+
+  it('asks for the API key in a single-line password field and returns it only when the prompt submitted one', async () => {
+    const plugin = await GeminiWebPlugin({});
+    const method = plugin.auth.methods.find(item => item.type === 'api');
+    const key = method.prompts[1];
+    assert.equal(method.prompts[0].key, 'baseURL');
+    assert.equal(key.key, 'key');
+    assert.equal(key.type, 'password');
+    assert.equal(key.message, 'Backend API key');
+    assert.doesNotMatch(key.message, /JSON|Cookie|PEM/i);
+    assert.equal(key.validate(''), 'API key must not be empty');
+    assert.equal(key.validate('   '), 'API key must not be empty');
+    assert.match(key.validate('gw_\nkey'), /newline/);
+    assert.equal(key.validate('  gw_testkey123  '), undefined);
+
+    assert.deepEqual(await method.authorize({ baseURL: 'https://proxy.example.com/', key: '  gw_testkey123  ' }), {
+      type: 'success',
+      key: 'gw_testkey123',
+      metadata: { baseURL: 'https://proxy.example.com/v1' }
+    });
+    assert.deepEqual(await method.authorize({ key: 'gw_\r\nkey' }), {
+      type: 'failed',
+      error: 'API key must not contain newline characters'
+    });
+    assert.deepEqual(emptyStaticSelects(plugin.auth.methods), []);
   });
 });
 

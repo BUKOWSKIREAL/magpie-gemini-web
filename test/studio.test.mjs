@@ -9,6 +9,7 @@ import { studioSettings, listStudioModels, orderAccounts, cooldownWindows, accou
 import { forward, settings, UNREACHABLE_HEADER } from '../lib/backend.mjs';
 import { serviceEnv, saveStudioProxy, studioLogin, localStudio, computeFileHash, ensureStudio } from '../lib/studio-native.mjs';
 import { STUDIO_VERSION, PINNED_ARCHIVES, CAMOUFOX_VERSION } from './helpers/studio-legacy.mjs';
+import { emptyStaticSelects, resolvePrompts, retainAnswered, magpiePassesInputs, apiKeyField, multilineKeyLabel } from './helpers/host-login-contract.mjs';
 
 describe('AI Studio Plugin & Models Unit Tests', () => {
   let mockServer;
@@ -1890,6 +1891,64 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       delete serverResponses['/api/accounts'];
       delete serverResponses['/api/cooldowns'];
       setup.remove();
+    }
+  });
+});
+
+describe('AI Studio sign-in contract for Agent2API and Magpie', () => {
+  it('keeps dynamic account lists off the static prompts and returns a submitted API key', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-login-contract-'));
+    const previous = process.env.AI_STUDIO_DATA_DIR;
+    process.env.AI_STUDIO_DATA_DIR = dataDir;
+    try {
+      const plugin = await AIStudioPlugin({});
+      const agent = await AIStudioPlugin({ project: { id: 'agent2api' } });
+      assert.deepEqual(emptyStaticSelects(plugin.auth.methods), []);
+      assert.deepEqual(emptyStaticSelects(agent.auth.methods), []);
+
+      // Labels change in a container and on an unsupported architecture. Connect and the
+      // direct browser flow are the ask() methods that do not collect a proxy.
+      const dynamicAccountMethods = methods => methods.filter(item =>
+        typeof item.ask === 'function' && !item.prompts.some(prompt => prompt.key === 'proxy'));
+      const methods = dynamicAccountMethods(plugin.auth.methods);
+      const hostedMethods = dynamicAccountMethods(agent.auth.methods);
+      assert.equal(methods.length, 2);
+      assert.equal(hostedMethods.length, 2);
+      for (const method of methods) {
+        const hosted = hostedMethods.find(item => item.label === method.label);
+        assert.ok(hosted);
+        assert.equal(method.prompts[0].key, 'dynamic_prompt');
+        assert.equal(method.prompts[0].condition(), false);
+        assert.equal(method.prompts.some(prompt => prompt.key === 'account'), false);
+        assert.equal(magpiePassesInputs(method), true);
+        assert.deepEqual(hosted.prompts, []);
+        const shown = [{ key: 'account', type: 'select', label: '选择 Google 账号', options: [{ value: 'a@example.com', label: 'a@example.com' }] }];
+        const kept = retainAnswered(method, shown, await resolvePrompts(method, { account: 'a@example.com' }), { account: 'a@example.com' });
+        assert.equal(kept.some(prompt => prompt.key === 'account'), true);
+      }
+
+      const api = plugin.auth.methods.find(item => item.type === 'api');
+      const key = apiKeyField(api);
+      assert.equal(api.prompts[0].key, 'baseURL');
+      assert.equal(key.type, 'password');
+      assert.equal(key.message, 'AIStudio2API API key');
+      assert.equal(multilineKeyLabel(api), false);
+      assert.equal(key.validate('  studio-key  '), undefined);
+      assert.equal(key.validate(''), 'API key must not be empty');
+      assert.deepEqual(await api.authorize({ baseURL: 'http://127.0.0.1:2048' }), {
+        type: 'success',
+        metadata: { mode: 'studio', managed: false, baseURL: 'http://127.0.0.1:2048/v1' }
+      });
+      assert.deepEqual(await api.authorize({ baseURL: 'http://127.0.0.1:2048', key: '  studio-key  ' }), {
+        type: 'success',
+        key: 'studio-key',
+        metadata: { mode: 'studio', managed: false, baseURL: 'http://127.0.0.1:2048/v1' }
+      });
+      assert.equal((await api.authorize({ key: 'bad\nkey' })).type, 'failed');
+    } finally {
+      if (previous === undefined) delete process.env.AI_STUDIO_DATA_DIR;
+      else process.env.AI_STUDIO_DATA_DIR = previous;
+      fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
 });

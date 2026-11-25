@@ -1,7 +1,7 @@
 import { normalizeBaseURL, settings, credentials, listModels, forward, UNREACHABLE_HEADER, PLUGIN_ICON } from './lib/backend.mjs';
 import { ensureBackend, localBackend, localSetup } from './lib/native.mjs';
 import { registerMagpieCleanup, isPluginRemovedInActiveMagpie } from './lib/cleanup.mjs';
-import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend } from './lib/setup.mjs';
+import { parseCookieInput, parseAuthuser, importCookie, ensureProxy, validateProxyURL, requireLoginBackend, dynamicAskPrompts, apiKeyPrompt, extractApiKey } from './lib/setup.mjs';
 import { usage, poolChoices, poolAccounts, accountEmail } from './lib/usage.mjs';
 import { isContainerEnv, dockerProxyHint } from './lib/proc.mjs';
 
@@ -197,19 +197,29 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
               return e.message;
             }
           }
-        }],
+        }, apiKeyPrompt('Backend API key', 'Backend API key (not a Google cookie)')],
         // Magpie stores raw prompt inputs as metadata unless authorize returns its own;
         // write the resolved URL so a blank answer doesn't persist as baseURL: "".
-        authorize: async inputs => ({
-          type: 'success',
-          metadata: { baseURL: normalizeBaseURL(inputs?.baseURL || opts.baseURL) }
-        })
+        // A host that still collects the key itself omits `key`; return metadata only then.
+        authorize: async inputs => {
+          let key;
+          try {
+            key = extractApiKey(inputs);
+          } catch (err) {
+            return { type: 'failed', error: err.message };
+          }
+          return {
+            type: 'success',
+            ...(key === undefined ? {} : { key }),
+            metadata: { baseURL: normalizeBaseURL(inputs?.baseURL || opts.baseURL) }
+          };
+        }
       }, {
         type: 'oauth',
         label: '添加本地后端里已有的 Google 账号',
-        // Magpie asks through ask(), listing the pool as it is now; prompts holds the question
-        // for OpenCode, and makes Magpie hand authorize the answer.
-        prompts: [{ type: 'select', key: 'account', message: '选择 Google 账号', options: [] }],
+        // ask() lists the pool as it is now. The static prompt only keeps prompts non-empty
+        // for Magpie, and does not share the account key Agent2API would then drop.
+        prompts: dynamicAskPrompts(_input, '选择 Google 账号'),
         async ask(inputs) {
           if (inputs?.account) return null;
           if (!localBackend()) throw new Error('还没有本地后端：请先用「一键配置本地 Gemini Web」');

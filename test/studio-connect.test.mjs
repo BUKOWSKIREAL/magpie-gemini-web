@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { openStudioConnect } from '../lib/studio-connect.mjs';
 
 async function within(promise) {
@@ -194,6 +195,47 @@ describe('Automatic upstream sign-in', () => {
       await new Promise(resolve => setImmediate(resolve));
       assert.deepEqual(f.requests.filter(r => r.method === 'DELETE').map(r => r.path), ['/api/accounts/tasks/ours']);
     } finally { f.page.close(); }
+  });
+
+  it('keeps the host async context for status and management fetches', async () => {
+    const als = new AsyncLocalStorage();
+    const seen = [];
+    const local = { origin: 'http://127.0.0.1:2048', apiKey: 'k', adminUsername: 'u', adminPassword: 'p' };
+    const page = await als.run({ flow: 'agent2api' }, async () => {
+      const opened = await openStudioConnect({
+        prepare: async () => local,
+        deadline: Date.now() + 10000,
+        pollMs: 60000,
+        fetchFn: async (url) => {
+          const path = new URL(url).pathname;
+          seen.push({ path, store: als.getStore() });
+          if (path === '/api/auth/login') {
+            return new Response('{}', { headers: { 'Content-Type': 'application/json', 'Set-Cookie': 'aistudio_admin=test-session; Path=/api; HttpOnly' } });
+          }
+          return Response.json({ tasks: [], accounts: [], magpie_signin: 1 });
+        }
+      });
+      opened.start().catch(() => {});
+      return opened;
+    });
+    try {
+      let status;
+      for (let i = 0; i < 20; i++) {
+        status = await (await fetch(page.url + '/status')).json();
+        if (status.ready) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(status.ready, true);
+      assert.equal(seen.some(entry => entry.path === '/api/accounts'), false);
+      const origin = new URL(page.url).origin;
+      const manage = await fetch(page.url + '/manage', {
+        method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: '{}'
+      });
+      assert.equal(manage.status, 200);
+      const accounts = seen.filter(entry => entry.path === '/api/accounts');
+      assert.ok(accounts.length >= 1);
+      for (const entry of accounts) assert.deepEqual(entry.store, { flow: 'agent2api' });
+    } finally { page.close(); }
   });
 
   it('keeps the existing manual flow usable with an older pinned backend', async () => {
