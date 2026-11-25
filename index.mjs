@@ -21,16 +21,24 @@ function retiredTaskError() {
 // The backend keeps the session alive by rotating its cookies, which signs the browser it came
 // from out of Google. A private window that is closed afterwards gives the backend a session of
 // its own.
+const ASKED_INDEX_STEP = '确认这个窗口的目标账号索引与刚才填写的一致；无痕窗口中的索引可能和普通窗口不同。如地址是 /u/4/app，应填 4；填错请取消并重新登录。';
+const QUICK_INDEX_STEP = '多账号请把 cookie 和地址栏里的索引一起粘贴，例如地址是 /u/4/app 时粘贴 {"cookie":"…","authuser":4}；只粘贴 cookie 原文则按 0。无痕窗口中的索引可能和普通窗口不同。';
+const RAW_PASTE_STEP = '4. 找到 cookie 那一行，复制它的值，粘贴到下面';
+const QUICK_PASTE_STEP = '4. 找到 cookie 那一行并复制它的值。单账号直接粘贴该值；多账号粘贴 {"cookie":"<该值>","authuser":N}';
+
 const COOKIE_STEPS = [
   '请用浏览器的无痕 / 隐私窗口（推荐 Firefox），不要用你平时登录着 Google 的窗口：后端会定时刷新这份登录，和浏览器共用会被 Google 踢出登录。',
   `1. 在无痕窗口打开 ${GEMINI_URL} 并登录要使用的 Google 账号`,
-  '确认这个窗口的目标账号索引与刚才填写的一致；无痕窗口中的索引可能和普通窗口不同。如地址是 /u/4/app，应填 4；填错请取消并重新登录。',
+  ASKED_INDEX_STEP,
   '2. 按 F12（macOS 按 ⌥⌘I）打开开发者工具，切到 Network（网络）面板，刷新页面',
   '3. 点列表里任意一个 gemini.google.com 的请求 → Headers（标头）→ Request Headers（请求标头）',
-  '4. 找到 cookie 那一行，复制它的值，粘贴到下面',
+  RAW_PASTE_STEP,
   '5. 直接关掉无痕窗口，不要点「退出登录」（退出会让这份 Cookie 失效）',
   'Cookie 只保存在本机的 Gemini Web 后端里，不会发到别处。'
 ].join('\n');
+
+// quickSignIn never asked for an index, so these steps must not refer to one the user typed.
+const QUICK_COOKIE_STEPS = COOKIE_STEPS.replace(ASKED_INDEX_STEP, QUICK_INDEX_STEP).replace(RAW_PASTE_STEP, QUICK_PASTE_STEP);
 
 // signInFor is the Magpie sign-in for one account of the local backend's pool: the backend's
 // key, with the account's id for its usage card and its Google email, which names the card and
@@ -170,7 +178,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
             // An empty url keeps Magpie from opening a browser (openBrowser: false).
             url: opts.openBrowser ? loginURL : '',
             method: 'code',
-            instructions: COOKIE_STEPS.replaceAll(GEMINI_URL, loginURL) + (proxyHint ? `\n\n注意：${proxyHint}` : ''),
+            instructions: (opts.quickSignIn ? QUICK_COOKIE_STEPS : COOKIE_STEPS).replaceAll(GEMINI_URL, loginURL) + (proxyHint ? `\n\n注意：${proxyHint}` : ''),
             async callback(code) {
               let local, pasted, added, authuser = asked;
               try {

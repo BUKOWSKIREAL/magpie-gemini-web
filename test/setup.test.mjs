@@ -678,6 +678,10 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.deepEqual(parseSignInPaste(SIGNED_IN), { cookie: SIGNED_IN, authuser: undefined });
     assert.deepEqual(parseSignInPaste(JSON.stringify({ cookie: SIGNED_IN, authuser: 4 })), { cookie: SIGNED_IN, authuser: 4 });
     assert.deepEqual(parseSignInPaste(JSON.stringify({ cookie: SIGNED_IN, authuser: '2' })), { cookie: SIGNED_IN, authuser: 2 });
+    const json = JSON.stringify({ cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(`"${json}"`), { cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(`'${json}'`), { cookie: SIGNED_IN, authuser: 4 });
+    assert.deepEqual(parseSignInPaste(`cookie: ${json}`), { cookie: SIGNED_IN, authuser: 4 });
     assert.throws(() => parseSignInPaste(JSON.stringify({ cookie: SIGNED_IN, authuser: 12 })), /账号索引/);
     const flat = Object.fromEntries(SIGNED_IN.split('; ').map(p => p.split('=')));
     assert.equal(parseCookieInput(JSON.stringify({ ...flat, authuser: '3' })), SIGNED_IN, 'authuser is not a cookie');
@@ -692,10 +696,39 @@ describe('27. One-click sign-in through the plugin', () => {
     assert.equal(pending.url, '');
     assert.equal(pending.method, 'code');
     assert.ok(pending.instructions.includes('https://gemini.google.com/app'));
+    assert.match(pending.instructions, /authuser/);
+    assert.doesNotMatch(pending.instructions, /刚才填写/);
     const defaults = await (await oauthMethod()).authorize({});
     assert.equal(defaults.url, 'https://gemini.google.com/app');
+    assert.match(defaults.instructions, /刚才填写/);
     await assert.rejects(GeminiWebPlugin({}, { quickSignIn: 'yes' }), /quickSignIn/);
     await assert.rejects(GeminiWebPlugin({}, { openBrowser: 0 }), /openBrowser/);
+  });
+
+  it('quickSignIn stores 0 for a raw cookie and the pasted index for JSON', async () => {
+    const method = (await GeminiWebPlugin({}, { quickSignIn: true })).auth.methods[0];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (url, init) => String(url).startsWith('https://gemini.google.com/')
+      ? Promise.resolve(new Response('{"oPEP7c":"quick@gmail.com"}'))
+      : realFetch(url, init);
+    try {
+      const raw = await method.authorize({});
+      const rawResult = await raw.callback(SIGNED_IN.replace('SID=v-SID', 'SID=good-quick-raw'));
+      assert.equal(rawResult.type, 'success');
+      assert.equal(accounts.get(rawResult.metadata.account).checkedAuthuser, 0);
+      assert.equal(rawResult.metadata.authuser, undefined);
+
+      const pasted = await method.authorize({});
+      const pastedResult = await pasted.callback(JSON.stringify({
+        cookie: SIGNED_IN.replace('SID=v-SID', 'SID=good-quick-four'),
+        authuser: 4
+      }));
+      assert.equal(pastedResult.type, 'success');
+      assert.equal(accounts.get(pastedResult.metadata.account).checkedAuthuser, 4);
+      assert.equal(pastedResult.metadata.authuser, 4);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   it('takes the account index from a JSON paste, and refuses one that contradicts the answered index', async () => {
