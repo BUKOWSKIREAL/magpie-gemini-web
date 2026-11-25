@@ -1224,8 +1224,13 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
       const manage = await post('/manage');
       assert.equal(manage.status, 200);
       const destination = new URL((await manage.json()).url);
-      assert.equal(destination.origin, new URL(serverURL).origin);
-      const client = new URLSearchParams(destination.hash.slice(1)).get('magpie');
+      assert.equal(destination.origin, new URL(pending.url).origin);
+      assert.equal(destination.pathname, '/');
+      assert.equal(destination.searchParams.get('tab'), 'accounts');
+      assert.notEqual(destination.origin, new URL(serverURL).origin);
+      const fragment = new URLSearchParams(destination.hash.slice(1));
+      assert.equal(fragment.get('callback'), pending.url + '/finish');
+      const client = fragment.get('magpie');
       assert.match(manage.headers.get('set-cookie'), /HttpOnly/);
       // A fully completed task connects all accounts selected in the upstream import page.
       serverResponses['/api/accounts'] = accountsResponse([POOL[0], { ...POOL[1], state: 'ready' }]);

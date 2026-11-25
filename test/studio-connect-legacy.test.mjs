@@ -53,7 +53,7 @@ async function pageScript(f) {
   await vm.runInNewContext(html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)[1], {
     document: { getElementById: id => elements.get(id) ?? null, createElement: tag => element(tag) },
     location: { pathname: new URL(f.page.url).pathname },
-    fetch: f.request, window, setTimeout: fn => { timers.push(fn); }
+    URL, fetch: f.request, window, setTimeout: fn => { timers.push(fn); }
   });
   return { get: id => elements.get(id), window, poll: async () => { assert.ok(timers.length); await timers.shift()(); } };
 }

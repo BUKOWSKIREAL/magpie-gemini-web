@@ -55,6 +55,7 @@ export async function smokeOfficialStudio({ binary, version, archivePath } = {})
       const destination = await (await fetch(bridge.url + '/manage', {
         method: 'POST', headers: { Origin: new URL(bridge.url).origin }
       })).json();
+      assert.equal(new URL(destination.url).origin, new URL(bridge.url).origin);
       assert.notEqual(new URL(destination.url).origin, local.origin);
       assert.match(await (await fetch(destination.url)).text(), /连接到 Magpie/);
       await fetch(bridge.url + '/cancel', { method: 'POST', headers: { Origin: new URL(bridge.url).origin } });
@@ -158,7 +159,8 @@ async function smokeAccountConnection(dataDir) {
     const cookie = management.headers.get('set-cookie');
     assert.ok(cookie?.includes('; HttpOnly; SameSite=Strict'));
     const target = (await management.json()).url;
-    assert.equal(new URL(target).origin, local.origin);
+    assert.equal(new URL(target).origin, new URL(url).origin);
+    assert.equal(`${new URL(target).pathname}${new URL(target).search}`, '/?tab=accounts');
     assert.equal((await fetch(local.origin + '/api/accounts')).status, 401);
     assert.equal((await fetch(local.origin + '/api/accounts', { headers: { Cookie: cookie.split(';')[0] } })).status, 200, 'management handoff authenticates without entering credentials');
     const state = await (await fetch(url + '/status')).json();
