@@ -1398,6 +1398,72 @@ describe('AI Studio Plugin & Models Unit Tests', () => {
     }
   });
 
+  it('9h. Agent2API lists a running service and returns at once when that service is stopped', async () => {
+    const setup = standInSetup('managed-key');
+    const configPath = path.join(tempStudioDataDir, 'config.json');
+    const lockPath = path.join(tempStudioDataDir, '.setup.lock');
+    const accountAsks = plugin => plugin.auth.methods.filter(item =>
+      typeof item.ask === 'function' && !item.prompts.some(prompt => prompt.key === 'proxy'));
+    const agent = await AIStudioPlugin({ project: { id: 'agent2api' } }, { studio: { baseURL: serverURL } });
+    const magpie = await AIStudioPlugin({}, { studio: { baseURL: serverURL } });
+    const hosted = accountAsks(agent);
+    const localAsks = accountAsks(magpie);
+    assert.equal(hosted.length, 2);
+    assert.equal(localAsks.length, 2);
+    let magpieAsk;
+    let stopped = false;
+    try {
+      serverResponses['/api/accounts'] = accountsResponse(POOL);
+      const connect = await hosted[0].ask({});
+      assert.deepEqual(connect.options, [
+        { label: '添加新的 Google 账号', value: '+new', hint: '导入 Chrome / Cookie，或浏览器登录' },
+        { label: 'a@example.com', value: 'a@example.com', hint: '账号就绪' },
+        { label: 'b@example.com', value: 'b@example.com', hint: '需要在账号管理页重新登录' }
+      ]);
+      const browser = await hosted[1].ask({});
+      assert.equal(browser.options[1].value, 'a@example.com');
+      assert.equal(browser.options[0].hint, '打开登录窗口');
+      assert.equal(await hosted[0].ask({ account: 'a@example.com' }), null);
+
+      const closed = http.createServer();
+      await new Promise(r => closed.listen(0, '127.0.0.1', r));
+      const { port } = closed.address();
+      await new Promise(r => closed.close(r));
+      fs.writeFileSync(configPath, JSON.stringify({ ...JSON.parse(fs.readFileSync(configPath, 'utf8')), port }) + '\n', { mode: 0o600 });
+      fs.writeFileSync(lockPath, `${process.pid}\n${Date.now()}\nanother\n`);
+      stopped = true;
+
+      for (const method of hosted) {
+        const asked = Date.now();
+        assert.equal(await method.ask({}), null);
+        assert.ok(Date.now() - asked < 2000, `stopped service ask took ${Date.now() - asked}ms`);
+      }
+      assert.equal(fs.existsSync(path.join(tempStudioDataDir, 'backend.pid')), false, 'a held setup lock must block the background start');
+
+      const asked = Date.now();
+      magpieAsk = localAsks[0].ask({});
+      const winner = await Promise.race([
+        magpieAsk.then(value => ({ value }), err => ({ err })),
+        new Promise(resolve => setTimeout(() => resolve('waiting'), 400))
+      ]);
+      assert.equal(winner, 'waiting', 'Magpie still waits for a start that has not finished');
+      assert.ok(Date.now() - asked < 2000);
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+      if (stopped) {
+        const outcome = await ensureStudio({ managementOnly: true }).then(
+          () => ({ message: '' }),
+          err => ({ message: err.message })
+        );
+        assert.match(outcome.message, /exited during startup/);
+        if (magpieAsk) await magpieAsk.catch(err => assert.match(err.message, /exited during startup/));
+      }
+      for (const name of ['backend.log', 'backend.pid', 'backend.launch.json']) fs.rmSync(path.join(tempStudioDataDir, name), { force: true });
+      delete serverResponses['/api/accounts'];
+      setup.remove();
+    }
+  });
+
   it('9g. a progress page keeps how its sign-in ended, whatever ends after', async () => {
     const late = await signInProgress(false);
     const status = async () => (await fetch(`${late.url}/status`)).json();
